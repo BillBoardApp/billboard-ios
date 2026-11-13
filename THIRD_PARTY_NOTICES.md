@@ -36,9 +36,9 @@ Licence identifiers were read from each package's own LICENSE file at the pinned
 | `swift-http-types` | 1.5.1 | Apache-2.0 | <https://github.com/apple/swift-http-types> | ships a NOTICE file |
 | `swift-log` | 1.8.0 | Apache-2.0 | <https://github.com/apple/swift-log> | ships a NOTICE file |
 | `swift-metrics` | 2.7.1 | Apache-2.0 | <https://github.com/apple/swift-metrics> | ships a NOTICE file |
-| `swift-nio` | 2.92.1 | Apache-2.0 | <https://github.com/apple/swift-nio> | ships a NOTICE file |
-| `swift-nio-extras` | 1.31.2 | Apache-2.0 | <https://github.com/apple/swift-nio-extras> | ships a NOTICE file |
-| `swift-nio-http2` | 1.39.0 | Apache-2.0 | <https://github.com/apple/swift-nio-http2> | ships a NOTICE file |
+| `swift-nio` | 2.100.0 | Apache-2.0 | <https://github.com/apple/swift-nio> | ships a NOTICE file |
+| `swift-nio-extras` | 1.34.1 | Apache-2.0 | <https://github.com/apple/swift-nio-extras> | ships a NOTICE file |
+| `swift-nio-http2` | 1.44.0 | Apache-2.0 | <https://github.com/apple/swift-nio-http2> | ships a NOTICE file |
 | `swift-nio-ssl` | 2.36.0 | Apache-2.0 | <https://github.com/apple/swift-nio-ssl> | ships a NOTICE file |
 | `swift-nio-transport-services` | 1.26.0 | Apache-2.0 | <https://github.com/apple/swift-nio-transport-services> |  |
 | `swift-numerics` | 1.1.1 | Apache-2.0 WITH Swift-exception | <https://github.com/apple/swift-numerics> |  |
