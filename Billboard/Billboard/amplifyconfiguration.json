@@ -1,0 +1,29 @@
+{
+  "auth": {
+    "plugins": {
+      "awsCognitoAuthPlugin": {
+        "UserAgent": "myapp-dev",
+        "Version": "1.0",
+        "CognitoUserPool": {
+          "Default": {
+            "PoolId": "us-east-1_azScwbZc9",
+            "AppClientId": "2k34rkugc7ksjiou5515etkea",
+            "Region": "us-east-1"
+          }
+        }
+      }
+    }
+  },
+  "api": {
+    "plugins": {
+      "awsAPIPlugin": {
+        "myapi": {
+          "endpointType": "REST",
+          "endpoint": "https://4xphatdj08.execute-api.us-east-1.amazonaws.com/prod/",
+          "region": "us-east-1",
+          "authorizationType": "AMAZON_COGNITO_USER_POOLS"
+        }
+      }
+    }
+  }
+}

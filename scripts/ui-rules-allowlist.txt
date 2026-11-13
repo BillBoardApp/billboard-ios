@@ -1,0 +1,11 @@
+# Exceptions to scripts/check-ui-rules.sh, one per line:
+#   rule | path relative to Billboard/Billboard (glob) | regex matched against the string (or the matched code)
+# Keep each one justified. Prefer `// ui-rules:allow <rule>` on the line for a one-off in code you own.
+
+# Wire values and stored labels, not copy.
+glossary | Domain/Models/SubscriptionsConfig.swift | ^Home Energy$
+glossary | * | ^Home Energy$
+brand-name | Services/Security/KeychainStore.swift | ^BillBoard$
+
+# Developer-facing decoding errors (not UserFacingError, never shown as copy).
+glossary | Domain/Models/WeeklyDigest.swift | ^Invalid weekly digest

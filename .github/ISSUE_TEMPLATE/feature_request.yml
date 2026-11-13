@@ -1,0 +1,35 @@
+name: Idea or improvement
+description: Suggest a change to the app.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public: never post your email address, street address or votes. Billboard takes no side on any
+        bill, party or cause, so ideas must work for every voter (see CONTRIBUTING.md, "Staying neutral").
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem it solves
+      description: Who it helps, and what is hard or missing today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What the app would do. Sketches or screenshots are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: backend
+    attributes:
+      label: Backend changes
+      description: Does it need new data or a new API from billboard-backend? Say "none" or "not sure".
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to build it?
+      options:
+        - "Yes, I would open a pull request"
+        - "No, just the idea"

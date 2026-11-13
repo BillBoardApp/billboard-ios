@@ -1,0 +1,33 @@
+# Xcode
+**/xcuserdata/
+**/build/
+DerivedData/
+*.xcresult
+*.xccovreport
+*.xccovarchive
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Local secrets, signing material and tool state: never commit these
+.env
+.env.*
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+.claude/
+CLAUDE.md
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+
+# Swift Package Manager: the workspace copy (BillBoard.xcworkspace/xcshareddata/swiftpm/Package.resolved)
+# is authoritative. Xcode recreates this one if the project is opened on its own.
+Billboard/Billboard.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Personal simulator notes (UDIDs, local push commands)
+Billboard/PushTests/*LocalTests.json

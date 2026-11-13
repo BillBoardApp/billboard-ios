@@ -1,0 +1,14 @@
+# gitleaks configuration: the default rules, plus the false positives this tree is known to hold. The commit-safety
+# check in .github/workflows/ci.yml scans each pull request's commits with it. Keep each allowlist entry narrow (one
+# file, one rule, one value) and say why it is not a secret.
+title = "billboard-ios"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "A path-traversal string used as a malformed bill ID in a push-payload test. Not a secret."
+targetRules = ["generic-api-key"]
+paths = ['''Billboard/BillboardTests/PushNotificationPayloadTests\.swift''']
+regexTarget = "line"
+regexes = ['''\.\./\.\./etc/passwd''']

@@ -1,0 +1,184 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.04314,0.11373,0.22745,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.01961,0.03137,0.05882,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "Bill",
+      "layers": [
+        {
+          "name": "bill-line",
+          "image-name": "bill-line.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.29020,0.31373,0.36078,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+              }
+            }
+          ],
+          "opacity-specializations": [
+            {
+              "appearance": "tinted",
+              "value": 0.55
+            }
+          ]
+        },
+        {
+          "name": "bill-ink",
+          "image-name": "bill-ink.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.10196,0.13333,0.20000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+              }
+            }
+          ],
+          "opacity-specializations": [
+            {
+              "appearance": "tinted",
+              "value": 0.85
+            }
+          ]
+        },
+        {
+          "name": "bill",
+          "image-name": "bill.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.88627,0.87843,0.85490,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "gray:1.00000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "specular": false,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.45
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Board",
+      "layers": [
+        {
+          "name": "board",
+          "image-name": "board.svg",
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.00000,0.67451,0.62745,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "opacity-specializations": [
+            {
+              "appearance": "tinted",
+              "value": 0.65
+            }
+          ]
+        }
+      ],
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Post",
+      "layers": [
+        {
+          "name": "post",
+          "image-name": "post.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.05490,0.43137,0.40000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "opacity-specializations": [
+            {
+              "appearance": "tinted",
+              "value": 0.6
+            }
+          ]
+        }
+      ],
+      "specular": false,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.2
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}

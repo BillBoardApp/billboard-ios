@@ -1,0 +1,18 @@
+{
+  "aps": {
+    "alert": {
+      "title": "Bill Failed",
+      "subtitle": "Local Smoke Test",
+      "body": "A watched bill failed a vote"
+    },
+    "sound": "default",
+    "badge": 1,
+    "content-available": 1
+  },
+  "domain": "bill",
+  "billIds": [
+    "BILLS-119hr2312rh"
+  ],
+  "notificationType": "failed",
+  "updatedAt": "2026-04-06T20:00:00.000Z"
+}

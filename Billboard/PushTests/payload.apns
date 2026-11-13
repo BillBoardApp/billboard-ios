@@ -1,0 +1,25 @@
+{
+  "aps": {
+    "alert": {
+      "title": "Bill title here",
+      "subtitle": "Bill Alert",
+      "body": "On Passage (Passed)"
+    },
+    "sound": "default",
+    "content-available": 1
+  },
+  "domain": "bill",
+  "billId": "BILLS-119hr2312rh",
+  "billIds": ["BILLS-119hr2312rh"],
+  "category": "Bill Alert",
+  "subCategory": "On Passage (Passed)!",
+  "notificationType": "alert",
+  "alertId": "da0cdd34-4324-4331-b0e0-fa6ee08bf118",
+  "alert": {
+    "text": "On Passage (Passed)",
+    "actionDate": "2025-01-03",
+    "actionCode": "pass",
+    "actionType": "vote"
+  },
+  "updatedAt": "2026-01-08T00:00:00.000Z"
+}

@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in the app does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. Issues are public: never post your email address, street address, votes, or a
+        screenshot that shows them. Security problems go to the private report (see SECURITY.md), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The screens and taps, one per line. Say which bill, if one is involved, by its number (for example H.R. 1234).
+      placeholder: |
+        1. Open Bills
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version and build
+      description: Profile > About shows them. For a build from source, give the commit.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      placeholder: iPhone 17, iOS 27.2 (or the simulator and Xcode version)
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Which build
+      options:
+        - App Store or TestFlight
+        - A build from source
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots (with personal details hidden), logs, or how often it happens.

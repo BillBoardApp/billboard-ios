@@ -1,0 +1,131 @@
+# Public CI for the app, in two jobs:
+#   - gate: the same gate a contributor runs locally (./scripts/test.sh): the contract check against the
+#     billboard-backend repository, the UI rules and the unit tests, and no build warnings;
+#   - commit-safety: on a pull request (or a manual run), the new commits carry no secret (gitleaks, with
+#     .gitleaks.toml) and only allowed author, committer and trailer addresses (scripts/ci/check-commit-identities.sh).
+#
+# Notes for maintainers:
+#   - It runs on GitHub-hosted runners only. Never point a public repository's workflow at a runner on your own machines.
+#   - It holds no secrets and asks for read-only repository access. The signed-in UI tests need a login only the
+#     maintainers have, so they are skipped here.
+#   - Every action is pinned to a full commit SHA, with its version in a comment. Update them together, and resolve a
+#     new SHA from the release tag rather than trusting a branch or a floating tag.
+#   - Toolchain: GitHub's `xcode-27` image, Xcode 27.2 (set by DEVELOPER_DIR, because the image's default Xcode can be
+#     another 27.x) and an iPhone 17 simulator on iOS 27.2: the toolchain of the project's local gate. When the image
+#     changes, update the label, XCODE_VERSION, DEVELOPER_DIR, SIMULATOR_RUNTIME and the README's Requirements together.
+#   - The contract check compares the app's copy of the API contract with the default branch of billboard-backend. The
+#     repository comes from the repository variable BILLBOARD_BACKEND_REPOSITORY, else `<this owner>/billboard-backend`.
+#   - If a simulator build ever asks for a signing team on the hosted runner, pass CODE_SIGNING_ALLOWED=NO to the
+#     simulator builds; no Apple account belongs on a public runner.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Contract, UI rules and unit tests
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      XCODE_VERSION: "27.2"
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      SIMULATOR_NAME: iPhone 17
+      SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-27-2
+      DERIVED_DATA_PATH: ${{ github.workspace }}/DerivedData
+      SOURCE_PACKAGES_PATH: ${{ github.workspace }}/SourcePackages
+      RESULTS_DIR: ${{ github.workspace }}/results
+    steps:
+      - name: Check out the app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: billboard-ios
+          persist-credentials: false
+
+      - name: Check out billboard-backend next to it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.BILLBOARD_BACKEND_REPOSITORY || format('{0}/billboard-backend', github.repository_owner) }}
+          path: billboard-backend
+          persist-credentials: false
+
+      - name: Check the Xcode version and pick the simulator
+        run: |
+          xcodebuild -version
+          version="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          if [[ "${version}" != "${XCODE_VERSION}" ]]; then
+            echo "::error::expected Xcode ${XCODE_VERSION} at ${DEVELOPER_DIR}, found ${version}"
+            exit 1
+          fi
+          udid="$(xcrun simctl list devices available -j | python3 -I -c '
+          import json, os, sys
+          devices = json.load(sys.stdin)["devices"].get(os.environ["SIMULATOR_RUNTIME"], [])
+          for device in devices:
+              if device["name"] == os.environ["SIMULATOR_NAME"]:
+                  print(device["udid"])
+                  break
+          ')"
+          if [[ -z "${udid}" ]]; then
+            echo "::error::no available ${SIMULATOR_NAME} simulator on ${SIMULATOR_RUNTIME}"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "DESTINATION=platform=iOS Simulator,id=${udid}" >> "${GITHUB_ENV}"
+
+      - name: Restore the Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/SourcePackages
+          key: spm-${{ runner.os }}-xcode-${{ env.XCODE_VERSION }}-${{ hashFiles('billboard-ios/BillBoard.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode-${{ env.XCODE_VERSION }}-
+
+      - name: Run the gate (contract check, UI rules, unit tests, no build warnings)
+        working-directory: billboard-ios
+        run: ./scripts/test.sh
+
+  # The new commits must carry no secret and only allowed addresses: they become public history the moment they are
+  # pushed. CONTRIBUTING.md, "Licence of contributions", says which addresses pass. A push to main is not checked
+  # again: its commits came through a pull request.
+  commit-safety:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the app with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install gitleaks (pinned release, SHA-256 checked)
+        run: bash scripts/ci/install-gitleaks.sh "$RUNNER_TEMP/bin"
+
+      - name: The commits to check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # A pull request: its own commits. A manual run: every commit on the branch.
+          if [ -n "$BASE_SHA" ]; then range="$BASE_SHA..$HEAD_SHA"; else range="$HEAD_SHA"; fi
+          echo "RANGE=$range" >> "$GITHUB_ENV"
+          echo "Commits checked: $(git rev-list --count "$range")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No secrets in the new commits (gitleaks)
+        run: >-
+          "$RUNNER_TEMP/bin/gitleaks" git . --log-opts="$RANGE" --config .gitleaks.toml
+          --no-banner --redact --exit-code 1
+
+      - name: Only allowed author, committer and trailer addresses
+        run: bash scripts/ci/check-commit-identities.sh "$RANGE"

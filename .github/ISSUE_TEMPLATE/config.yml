@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/BillBoardApp/billboard-ios/security/advisories/new
+    about: Report it privately, never in a public issue. SECURITY.md says how.
+  - name: Account or data request
+    url: https://billboard-project.com/privacy.html
+    about: For help with your account, your votes or your data, use the contact in the privacy policy. Never post your email, address or votes in an issue.
+  - name: Backend, website or API problem
+    url: https://github.com/BillBoardApp/billboard-backend/issues
+    about: Problems with the service, the share site or the API contracts belong in billboard-backend.
