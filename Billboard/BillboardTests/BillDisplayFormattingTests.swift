@@ -71,6 +71,39 @@ final class BillDisplayFormattingTests: XCTestCase {
         XCTAssertEqual(BillDisplayFormatting.actionTypeLabel("President"), "Sent to the President", "the type's label is unchanged")
     }
 
+    /// H.R. 131 and H.R. 504 store a veto's two lines newest first, the House's E30000 before the Library of
+    /// Congress's 31000. The timeline lists the 31000 one in the first one's place, so the veto reads "Veto"
+    /// (project decision 2026-11-19), as on the website.
+    @MainActor
+    func testOfAVetosTwoLinesTheCodedOneIsListedInTheHouseLinesPlace() {
+        func action(_ code: String, _ date: String, _ text: String, _ type: String) -> Bill.BillAction {
+            Bill.BillAction(actionCode: code, actionDate: date, text: text, type: type, sourceSystem: nil, committees: nil)
+        }
+        // H.R. 131 as stored, newest first.
+        let actions = [
+            action("33000", "2026-01-08", "Failed of passage in House over veto.", "Veto"),
+            action("E30000", "2025-12-29", "Vetoed by President.", "President"),
+            action("31000", "2025-12-29", "Vetoed by President.", "President"),
+            action("E20000", "2025-12-18", "Presented to President.", "Floor"),
+            action("28000", "2025-12-18", "Presented to President.", "President")
+        ]
+
+        let timeline = BillDisplayFormatting.timelineActions(actions)
+
+        XCTAssertEqual(
+            timeline.compactMap(BillDisplayFormatting.timelineText(for:)),
+            ["Presented to President.", "Vetoed by President.", "Failed of passage in House over veto."]
+        )
+        XCTAssertEqual(timeline.map(BillDisplayFormatting.timelineTypeLabel(for:)), ["Floor action", "Veto", "Veto"])
+        XCTAssertEqual(timeline.map(\.actionCode), ["E20000", "31000", "33000"])
+        XCTAssertEqual(BillActionsSection.rows(for: actions).map(\.detail), ["Floor action", "Veto", "Veto"], "the bill page's Actions")
+
+        // Listed in reverse, the coded line comes first and keeps its place; the day's other repeat keeps its first line.
+        let reversed = BillDisplayFormatting.timelineActions(actions.reversed())
+        XCTAssertEqual(reversed.map(BillDisplayFormatting.timelineTypeLabel(for:)), ["Sent to the President", "Veto", "Veto"])
+        XCTAssertEqual(reversed.map(\.actionCode), ["28000", "31000", "33000"])
+    }
+
     // MARK: - Companion bills (APPF-23)
 
     /// Each of the eight bill types, from a plain guid and from a text-version guid.
