@@ -8,8 +8,8 @@ import XCTest
 /// `coverage.v3`), so that copy is never read and never merged into, and the launch deletes it.
 ///
 /// UX-51 (project decision 2026-11-19): 1.2's copy has no veto flags, so 1.3 reads `data.v6` and `coverage.v4`
-/// and deletes 1.2's the same way; and, once after the update, it loads the full manifest so the bills held
-/// from 1.2 take their flags.
+/// and deletes 1.2's the same way, having first noted that it was there: once after the update, the app loads
+/// the full manifest so the bills held from 1.2 take their flags (`VetoedFlagFullLoadTests`).
 final class ManifestCacheUpgradeTests: XCTestCase {
     private var cache = BillsManifestCache(namespace: "manifest-cache-upgrade-tests")
 
@@ -172,33 +172,28 @@ final class ManifestCacheUpgradeTests: XCTestCase {
         XCTAssertFalse(cacheOf12Exists(), "the first write removes it too")
     }
 
-    // MARK: - The one-time full load after the update (UX-51)
+    // MARK: - The launch tells an update from a fresh install (UX-51)
 
-    @MainActor
-    func testTheOneTimeFullLoadRunsOnceAndOnlyWhenItGotTheFullManifest() async throws {
-        let suite = "manifest-cache-upgrade-tests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
-        let scope = "manifest-cache-upgrade-tests-\(UUID().uuidString)"
-        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
-        let service = FakeBillsService()
-        service.cachedManifest = []
-        service.manifestResults = [.failure(FakeServiceError()), .success([try item("BILLS-119hr131", daysAgo: 400)])]
-        let store = BillsStore(cacheScope: scope, service: service, preferencesService: FakePreferencesService())
+    func testTheLaunchSeesTheCacheOf12BeforeItDeletesIt() async throws {
+        XCTAssertFalse(cache.holdsEarlierCache(), "a fresh install holds no earlier cache")
 
-        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
-        XCTAssertEqual(service.manifestRequests, [nil], "a full fetch")
-        XCTAssertFalse(defaults.bool(forKey: store.vetoedFlagFullLoadKey), "a failed load is tried again on a later launch")
+        try writeCacheOf12()
+        XCTAssertTrue(cache.holdsEarlierCache(), "1.2's copy says the launch follows an update")
 
-        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
-        XCTAssertEqual(service.manifestRequests, [nil, nil])
-        XCTAssertTrue(store.hasFullManifestCoverage)
-        XCTAssertTrue(defaults.bool(forKey: store.vetoedFlagFullLoadKey))
+        await cache.discardEarlierCachesInBackground().value
+        XCTAssertFalse(cache.holdsEarlierCache())
 
-        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
-        XCTAssertEqual(service.manifestRequests, [nil, nil], "once done, never again")
-        XCTAssertEqual(store.vetoedFlagFullLoadKey, "BillsStore.vetoedFlagFullLoad.v1.\(scope)")
-        await settleBillsCache(scope: scope)
+        // 1.2's coverage alone, its file purged with the rest of Caches, still counts; so does 1.1's copy.
+        UserDefaults.standard.set("windowed", forKey: keysOf12.coverage)
+        XCTAssertTrue(cache.holdsEarlierCache())
+        cache.removeLegacyCache()
+        try writeCacheOf11()
+        XCTAssertTrue(cache.holdsEarlierCache())
+    }
+
+    func testTheCacheThatIsReadIsNotAnEarlierOne() throws {
+        XCTAssertEqual(cache.store([try item("BILLS-119hr9", daysAgo: 1)], fetched: .full), .full)
+        XCTAssertFalse(cache.holdsEarlierCache(), "1.3's own copy does not make a launch an update")
     }
 
     // MARK: - Deleted at launch

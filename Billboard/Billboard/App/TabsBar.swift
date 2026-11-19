@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// The signed-in app: the four tabs and the stores they share.
@@ -182,16 +183,29 @@ struct TabsBar: View {
         hasCompletedInitialWeeklyDigestBootstrap = true
     }
 
-    /// UX-51 (project decision 2026-11-19): once after the update to 1.3, when the first bills load is done, the
-    /// full manifest, so the bills held from 1.2 take their veto flags
-    /// (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`; it does nothing once it has run).
+    /// UX-51 (project decision 2026-11-19): once after the update to 1.3, the full manifest, so the bills held
+    /// from 1.2 take their veto flags (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`, which decides
+    /// whether it can matter and does nothing once it has run). It starts only after Home's startup
+    /// reconciliation, so the startup refresh never waits for it, and it keeps the Bills tab's window.
     @MainActor
-    private func scheduleVetoedFlagFullLoadIfNeeded() {
+    private func runVetoedFlagFullLoadAfterStartup() async {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
-        Task { @MainActor in
-            await waitForBillsStoreToBecomeIdle()
-            guard !Task.isCancelled else { return }
-            await billsStore.loadFullManifestOnceForVetoedFlagIfNeeded()
+        await Self.waitForHomeStartupReconciliation(appState: appState) { deferredHomeQueueRefreshTask }
+        guard !Task.isCancelled else { return }
+        await billsStore.loadFullManifestOnceForVetoedFlagIfNeeded(historyWindow: selectedBillboardHistoryWindow)
+    }
+
+    /// Returns once Home's startup reconciliation is over: `hasCompletedHomeQueueReconciliation` is set, and
+    /// the deferred Home refresh it may leave running (`scheduleDeferredHomeQueueRefreshIfNeeded`) has ended.
+    /// Returns early when the task is cancelled (callers check `Task.isCancelled` afterwards).
+    @MainActor
+    static func waitForHomeStartupReconciliation(
+        appState: AppState,
+        deferredHomeQueueRefresh: () -> Task<Void, Never>?
+    ) async {
+        for await completed in appState.$hasCompletedHomeQueueReconciliation.values where completed { break }
+        while !Task.isCancelled, let refresh = deferredHomeQueueRefresh() {
+            await refresh.value
         }
     }
 
@@ -541,11 +555,9 @@ struct TabsBar: View {
                 await billVoteStore.recheckEarlierAbstains()
             }
             .task {
-                // UX-51: when the bills loaded before this view appeared, `onChange(of: hasLoadedOnce)` below
-                // does not fire.
-                if billsStore.hasLoadedOnce {
-                    scheduleVetoedFlagFullLoadIfNeeded()
-                }
+                // UX-51: once after the update, after Home's startup reconciliation. Cancelled when the view
+                // goes (sign-out), which leaves it to a later launch.
+                await runVetoedFlagFullLoadAfterStartup()
             }
             // The chips, the Civic Rank sheet and the Civic Profile on a return to the app and a new day.
             .refreshesCivicStats(score: civicScoreStore, profile: civicProfileStore)
@@ -594,9 +606,6 @@ struct TabsBar: View {
                 // that predate the Watch preference type get backfilled to the backend.
                 if loaded, userStore.hasRefreshedOnce {
                     billsStore.reconcileWatchesFromProfile(userStore.profile.watchedBillGUIDs)
-                }
-                if loaded {
-                    scheduleVetoedFlagFullLoadIfNeeded()
                 }
             }
             .onChange(of: userStore.hasRefreshedOnce) { _, refreshed in

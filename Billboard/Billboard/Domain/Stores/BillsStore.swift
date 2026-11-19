@@ -104,6 +104,12 @@ final class BillsStore: ObservableObject {
     /// The one restore of the cached manifest and bills. Every load awaits it, so a restore that
     /// finishes after a load cannot replace the load's newer manifest and bills with the cache.
     private var cacheRestoreTask: Task<Void, Never>?
+    /// The one-time full load after the update while it runs (UX-51); true when it got the full manifest. It
+    /// holds no `isLoading`, and every `load` cancels it and waits for it to end before its own
+    /// (`yieldVetoedFlagFullLoad`).
+    private var vetoedFlagFullLoadTask: Task<Bool, Never>?
+    /// The one-time full load is tried at most once per store, so once per launch and user.
+    private var hasTriedVetoedFlagFullLoad = false
     private var manifestEntries: [ManifestEntry] = []
     private var preparedManifestEntriesOverride: [ManifestEntry]?
     private var billsByGuid: [String: Bill]
@@ -256,26 +262,6 @@ final class BillsStore: ObservableObject {
         await load(mode: mode, loadFullManifest: true, historyWindow: historyWindow)
     }
 
-    /// The UserDefaults key of the one-time full load (UX-51), per signed-in user like the bills cache.
-    var vetoedFlagFullLoadKey: String {
-        ScopedStorageKey.make(base: "BillsStore.vetoedFlagFullLoad.v1", scope: cacheScope)
-    }
-
-    /// UX-51 (project decision 2026-11-19), once per install and user after the update to 1.3: loads the full
-    /// manifest, so every bill the store holds takes its row's veto flag (`applyingManifestVetoed`). Bills held
-    /// from 1.2 have no flag, and a windowed load reaches only the bills in its window: a voted or watched
-    /// vetoed bill outside it would otherwise keep FAILED on its card and its page, since opening a bill held as
-    /// hydrated does not fetch it again. A full copy already cached counts. Marked done only once the store has
-    /// the full manifest, so a load that fails, or is skipped because another is running, is tried again on a
-    /// later launch.
-    func loadFullManifestOnceForVetoedFlagIfNeeded(defaults: UserDefaults = .standard) async {
-        let key = vetoedFlagFullLoadKey
-        guard !defaults.bool(forKey: key) else { return }
-        await ensureFullManifestLoaded()
-        guard hasFullManifestCoverage else { return }
-        defaults.set(true, forKey: key)
-    }
-
     /// Which `searchableBills()` the store holds: it changes with every change to `bills` or the manifest, so
     /// Search can keep its index until then.
     struct SearchVersion: Equatable {
@@ -316,6 +302,8 @@ final class BillsStore: ObservableObject {
             detail: "forceRefresh=\(forceRefresh) mode=\(mode) fullManifest=\(loadFullManifest) historyWindow=\(historyWindow.rawValue)"
         )
         await restoreCachedStateIfNeeded()
+        // The one-time full load after the update gives way to every load (UX-51).
+        await yieldVetoedFlagFullLoad()
         if isLoading {
             HomePerfTimeline.mark("bills_load_skipped_already_loading")
             return
@@ -334,83 +322,11 @@ final class BillsStore: ObservableObject {
         }
 
         do {
-            var manifest: [BillsManifestItem]
-            // Published only once the manifest is applied (below): until then Search reads the old one, and
-            // "every bill" would let it say a bill doesn't exist while the full list is still being processed.
-            let fullManifestCoverage: Bool
-            if !forceRefresh,
-               service.cachedBillsManifestIsFresh(maxAge: ManifestCachePolicy.ttl),
-               !manifestItems.isEmpty {
-                let cachedManifestIsFull = service.cachedBillsManifestIsFull(maxAge: ManifestCachePolicy.ttl)
-                if loadFullManifest && !cachedManifestIsFull {
-                    HomePerfTimeline.mark("manifest_request_started", detail: "source=full_refresh")
-                    manifest = try await service.getBillsManifest(updatedAfter: nil)
-                    HomePerfTimeline.mark("manifest_response_received", detail: "source=full_refresh count=\(manifest.count)")
-                    oldestFetchedDate = nil
-                    canLoadMore = false
-                    fullManifestCoverage = true
-                } else {
-                    manifest = manifestItems
-                    HomePerfTimeline.mark(
-                        "manifest_reused_in_memory",
-                        detail: "count=\(manifest.count) isFull=\(cachedManifestIsFull)"
-                    )
-                    if loadFullManifest || cachedManifestIsFull {
-                        oldestFetchedDate = nil
-                        canLoadMore = false
-                        fullManifestCoverage = cachedManifestIsFull
-                    } else {
-                        oldestFetchedDate = oldestFetchedDate ?? Date(timeIntervalSinceNow: -Self.updatedAfterInterval(for: historyWindow))
-                        canLoadMore = true
-                        fullManifestCoverage = false
-                    }
-                }
-            } else if loadFullManifest {
-                // Load full manifest without date filter (for pull-to-refresh or explicit "load all").
-                HomePerfTimeline.mark("manifest_request_started", detail: "source=full_refresh")
-                manifest = try await service.getBillsManifest(updatedAfter: nil)
-                HomePerfTimeline.mark("manifest_response_received", detail: "source=full_refresh count=\(manifest.count)")
-                oldestFetchedDate = nil
-                canLoadMore = false
-                fullManifestCoverage = true
-            } else {
-                // Use updatedAfter to fetch only bills updated within the selected Home history window.
-                // This reduces payload size since the API now returns DDB table items directly.
-                let updatedAfter = Date(timeIntervalSinceNow: -Self.updatedAfterInterval(for: historyWindow))
-                HomePerfTimeline.mark(
-                    "manifest_request_started",
-                    detail: "source=windowed historyWindow=\(historyWindow.rawValue)"
-                )
-                manifest = try await service.getBillsManifest(updatedAfter: updatedAfter)
-                HomePerfTimeline.mark("manifest_response_received", detail: "source=windowed count=\(manifest.count)")
-                if service.cachedBillsManifestIsFull(),
-                   let cachedFullManifest = await Self.readCachedManifest(from: service) {
-                    // When a full manifest cache already exists, incremental refreshes merge into it (one
-                    // that leaves a gap replaces it instead, so it is no longer full: `BillsManifestCache`).
-                    // Use that same cache as the live source of truth so a stale cold start and the
-                    // next immediate cold start produce the same Home count.
-                    manifest = cachedFullManifest
-                    HomePerfTimeline.mark(
-                        "manifest_upgraded_to_cached_full",
-                        detail: "count=\(manifest.count)"
-                    )
-                    oldestFetchedDate = nil
-                    canLoadMore = false
-                    fullManifestCoverage = true
-                } else {
-                    oldestFetchedDate = updatedAfter
-                    canLoadMore = true
-                    fullManifestCoverage = false
-                }
-            }
-
-            applyManifestUpdate(await manifestUpdate(for: manifest))
-            hasFullManifestCoverage = fullManifestCoverage
-            #if DEBUG
-            reportDuplicateBillIDs()
-            #endif
-
-            cacheBills(bills)
+            try await fetchAndApplyManifest(
+                forceRefresh: forceRefresh,
+                loadFullManifest: loadFullManifest,
+                historyWindow: historyWindow
+            )
         } catch {
             // Amplify reports a cancelled request as an `APIError` wrapping `URLError.cancelled`.
             if APIErrorResponse.isCancellation(error) { return }
@@ -420,6 +336,203 @@ final class BillsStore: ObservableObject {
             print("[BillsStore] load() failed: \(APIErrorDebug.debugString(for: error))")
             #endif
         }
+    }
+
+    /// The body of `load` and of the one-time full load (UX-51): fetches the manifest (or reuses the one in
+    /// memory while the cached copy is fresh), applies it, and writes the bills cache. It touches neither
+    /// `isLoading` nor the error messages; a failed fetch is thrown.
+    private func fetchAndApplyManifest(
+        forceRefresh: Bool,
+        loadFullManifest: Bool,
+        historyWindow: BillboardHistoryWindow
+    ) async throws {
+        var manifest: [BillsManifestItem]
+        // Published only once the manifest is applied (below): until then Search reads the old one, and
+        // "every bill" would let it say a bill doesn't exist while the full list is still being processed.
+        let fullManifestCoverage: Bool
+        if !forceRefresh,
+           service.cachedBillsManifestIsFresh(maxAge: ManifestCachePolicy.ttl),
+           !manifestItems.isEmpty {
+            let cachedManifestIsFull = service.cachedBillsManifestIsFull(maxAge: ManifestCachePolicy.ttl)
+            if loadFullManifest && !cachedManifestIsFull {
+                HomePerfTimeline.mark("manifest_request_started", detail: "source=full_refresh")
+                manifest = try await service.getBillsManifest(updatedAfter: nil)
+                HomePerfTimeline.mark("manifest_response_received", detail: "source=full_refresh count=\(manifest.count)")
+                oldestFetchedDate = nil
+                canLoadMore = false
+                fullManifestCoverage = true
+            } else {
+                manifest = manifestItems
+                HomePerfTimeline.mark(
+                    "manifest_reused_in_memory",
+                    detail: "count=\(manifest.count) isFull=\(cachedManifestIsFull)"
+                )
+                if loadFullManifest || cachedManifestIsFull {
+                    oldestFetchedDate = nil
+                    canLoadMore = false
+                    fullManifestCoverage = cachedManifestIsFull
+                } else {
+                    oldestFetchedDate = oldestFetchedDate ?? Date(timeIntervalSinceNow: -Self.updatedAfterInterval(for: historyWindow))
+                    canLoadMore = true
+                    fullManifestCoverage = false
+                }
+            }
+        } else if loadFullManifest {
+            // Load full manifest without date filter (for pull-to-refresh or explicit "load all").
+            HomePerfTimeline.mark("manifest_request_started", detail: "source=full_refresh")
+            manifest = try await service.getBillsManifest(updatedAfter: nil)
+            HomePerfTimeline.mark("manifest_response_received", detail: "source=full_refresh count=\(manifest.count)")
+            oldestFetchedDate = nil
+            canLoadMore = false
+            fullManifestCoverage = true
+        } else {
+            // Use updatedAfter to fetch only bills updated within the selected Home history window.
+            // This reduces payload size since the API now returns DDB table items directly.
+            let updatedAfter = Date(timeIntervalSinceNow: -Self.updatedAfterInterval(for: historyWindow))
+            HomePerfTimeline.mark(
+                "manifest_request_started",
+                detail: "source=windowed historyWindow=\(historyWindow.rawValue)"
+            )
+            manifest = try await service.getBillsManifest(updatedAfter: updatedAfter)
+            HomePerfTimeline.mark("manifest_response_received", detail: "source=windowed count=\(manifest.count)")
+            if service.cachedBillsManifestIsFull(),
+               let cachedFullManifest = await Self.readCachedManifest(from: service) {
+                // When a full manifest cache already exists, incremental refreshes merge into it (one
+                // that leaves a gap replaces it instead, so it is no longer full: `BillsManifestCache`).
+                // Use that same cache as the live source of truth so a stale cold start and the
+                // next immediate cold start produce the same Home count.
+                manifest = cachedFullManifest
+                HomePerfTimeline.mark(
+                    "manifest_upgraded_to_cached_full",
+                    detail: "count=\(manifest.count)"
+                )
+                oldestFetchedDate = nil
+                canLoadMore = false
+                fullManifestCoverage = true
+            } else {
+                oldestFetchedDate = updatedAfter
+                canLoadMore = true
+                fullManifestCoverage = false
+            }
+        }
+
+        applyManifestUpdate(await manifestUpdate(for: manifest))
+        hasFullManifestCoverage = fullManifestCoverage
+        #if DEBUG
+        reportDuplicateBillIDs()
+        #endif
+
+        cacheBills(bills)
+    }
+
+    // MARK: - The one-time full load after the update (UX-51)
+
+    /// Whether an earlier version's manifest cache (1.2's `data.v5` or `coverage.v3`, or an older one) was on the
+    /// device when this launch started, so the launch follows an update. `BillBoardApp` reads it before
+    /// `discardEarlierCachesInBackground` deletes that cache.
+    static var earlierManifestCacheFoundAtLaunch = false
+
+    /// The UserDefaults key of the one-time full load (UX-51), per signed-in user like the bills cache.
+    var vetoedFlagFullLoadKey: String {
+        ScopedStorageKey.make(base: "BillsStore.vetoedFlagFullLoad.v1", scope: cacheScope)
+    }
+
+    /// Whether the one-time full load can change a bill the store holds (UX-51). Every bill the manifest lists
+    /// takes its row's veto flag on each apply (`applyingManifestVetoed`), and the only bills the store keeps
+    /// outside the manifest's window are voted and watched ones (`mergeIncomingBillsPreservingProtected`). So it
+    /// can matter after an update (`earlierManifestCacheFound`), or when the store holds a voted or watched bill
+    /// the manifest does not list: one restored from the bills cache that is outside the window. Never when the
+    /// store has the full manifest.
+    func vetoedFlagFullLoadCanMatter(earlierManifestCacheFound: Bool) -> Bool {
+        guard !hasFullManifestCoverage else { return false }
+        if earlierManifestCacheFound { return true }
+        let listed = Set(manifestItems.map { $0.guid.trimmingCharacters(in: .whitespacesAndNewlines) })
+        return bills.contains { bill in
+            guard bill.userVoted || bill.userWatched,
+                  let guid = bill.guid?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !guid.isEmpty else { return false }
+            return !listed.contains(guid)
+        }
+    }
+
+    /// UX-51 (project decision 2026-11-19), once per install and user after the update to 1.3: loads the full
+    /// manifest, so every bill the store holds takes its row's veto flag (`applyingManifestVetoed`). Bills held
+    /// from 1.2 have no flag, and a windowed load reaches only the bills in its window: a voted or watched
+    /// vetoed bill outside it would otherwise keep FAILED on its card and its page, since opening a bill held as
+    /// hydrated does not fetch it again.
+    ///
+    /// - It runs only when it can matter (`vetoedFlagFullLoadCanMatter`); otherwise it is marked done without a
+    ///   download, as on a fresh install.
+    /// - It waits for a load that is running, then runs in the background: it holds no `isLoading`, so the Bills
+    ///   tab's pull-to-refresh stays on and no load is skipped for it, and it never sets the error messages. Any
+    ///   `load` cancels it and waits for it to end first (`yieldVetoedFlagFullLoad`).
+    /// - It is marked done only once the store has the full manifest. A failure, or a load that cancelled it, is
+    ///   silent, and it is tried again on a later launch: at most once per store.
+    ///
+    /// `TabsBar` calls it once Home's startup reconciliation is over, with the Bills tab's window.
+    /// - Parameter earlierManifestCacheFound: nil for `earlierManifestCacheFoundAtLaunch` (tests pass a value).
+    func loadFullManifestOnceForVetoedFlagIfNeeded(
+        historyWindow: BillboardHistoryWindow?,
+        earlierManifestCacheFound: Bool? = nil,
+        defaults: UserDefaults = .standard
+    ) async {
+        let key = vetoedFlagFullLoadKey
+        guard !hasTriedVetoedFlagFullLoad, !defaults.bool(forKey: key) else { return }
+        hasTriedVetoedFlagFullLoad = true
+        await restoreCachedStateIfNeeded()
+        while isLoading, !Task.isCancelled {
+            for await loading in $isLoading.values where !loading { break }
+        }
+        guard !Task.isCancelled else { return }
+        let afterUpdate = earlierManifestCacheFound ?? Self.earlierManifestCacheFoundAtLaunch
+        guard vetoedFlagFullLoadCanMatter(earlierManifestCacheFound: afterUpdate) else {
+            HomePerfTimeline.mark("vetoed_flag_full_load_not_needed", detail: "fullManifest=\(hasFullManifestCoverage)")
+            defaults.set(true, forKey: key)
+            return
+        }
+
+        let historyWindow = historyWindow ?? .current
+        let task = Task { await self.loadFullManifestInBackground(historyWindow: historyWindow) }
+        vetoedFlagFullLoadTask = task
+        let loaded = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        vetoedFlagFullLoadTask = nil
+        if loaded {
+            defaults.set(true, forKey: key)
+        }
+    }
+
+    /// The one-time full load's body: `load`'s fetch and apply for the full manifest, keeping the Bills tab's
+    /// window, without `isLoading` or the error messages. True when the store then has the full manifest.
+    private func loadFullManifestInBackground(historyWindow: BillboardHistoryWindow) async -> Bool {
+        activeManifestHistoryWindow = historyWindow
+        HomePerfTimeline.mark("vetoed_flag_full_load_started", detail: "historyWindow=\(historyWindow.rawValue)")
+        do {
+            // A load that cancelled it before it started never waits for a download.
+            try Task.checkCancellation()
+            try await fetchAndApplyManifest(forceRefresh: false, loadFullManifest: true, historyWindow: historyWindow)
+        } catch {
+            HomePerfTimeline.mark(
+                "vetoed_flag_full_load_ended",
+                detail: "outcome=\(APIErrorResponse.isCancellation(error) ? "cancelled" : "failed")"
+            )
+            return false
+        }
+        HomePerfTimeline.mark("vetoed_flag_full_load_ended", detail: "outcome=loaded fullManifest=\(hasFullManifestCoverage)")
+        return hasFullManifestCoverage
+    }
+
+    /// Cancels the one-time full load, if it runs, and waits for it to end. A download in progress stops at once
+    /// (the fetch throws `CancellationError`); a manifest already fetched is still applied, as `load` applies
+    /// one, so the store's manifest stays the one the fetch cached, and two applies never overlap.
+    private func yieldVetoedFlagFullLoad() async {
+        guard let task = vetoedFlagFullLoadTask else { return }
+        HomePerfTimeline.mark("vetoed_flag_full_load_yielding")
+        task.cancel()
+        _ = await task.value
     }
 
     /// `manifest` normalized against the current manifest and bills, off the main actor like the cache
