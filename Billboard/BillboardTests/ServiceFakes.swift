@@ -39,6 +39,8 @@ final class FakeBillsService: BillsServicing {
     /// When set, a full fetch (`updatedAfter` nil) waits until it opens, and throws `CancellationError` when its
     /// task is cancelled first, as the live fetch does. A windowed fetch never waits.
     var holdFullManifest: CancellableGate?
+    /// The same for a windowed fetch (`updatedAfter` set). A full fetch never waits on it.
+    var holdWindowedManifest: CancellableGate?
 
     var processedBillResult: Result<Bill, Error> = .failure(FakeServiceError())
     private(set) var processedBillRequests: [(guid: String, congress: String?, billType: String?, billID: String?)] = []
@@ -58,6 +60,9 @@ final class FakeBillsService: BillsServicing {
         let index = min(manifestRequests.count - 1, manifestResults.count - 1)
         if updatedAfter == nil, let holdFullManifest {
             try await holdFullManifest.wait()
+        }
+        if updatedAfter != nil, let holdWindowedManifest {
+            try await holdWindowedManifest.wait()
         }
         return try manifestResults[index].get()
     }

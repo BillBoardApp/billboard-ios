@@ -18,6 +18,8 @@ extension BillsStore {
 
         DiskJSONCache.removeData(forKey: scopedDataKey)
         defaults.removeObject(forKey: scopedTimestampKey)
+        // The user's one-time full load mark (UX-51) goes with the bills it was for.
+        defaults.removeObject(forKey: scopedCacheKey(BillsStore.vetoedFlagFullLoadKeyBase, scope: scope))
 
         if ScopedStorageKey.normalizedScope(scope) != nil {
             DiskJSONCache.removeData(forKey: billsDataCacheKey)
