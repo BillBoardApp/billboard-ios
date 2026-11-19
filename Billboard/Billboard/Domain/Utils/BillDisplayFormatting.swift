@@ -242,12 +242,19 @@ enum BillDisplayFormatting {
     /// when it has neither.
     nonisolated static func timelineText(for action: Bill.BillAction) -> String? {
         let text = ownText(of: action)
-        return text.isEmpty ? actionTypeLabel(action.type) : text
+        return text.isEmpty ? timelineLabel(for: action) : text
     }
 
     /// The type label to show under a timeline action's line; nil when its line already is the label.
     nonisolated static func timelineTypeLabel(for action: Bill.BillAction) -> String? {
-        ownText(of: action).isEmpty ? nil : actionTypeLabel(action.type)
+        ownText(of: action).isEmpty ? nil : timelineLabel(for: action)
+    }
+
+    /// An action's label in the timeline: "Veto" for a veto or pocket veto, by its code (`isVetoAction`,
+    /// project decision 2026-11-19), which Congress.gov types President ("Sent to the President"); else its
+    /// type's label.
+    nonisolated private static func timelineLabel(for action: Bill.BillAction) -> String? {
+        actionTypeLabel(action.isVetoAction ? "Veto" : action.type)
     }
 
     nonisolated private static func ownText(of action: Bill.BillAction) -> String {

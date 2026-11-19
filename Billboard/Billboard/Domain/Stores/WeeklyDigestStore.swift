@@ -900,8 +900,12 @@ private enum LocalWeeklyDigestBuilder {
         let bill = candidate.bill
         let guid = bill.guid ?? candidate.manifest.guid
         let updatedAt = FlexibleISO8601.parse(bill.storedAt) ?? FlexibleISO8601.parse(candidate.manifest.updatedAt)
+        // A vetoed bill keeps its status (bucket, rank, `billState`); its stamp says VETOED, and the lines that would
+        // say "Passed this week" or "Failed this week" say what its veto news of the week was (project decision
+        // 2026-11-19).
+        let veto = bill.isVetoed ? vetoNews(for: bill, during: window) : nil
         let eyebrow = [
-            statusLabel(for: bill.billStatus),
+            bill.outcomeLabel,
             updatedAt.map { WeeklyDigestDateFormatter.shortDate($0) }
         ]
         .compactMap { $0 }
@@ -916,7 +920,7 @@ private enum LocalWeeklyDigestBuilder {
         let detail = firstNonEmpty(
             bill.soWhat,
             mostRelevantActionText(in: bill, during: window),
-            defaultChangeLine(for: bill.billStatus)
+            defaultChangeLine(for: bill.billStatus, veto: veto)
         )
 
         let reason: String? = {
@@ -927,6 +931,7 @@ private enum LocalWeeklyDigestBuilder {
             }
             if let topic = candidate.topicMatches.first { return "Matches your topic: \(topic)" }
             if let lifeArea = candidate.lifeAreaMatches.first { return "Matches your life area: \(lifeArea)" }
+            if let veto { return veto }
             switch bill.billStatus {
             case .passed: return "Passed this week"
             case .finalized: return "Became law this week"
@@ -945,6 +950,7 @@ private enum LocalWeeklyDigestBuilder {
             reason: reason,
             accent: accent,
             billState: digestState(for: bill.billStatus),
+            vetoed: bill.isVetoed ? true : nil,
             billGuid: guid,
             primaryMemberBioguideID: candidate.matchingMemberIDs.first
         )
@@ -971,7 +977,10 @@ private enum LocalWeeklyDigestBuilder {
             .first(where: { !$0.isEmpty })
     }
 
-    private static func defaultChangeLine(for status: BillStatus) -> String {
+    /// The item's line when nothing else says what happened: a vetoed bill's veto news (`vetoNews`), else its
+    /// status's.
+    private static func defaultChangeLine(for status: BillStatus, veto: String? = nil) -> String {
+        if let veto { return "\(veto)." }
         switch status {
         case .new:
             return "New this week."
@@ -986,13 +995,28 @@ private enum LocalWeeklyDigestBuilder {
         }
     }
 
-    private static func mostRelevantActionText(in bill: Bill, during window: DigestPublicationWindow) -> String? {
+    /// What a vetoed bill's week brought, worded as the server's brief words it: "Veto override failed this week"
+    /// when a failed override vote (33000, 35000) is dated in the week, the later news when the veto is too;
+    /// "Vetoed this week" when the veto (31000, 30000) is; else "Vetoed by the President", as for a placeholder,
+    /// which has no actions. One line for every week would misdate the news: in the week of 2026-01-08 H.R. 131's
+    /// news was its failed override, not its veto of 2025-12-29.
+    private static func vetoNews(for bill: Bill, during window: DigestPublicationWindow) -> String {
+        let inWeek = bill.actions.filter { isInWeek($0, window) }
+        if inWeek.contains(where: \.isFailedOverrideAction) { return "Veto override failed this week" }
+        if inWeek.contains(where: \.isVetoAction) { return "Vetoed this week" }
+        return "Vetoed by the President"
+    }
+
+    /// The action is dated in the brief's week.
+    private static func isInWeek(_ action: Bill.BillAction, _ window: DigestPublicationWindow) -> Bool {
+        guard let date = FlexibleISO8601.parse(action.actionDate) else { return false }
         let dayAfterWeekEnd = WeeklyDigestSchedule.calendar.date(byAdding: .day, value: 1, to: window.end) ?? window.end
+        return date >= window.start && date < dayAfterWeekEnd
+    }
+
+    private static func mostRelevantActionText(in bill: Bill, during window: DigestPublicationWindow) -> String? {
         let filtered = bill.actions
-            .filter { action in
-                guard let date = FlexibleISO8601.parse(action.actionDate) else { return false }
-                return date >= window.start && date < dayAfterWeekEnd
-            }
+            .filter { isInWeek($0, window) }
             .sorted { lhs, rhs in
                 let left = FlexibleISO8601.parse(lhs.actionDate) ?? .distantPast
                 let right = FlexibleISO8601.parse(rhs.actionDate) ?? .distantPast
@@ -1002,11 +1026,6 @@ private enum LocalWeeklyDigestBuilder {
         return filtered
             .compactMap { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty })
-    }
-
-    /// The eyebrow's status word: "Became law" for Finalized.
-    private static func statusLabel(for status: BillStatus) -> String {
-        status.displayLabel
     }
 
     private static func makeSummary(
@@ -1069,6 +1088,7 @@ private enum LocalWeeklyDigestBuilder {
             committees: [],
             lifeAreas: item.lifeAreas,
             billStatus: BillStatus(rawValue: item.billStatus ?? "") ?? .new,
+            vetoed: item.vetoed == true ? true : nil,
             guid: item.guid,
             congress: item.congress,
             billType: item.billType,

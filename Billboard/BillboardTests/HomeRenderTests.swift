@@ -242,6 +242,11 @@ final class HomeRenderTests: XCTestCase {
             SlipVariant(name: "became-law", content: BillSlipContent(
                 title: "Heritage Month Act", numbers: ["H.R. 498"], status: .finalized, lastUpdated: daysAgo(15)
             )),
+            // Project decision 2026-11-19: VETOED, in the Failed colour, single-ruled.
+            SlipVariant(name: "vetoed", content: BillSlipContent(
+                title: "Clean Energy Access Act", numbers: ["H.R. 131", "S. 296"], status: .failed, vetoed: true,
+                tags: [.identicalBills, .topic("Energy")], sponsor: jordan, lastUpdated: daysAgo(6)
+            )),
             SlipVariant(name: "companion", content: BillSlipContent(
                 title: "Protecting Veterans Act", numbers: ["H.R. 10", "S. 10"], status: .passed, companionLead: "S. 10",
                 tags: [.identicalBills, .memberYouFollow], sponsor: priya, lastUpdated: daysAgo(8)

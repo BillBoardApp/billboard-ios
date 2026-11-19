@@ -23,6 +23,11 @@ import os
 /// install starts from a fresh fetch and never merges into that order, and deletes the old copy at
 /// launch (`discardEarlierCachesInBackground`).
 ///
+/// 1.2's copy (`data.v5`, `coverage.v3`) has no veto flags (UX-51, project decision 2026-11-19): 1.3 reads
+/// `data.v6` and `coverage.v4`, so its first fetch writes a fresh copy that carries them, and the launch
+/// deletes 1.2's. A full fetch is still made only when a screen needs every bill, as before; the one-time
+/// full load after the update (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`) is one.
+///
 /// Writes are serialized (`writeLock`) and the coverage is only reported for the file it was
 /// recorded with, so the coverage and the file always match.
 ///
@@ -71,22 +76,26 @@ nonisolated struct BillsManifestCache: Sendable {
     @TaskLocal static var current = BillsManifestCache()
 
     let namespace: String
-    var dataKey: String { "\(namespace).data.v5" }
-    var timestampKey: String { "\(namespace).timestamp.v5" }
-    var coverageKey: String { "\(namespace).coverage.v3" }
+    var dataKey: String { "\(namespace).data.v6" }
+    var timestampKey: String { "\(namespace).timestamp.v6" }
+    var coverageKey: String { "\(namespace).coverage.v4" }
     /// The size of the file the coverage was recorded for.
-    var byteCountKey: String { "\(namespace).bytes.v2" }
+    var byteCountKey: String { "\(namespace).bytes.v3" }
     /// The companion groups of the latest response that listed them (a file under Caches).
     var companionGroupsKey: String { "\(namespace).companionGroups.v1" }
 
     /// The keys of earlier caches, removed at launch and by the next write: the unversioned keys of the
-    /// first cache (its items were a UserDefaults blob), the capped v3 cache, and 1.1's v4 cache (INT-11:
-    /// ranked by vote count, counts included). Data keys are removed from both UserDefaults and Caches.
-    var legacyDataKeys: [String] { ["\(namespace).data", "\(namespace).data.v3", "\(namespace).data.v4"] }
+    /// first cache (its items were a UserDefaults blob), the capped v3 cache, 1.1's v4 cache (INT-11:
+    /// ranked by vote count, counts included) and 1.2's v5 cache (no veto flags, UX-51). Data keys are
+    /// removed from both UserDefaults and Caches.
+    var legacyDataKeys: [String] {
+        ["\(namespace).data", "\(namespace).data.v3", "\(namespace).data.v4", "\(namespace).data.v5"]
+    }
     var legacyDefaultsKeys: [String] {
         [
             "\(namespace).timestamp", "\(namespace).timestamp.v3", "\(namespace).coverage.v1",
-            "\(namespace).timestamp.v4", "\(namespace).coverage.v2", "\(namespace).bytes.v1"
+            "\(namespace).timestamp.v4", "\(namespace).coverage.v2", "\(namespace).bytes.v1",
+            "\(namespace).timestamp.v5", "\(namespace).coverage.v3", "\(namespace).bytes.v2"
         ]
     }
 
@@ -363,6 +372,8 @@ nonisolated struct BillsManifestCache: Sendable {
             priorityExpiresAt: preferred.priorityExpiresAt ?? fallback.priorityExpiresAt,
             title: preferred.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback.title : preferred.title,
             billStatus: preferred.billStatus ?? fallback.billStatus,
+            // The veto flag of the item whose status is used (UX-51).
+            vetoed: preferred.billStatus != nil || fallback.billStatus == nil ? preferred.vetoed : fallback.vetoed,
             civicProfile: preferred.civicProfile ?? fallback.civicProfile
         )
     }
@@ -388,6 +399,7 @@ nonisolated struct BillsManifestCache: Sendable {
             + item.sponsors.count
             + item.cosponsors.count
             + (item.billStatus == nil ? 0 : 1)
+            + (item.vetoed == true ? 1 : 0)
             + (item.civicProfile == nil ? 0 : 1)
     }
 
@@ -408,6 +420,7 @@ nonisolated struct BillsManifestCache: Sendable {
             priorityExpiresAt: trimmedOrNil(item.priorityExpiresAt),
             title: item.title.trimmingCharacters(in: .whitespacesAndNewlines),
             billStatus: trimmedOrNil(item.billStatus),
+            vetoed: item.vetoed,
             civicProfile: item.civicProfile
         )
     }

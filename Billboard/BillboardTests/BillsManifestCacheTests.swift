@@ -269,7 +269,11 @@ final class BillsManifestCacheTests: XCTestCase {
         defaults.set(Data("[]".utf8), forKey: "\(cache.namespace).data")
         DiskJSONCache.store(Data("[]".utf8), forKey: "\(cache.namespace).data.v3")
         DiskJSONCache.store(Data("[]".utf8), forKey: "\(cache.namespace).data.v4")
-        let legacyDefaultsNames = ["timestamp", "timestamp.v3", "coverage.v1", "timestamp.v4", "coverage.v2", "bytes.v1"]
+        DiskJSONCache.store(Data("[]".utf8), forKey: "\(cache.namespace).data.v5")
+        let legacyDefaultsNames = [
+            "timestamp", "timestamp.v3", "coverage.v1", "timestamp.v4", "coverage.v2", "bytes.v1",
+            "timestamp.v5", "coverage.v3", "bytes.v2"
+        ]
         for key in legacyDefaultsNames {
             defaults.set("legacy", forKey: "\(cache.namespace).\(key)")
         }
@@ -279,6 +283,7 @@ final class BillsManifestCacheTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "\(cache.namespace).data"))
         XCTAssertNil(DiskJSONCache.byteCount(forKey: "\(cache.namespace).data.v3"))
         XCTAssertNil(DiskJSONCache.byteCount(forKey: "\(cache.namespace).data.v4"))
+        XCTAssertNil(DiskJSONCache.byteCount(forKey: "\(cache.namespace).data.v5"), "1.2's copy, without veto flags (UX-51)")
         for key in legacyDefaultsNames {
             XCTAssertNil(defaults.object(forKey: "\(cache.namespace).\(key)"), key)
         }
@@ -288,7 +293,10 @@ final class BillsManifestCacheTests: XCTestCase {
         )
         XCTAssertEqual(
             BillsManifestCache().legacyDataKeys,
-            ["BillsService.billsManifest.data", "BillsService.billsManifest.data.v3", "BillsService.billsManifest.data.v4"]
+            [
+                "BillsService.billsManifest.data", "BillsService.billsManifest.data.v3", "BillsService.billsManifest.data.v4",
+                "BillsService.billsManifest.data.v5"
+            ]
         )
     }
 
@@ -323,8 +331,8 @@ final class BillsManifestCacheTests: XCTestCase {
         XCTAssertEqual(cachedMemberLists(), [["BILLS-119hr1", "BILLS-119s1"]])
         // The groups carry no vote data, so INT-11's key bump (ManifestCacheUpgradeTests) leaves their file.
         XCTAssertEqual(cache.companionGroupsKey, "\(cache.namespace).companionGroups.v1")
-        XCTAssertEqual(cache.dataKey, "\(cache.namespace).data.v5")
-        XCTAssertEqual(cache.coverageKey, "\(cache.namespace).coverage.v3")
+        XCTAssertEqual(cache.dataKey, "\(cache.namespace).data.v6")
+        XCTAssertEqual(cache.coverageKey, "\(cache.namespace).coverage.v4")
         XCTAssertEqual(cache.coverage(), .full)
     }
 

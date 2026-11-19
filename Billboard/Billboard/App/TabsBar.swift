@@ -182,6 +182,19 @@ struct TabsBar: View {
         hasCompletedInitialWeeklyDigestBootstrap = true
     }
 
+    /// UX-51 (project decision 2026-11-19): once after the update to 1.3, when the first bills load is done, the
+    /// full manifest, so the bills held from 1.2 take their veto flags
+    /// (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`; it does nothing once it has run).
+    @MainActor
+    private func scheduleVetoedFlagFullLoadIfNeeded() {
+        guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
+        Task { @MainActor in
+            await waitForBillsStoreToBecomeIdle()
+            guard !Task.isCancelled else { return }
+            await billsStore.loadFullManifestOnceForVetoedFlagIfNeeded()
+        }
+    }
+
     /// Waits for an in-flight bills load to finish. Stops early when the task is cancelled
     /// (callers check `Task.isCancelled` afterwards) and gives up after `timeout`; a `load`
     /// started while another is still running is skipped by `BillsStore` anyway.
@@ -527,6 +540,13 @@ struct TabsBar: View {
                 guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
                 await billVoteStore.recheckEarlierAbstains()
             }
+            .task {
+                // UX-51: when the bills loaded before this view appeared, `onChange(of: hasLoadedOnce)` below
+                // does not fire.
+                if billsStore.hasLoadedOnce {
+                    scheduleVetoedFlagFullLoadIfNeeded()
+                }
+            }
             // The chips, the Civic Rank sheet and the Civic Profile on a return to the app and a new day.
             .refreshesCivicStats(score: civicScoreStore, profile: civicProfileStore)
             .onReceive(billsStore.$bills) { _ in
@@ -574,6 +594,9 @@ struct TabsBar: View {
                 // that predate the Watch preference type get backfilled to the backend.
                 if loaded, userStore.hasRefreshedOnce {
                     billsStore.reconcileWatchesFromProfile(userStore.profile.watchedBillGUIDs)
+                }
+                if loaded {
+                    scheduleVetoedFlagFullLoadIfNeeded()
                 }
             }
             .onChange(of: userStore.hasRefreshedOnce) { _, refreshed in

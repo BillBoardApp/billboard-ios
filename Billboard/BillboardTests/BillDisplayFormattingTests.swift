@@ -54,6 +54,23 @@ final class BillDisplayFormattingTests: XCTestCase {
         XCTAssertNil(BillDisplayFormatting.actionTypeLabel("NotUsed"))
     }
 
+    /// Congress.gov types "Vetoed by President." President, which reads "Sent to the President": the timeline
+    /// labels a veto (31000) or pocket veto (30000) "Veto" by its code (project decision 2026-11-19).
+    func testTheTimelineLabelsAVetoLineVeto() {
+        func action(_ code: String?, _ text: String?, _ type: String) -> Bill.BillAction {
+            Bill.BillAction(actionCode: code, actionDate: "2025-12-29", text: text, type: type, sourceSystem: nil, committees: nil)
+        }
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action("31000", "Vetoed by President.", "President")), "Veto")
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action(" 30000 ", "Pocket vetoed by President.", "President")), "Veto")
+        XCTAssertEqual(BillDisplayFormatting.timelineText(for: action("31000", nil, "President")), "Veto", "a line without text")
+        // Other President lines keep their label; the House's E30000 counts only through its 31000 twin.
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action("28000", "Presented to President.", "President")), "Sent to the President")
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action("E30000", "Vetoed by President.", "President")), "Sent to the President")
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action(nil, "Vetoed by President.", "President")), "Sent to the President", "never by its text")
+        XCTAssertEqual(BillDisplayFormatting.timelineTypeLabel(for: action("33000", "Failed of passage in House over veto by the Yeas and Nays.", "Veto")), "Veto")
+        XCTAssertEqual(BillDisplayFormatting.actionTypeLabel("President"), "Sent to the President", "the type's label is unchanged")
+    }
+
     // MARK: - Companion bills (APPF-23)
 
     /// Each of the eight bill types, from a plain guid and from a text-version guid.
@@ -110,6 +127,13 @@ final class BillDisplayFormattingTests: XCTestCase {
         XCTAssertEqual(senateLeads.label, "Failed · S.J.Res. 84")
         let houseLeads = CompanionStatusLead(guid: "BILLS-119hjres131", status: .finalized, isPrimary: true, billNumber: "H.J.Res. 131")
         XCTAssertEqual(houseLeads.label, "Became law", "Finalized reads as Became law (REL-44)")
+        // Project decision 2026-11-19: a vetoed lead reads "Vetoed"; a law never does.
+        let vetoedHouse = CompanionStatusLead(guid: "BILLS-119hr10", status: .failed, vetoed: true, isPrimary: false, billNumber: "H.R. 10")
+        XCTAssertEqual(vetoedHouse.label, "Vetoed · H.R. 10")
+        let vetoedPrimary = CompanionStatusLead(guid: "BILLS-119hr131", status: .passed, vetoed: true, isPrimary: true, billNumber: "H.R. 131")
+        XCTAssertEqual(vetoedPrimary.label, "Vetoed")
+        let law = CompanionStatusLead(guid: "BILLS-119hr10", status: .finalized, vetoed: true, isPrimary: false, billNumber: "H.R. 10")
+        XCTAssertEqual(law.label, "Became law · H.R. 10")
     }
 
     func testCompanionCaptionsAndSubtitle() {

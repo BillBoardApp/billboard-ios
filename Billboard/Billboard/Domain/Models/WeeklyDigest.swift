@@ -101,6 +101,9 @@ struct WeeklyDigestItem: Identifiable, Codable, Equatable {
     let reason: String?
     let accent: Accent
     let billState: BillState?
+    /// True when the bill's veto stands (project decision 2026-11-19): its docket line is stamped VETOED, while
+    /// `billState` keeps the status's value. Nil otherwise, and in a brief cached without the key.
+    var vetoed: Bool? = nil
     let billGuid: String?
     let primaryMemberBioguideID: String?
 
@@ -133,14 +136,14 @@ extension WeeklyDigestItem {
 
     /// The eyebrow as the Weekly Brief detail shows it (Civic Record spec 4.52): the date alone ("Oct
     /// 14"), since the docket line's stamp already says the status. The server and the local builder
-    /// write "Updated Oct 14" or "Became law Oct 14", so a bill item's leading status word is dropped;
-    /// any other eyebrow is kept as written. Nil for a member item (its eyebrow is a count, "2 relevant
+    /// write "Updated Oct 14" or "Became law Oct 14" (the local builder "Vetoed Oct 14" for a vetoed bill), so
+    /// a bill item's leading status word is dropped; any other eyebrow is kept as written. Nil for a member item (its eyebrow is a count, "2 relevant
     /// bills this week", which its summary already says) and when nothing is left.
     nonisolated var dateEyebrow: String? {
         guard kind == .bill, let eyebrow = eyebrow?.trimmingCharacters(in: .whitespacesAndNewlines), !eyebrow.isEmpty else {
             return nil
         }
-        let statusWords = ["Became law", "Finalized", "Updated", "Passed", "Failed", "New"]
+        let statusWords = ["Became law", "Finalized", "Updated", "Passed", "Failed", "Vetoed", "New"]
         for word in statusWords {
             guard eyebrow.range(of: word, options: [.anchored, .caseInsensitive]) != nil else { continue }
             let rest = eyebrow.dropFirst(word.count)
@@ -368,6 +371,7 @@ extension WeeklyDigestItem {
             reason: dto.reason,
             accent: Accent(rawValue: dto.accent) ?? .neutral,
             billState: dto.billState.flatMap(BillState.init(rawValue:)),
+            vetoed: dto.vetoed == true ? true : nil,
             billGuid: dto.billGuid,
             primaryMemberBioguideID: dto.primaryMemberBioguideId?.uppercased()
         )

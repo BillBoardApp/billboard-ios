@@ -132,8 +132,8 @@ struct UpdatesActionRow: View {
     }
 }
 
-/// A Passed or Failed bills row (spec 4.53): the docket line with the PASSED, FAILED or BECAME LAW stamp
-/// (no seal icon; the stamp replaces R2's "Became law" caption), the title (2 lines), the summary (3
+/// A Passed or Failed bills row (spec 4.53): the docket line with the PASSED, FAILED, VETOED or BECAME LAW
+/// stamp (no seal icon; the stamp replaces R2's "Became law" caption), the title (2 lines), the summary (3
 /// lines) and the topic, over a hairline. It opens the bill with the vote panel (project decision 1).
 struct UpdatesOutcomeRow: View {
     let bill: Bill
@@ -142,9 +142,9 @@ struct UpdatesOutcomeRow: View {
 
     private var docketLine: DocketLine {
         if let number = bill.officialBillNumber {
-            return DocketLine(number: number, status: bill.billStatus)
+            return DocketLine(number: number, status: bill.billStatus, vetoed: bill.isVetoed)
         }
-        return DocketLine(numbers: [], chamber: nil, status: bill.billStatus)
+        return DocketLine(numbers: [], chamber: nil, status: bill.billStatus, vetoed: bill.isVetoed)
     }
 
     private var summary: String? {

@@ -256,6 +256,26 @@ final class BillsStore: ObservableObject {
         await load(mode: mode, loadFullManifest: true, historyWindow: historyWindow)
     }
 
+    /// The UserDefaults key of the one-time full load (UX-51), per signed-in user like the bills cache.
+    var vetoedFlagFullLoadKey: String {
+        ScopedStorageKey.make(base: "BillsStore.vetoedFlagFullLoad.v1", scope: cacheScope)
+    }
+
+    /// UX-51 (project decision 2026-11-19), once per install and user after the update to 1.3: loads the full
+    /// manifest, so every bill the store holds takes its row's veto flag (`applyingManifestVetoed`). Bills held
+    /// from 1.2 have no flag, and a windowed load reaches only the bills in its window: a voted or watched
+    /// vetoed bill outside it would otherwise keep FAILED on its card and its page, since opening a bill held as
+    /// hydrated does not fetch it again. A full copy already cached counts. Marked done only once the store has
+    /// the full manifest, so a load that fails, or is skipped because another is running, is tried again on a
+    /// later launch.
+    func loadFullManifestOnceForVetoedFlagIfNeeded(defaults: UserDefaults = .standard) async {
+        let key = vetoedFlagFullLoadKey
+        guard !defaults.bool(forKey: key) else { return }
+        await ensureFullManifestLoaded()
+        guard hasFullManifestCoverage else { return }
+        defaults.set(true, forKey: key)
+    }
+
     /// Which `searchableBills()` the store holds: it changes with every change to `bills` or the manifest, so
     /// Search can keep its index until then.
     struct SearchVersion: Equatable {
@@ -440,11 +460,11 @@ final class BillsStore: ObservableObject {
         var mergedBills = changes.mergedBills
         var resolvedActiveManifestBills = changes.resolvedActiveManifestBills
         if billsRevision != computed.billsRevision {
-            mergedBills = Self.mergeIncomingBillsPreservingProtected(
+            mergedBills = Self.applyingManifestVetoed(update.manifest, to: Self.mergeIncomingBillsPreservingProtected(
                 changes.visibleEntries.map(\.placeholderBill),
                 existing: bills,
                 source: .manifestRow
-            )
+            ))
             resolvedActiveManifestBills = Self.resolveManifestBills(
                 manifestEntries: changes.visibleEntries,
                 billsByGuid: Self.makeBillLookupByGuid(from: mergedBills),
