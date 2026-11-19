@@ -215,6 +215,10 @@ enum BillDisplayFormatting {
     /// "Became Public Law ..."), so the stored order is the only one that holds for a whole day. Ordering a day
     /// by text put it in alphabetical order, and LATEST ACTION could name a procedural step for a bill that had
     /// become law. Swift's sort is not stable, so the stored position is the tie-break.
+    ///
+    /// Of a veto's two lines, the House's E30000 and the Library of Congress's 31000 (stored in that order),
+    /// the 31000 one is listed, in the place of the first, so the line is labelled "Veto" (`timelineLabel`,
+    /// project decision 2026-11-19).
     nonisolated static func timelineActions(_ actions: [Bill.BillAction]) -> [Bill.BillAction] {
         let datesWithText = Set(actions.compactMap { action -> String? in
             ownText(of: action).isEmpty ? nil : trimmedDate(of: action)
@@ -226,13 +230,19 @@ enum BillDisplayFormatting {
             return a.offset < b.offset
         }.map(\.element)
 
-        var seen = Set<String>()
+        var kept: [String: Int] = [:]
         var out: [Bill.BillAction] = []
         out.reserveCapacity(newestFirst.count)
         for action in newestFirst {
             let date = trimmedDate(of: action)
             if ownText(of: action).isEmpty, datesWithText.contains(date) { continue }
-            guard let text = timelineText(for: action), seen.insert(date + "|" + text.lowercased()).inserted else { continue }
+            guard let text = timelineText(for: action) else { continue }
+            let key = date + "|" + text.lowercased()
+            if let index = kept[key] {
+                if action.isVetoAction, !out[index].isVetoAction { out[index] = action }
+                continue
+            }
+            kept[key] = out.count
             out.append(action)
         }
         return out.reversed()
