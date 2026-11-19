@@ -434,8 +434,11 @@ final class BillsStore: ObservableObject {
 
     /// The UserDefaults key of the one-time full load (UX-51), per signed-in user like the bills cache.
     var vetoedFlagFullLoadKey: String {
-        ScopedStorageKey.make(base: "BillsStore.vetoedFlagFullLoad.v1", scope: cacheScope)
+        ScopedStorageKey.make(base: Self.vetoedFlagFullLoadKeyBase, scope: cacheScope)
     }
+
+    /// The base of `vetoedFlagFullLoadKey`; `clearCachedBills` removes the user's key with the bills cache.
+    nonisolated static let vetoedFlagFullLoadKeyBase = "BillsStore.vetoedFlagFullLoad.v1"
 
     /// Whether the one-time full load can change a bill the store holds (UX-51). Every bill the manifest lists
     /// takes its row's veto flag on each apply (`applyingManifestVetoed`), and the only bills the store keeps
@@ -480,7 +483,9 @@ final class BillsStore: ObservableObject {
         guard !hasTriedVetoedFlagFullLoad, !defaults.bool(forKey: key) else { return }
         hasTriedVetoedFlagFullLoad = true
         await restoreCachedStateIfNeeded()
+        var waitedForLoad = false
         while isLoading, !Task.isCancelled {
+            waitedForLoad = true
             for await loading in $isLoading.values where !loading { break }
         }
         guard !Task.isCancelled else { return }
@@ -491,7 +496,9 @@ final class BillsStore: ObservableObject {
             return
         }
 
-        let historyWindow = historyWindow ?? .current
+        // A load that ran while it waited set the window the Bills tab shows now; the window passed in was read
+        // before that load, so it would put an older window back.
+        let historyWindow = waitedForLoad ? activeManifestHistoryWindow : (historyWindow ?? .current)
         let task = Task { await self.loadFullManifestInBackground(historyWindow: historyWindow) }
         vetoedFlagFullLoadTask = task
         let loaded = await withTaskCancellationHandler {
@@ -508,11 +515,12 @@ final class BillsStore: ObservableObject {
     /// The one-time full load's body: `load`'s fetch and apply for the full manifest, keeping the Bills tab's
     /// window, without `isLoading` or the error messages. True when the store then has the full manifest.
     private func loadFullManifestInBackground(historyWindow: BillboardHistoryWindow) async -> Bool {
-        activeManifestHistoryWindow = historyWindow
         HomePerfTimeline.mark("vetoed_flag_full_load_started", detail: "historyWindow=\(historyWindow.rawValue)")
         do {
-            // A load that cancelled it before it started never waits for a download.
+            // A load that cancelled it before it started never waits for a download, and keeps its own window:
+            // the window is set only once this load goes ahead.
             try Task.checkCancellation()
+            activeManifestHistoryWindow = historyWindow
             try await fetchAndApplyManifest(forceRefresh: false, loadFullManifest: true, historyWindow: historyWindow)
         } catch {
             HomePerfTimeline.mark(

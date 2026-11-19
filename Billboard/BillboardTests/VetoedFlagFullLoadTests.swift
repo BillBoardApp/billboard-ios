@@ -347,6 +347,62 @@ final class VetoedFlagFullLoadTests: XCTestCase {
         await settleBillsCache(scope: scope)
     }
 
+    /// The window it was asked with was read before a load that ran meanwhile; that load's window, the one the
+    /// Bills tab now shows, is kept.
+    @MainActor
+    func testAfterWaitingForALoadItKeepsThatLoadsWindow() async throws {
+        try writeBillsCache([try votedBillHeldFrom12("BILLS-119hr131", daysAgo: 400)])
+        let service = FakeBillsService()
+        service.manifestResults = [
+            .success([try item("BILLS-119hr9", daysAgo: 1)]),
+            .success([try item("BILLS-119hr9", daysAgo: 1), try item("BILLS-119hr10", daysAgo: 10)]),
+            .success([
+                try item("BILLS-119hr9", daysAgo: 1), try item("BILLS-119hr10", daysAgo: 10),
+                try item("BILLS-119hr131", daysAgo: 400, status: "Failed", vetoed: true)
+            ])
+        ]
+        let store = makeStore(service)
+        await startupRefresh(store)
+
+        // A two-week refresh is running (its windowed download held) when the one-time load is asked for with the
+        // one-week window read before it.
+        let windowed = CancellableGate()
+        service.holdWindowedManifest = windowed
+        let refresh = Task { await store.load(forceRefresh: true, mode: .manifestOnly, historyWindow: .twoWeeks) }
+        try await waitUntil { service.manifestRequests.count == 2 }
+        let defaults = defaults!
+        let background = Task {
+            await store.loadFullManifestOnceForVetoedFlagIfNeeded(historyWindow: .oneWeek, earlierManifestCacheFound: true, defaults: defaults)
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        windowed.open()
+        await refresh.value
+        await background.value
+
+        XCTAssertEqual(service.manifestRequests.count, 3)
+        XCTAssertTrue(lastRequestIsFull(service))
+        XCTAssertTrue(isDone(store))
+        XCTAssertEqual(store.bill(forGUID: "BILLS-119hr131")?.vetoed, true)
+        XCTAssertNotNil(
+            store.bills.first { $0.guid == "BILLS-119hr10" },
+            "the ten-day-old bill stays listed: the two-week window was kept, not the one-week one"
+        )
+        await settleBillsCache(scope: scope)
+    }
+
+    /// Sign-out purges the user's mark with their bills cache, as every other per-user key.
+    @MainActor
+    func testSignOutPurgesTheUsersMark() async throws {
+        let service = FakeBillsService()
+        let store = makeStore(service)
+        defaults.set(true, forKey: store.vetoedFlagFullLoadKey)
+        XCTAssertTrue(isDone(store))
+
+        UserLocalDataPurge.purge(userId: scope, defaults: defaults)
+
+        XCTAssertFalse(isDone(store))
+    }
+
     // MARK: - After Home's startup reconciliation (TabsBar)
 
     /// The state `TabsBar` keeps: its deferred Home refresh, which clears itself when it ends.
