@@ -25,9 +25,13 @@ struct BillBoardApp: App {
     init() {
         MetricDiagnosticsSubscriber.shared.register()
         AppLaunchOptions.prepareAppForLaunch()
-        // 1.2 reads its own manifest cache keys (INT-11), so the copy 1.1 left is never read. Delete it on a
-        // utility task: the launch does not wait for the file system.
-        BillsManifestCache().discardEarlierCachesInBackground()
+        // The app reads its own manifest cache keys (INT-11, UX-51), so the copy 1.1 or 1.2 left is never read.
+        // Delete it on a utility task: the launch does not wait for the file system. Whether one was there says
+        // this launch follows an update, so that is read first: the one-time full load for the veto flags runs
+        // after an update, or for bills held outside the window, and never on a fresh install (UX-51).
+        let manifestCache = BillsManifestCache()
+        BillsStore.earlierManifestCacheFoundAtLaunch = manifestCache.holdsEarlierCache()
+        manifestCache.discardEarlierCachesInBackground()
 
         startupFailed = !StartupConfiguration.attempt { try AmplifyService.configureIfNeeded() }
         Self.configureUIKitAppearance()

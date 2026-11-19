@@ -26,7 +26,8 @@ import os
 /// 1.2's copy (`data.v5`, `coverage.v3`) has no veto flags (UX-51, project decision 2026-11-19): 1.3 reads
 /// `data.v6` and `coverage.v4`, so its first fetch writes a fresh copy that carries them, and the launch
 /// deletes 1.2's. A full fetch is still made only when a screen needs every bill, as before; the one-time
-/// full load after the update (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`) is one.
+/// full load after the update (`BillsStore.loadFullManifestOnceForVetoedFlagIfNeeded`) is one. The launch
+/// notes first whether an earlier copy was there (`holdsEarlierCache`), so a fresh install never makes it.
 ///
 /// Writes are serialized (`writeLock`) and the coverage is only reported for the file it was
 /// recorded with, so the coverage and the file always match.
@@ -251,6 +252,16 @@ nonisolated struct BillsManifestCache: Sendable {
     func removeLegacyCache() {
         legacyDataKeys.forEach(DiskJSONCache.removeData(forKey:))
         legacyDefaultsKeys.forEach(UserDefaults.standard.removeObject(forKey:))
+    }
+
+    /// Whether an earlier version's cache of this namespace is still on the device (`legacyDataKeys`,
+    /// `legacyDefaultsKeys`): 1.2's `data.v5` or `coverage.v3`, or an older one. True at the first launch after
+    /// an update, until `removeLegacyCache` runs, so the launch reads it first (UX-51). Checks the file's
+    /// attributes, not its contents.
+    func holdsEarlierCache() -> Bool {
+        let defaults = UserDefaults.standard
+        return legacyDataKeys.contains { DiskJSONCache.byteCount(forKey: $0) != nil || defaults.object(forKey: $0) != nil }
+            || legacyDefaultsKeys.contains { defaults.object(forKey: $0) != nil }
     }
 
     private static func decodedItems(_ data: Data) -> [BillsManifestItem]? {

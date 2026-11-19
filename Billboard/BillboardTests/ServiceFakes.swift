@@ -36,6 +36,9 @@ final class FakeBillsService: BillsServicing {
     /// Results for successive `getBillsManifest` calls; the last one repeats.
     var manifestResults: [Result<[BillsManifestItem], Error>] = [.success([])]
     private(set) var manifestRequests: [Date?] = []
+    /// When set, a full fetch (`updatedAfter` nil) waits until it opens, and throws `CancellationError` when its
+    /// task is cancelled first, as the live fetch does. A windowed fetch never waits.
+    var holdFullManifest: CancellableGate?
 
     var processedBillResult: Result<Bill, Error> = .failure(FakeServiceError())
     private(set) var processedBillRequests: [(guid: String, congress: String?, billType: String?, billID: String?)] = []
@@ -53,6 +56,9 @@ final class FakeBillsService: BillsServicing {
     func getBillsManifest(updatedAfter: Date?) async throws -> [BillsManifestItem] {
         manifestRequests.append(updatedAfter)
         let index = min(manifestRequests.count - 1, manifestResults.count - 1)
+        if updatedAfter == nil, let holdFullManifest {
+            try await holdFullManifest.wait()
+        }
         return try manifestResults[index].get()
     }
 
@@ -324,6 +330,40 @@ final class Gate {
         let pending = waiters
         waiters.removeAll()
         pending.forEach { $0.resume() }
+    }
+}
+
+/// A `Gate` whose waiter stops waiting, throwing `CancellationError`, when its task is cancelled.
+@MainActor
+final class CancellableGate {
+    private var isOpen = false
+    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+
+    func wait() async throws {
+        guard !isOpen else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    waiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancelWaiter(id) }
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = Array(waiters.values)
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
     }
 }
 
