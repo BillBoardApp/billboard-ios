@@ -364,6 +364,50 @@ final class ProcessedBillDecodingTests: XCTestCase {
         XCTAssertEqual(timeline.map(BillDisplayFormatting.timelineTypeLabel(for:)), ["Introduced and referred", nil, "Floor action"], "a type shown as the line is not repeated under it")
     }
 
+    /// Actions of one day keep Congress.gov's stored order (newest first), so LATEST ACTION is the last thing
+    /// that happened. H.R. 5371's enactment day as stored; ordered by text, its latest action was "The previous
+    /// question was ordered pursuant to the rule." under BECAME LAW.
+    @MainActor
+    func testTimelineKeepsTheStoredOrderOfOneDay() {
+        func action(_ code: String, _ date: String, _ text: String, _ type: String) -> Bill.BillAction {
+            Bill.BillAction(actionCode: code, actionDate: date, text: text, type: type, sourceSystem: nil, committees: nil)
+        }
+        let actions = [
+            action("36000", "2025-11-12", "Became Public Law No: 119-37.", "President"),
+            action("36000", "2025-11-12", "Became Public Law No: 119-37.", "BecameLaw"),
+            action("36000", "2025-11-12", "Signed by President.", "President"),
+            action("E30000", "2025-11-12", "Signed by President.", "BecameLaw"),
+            action("E20000", "2025-11-12", "Presented to President.", "Floor"),
+            action("28000", "2025-11-12", "Presented to President.", "President"),
+            action("H38310", "2025-11-12", "Motion to reconsider laid on the table Agreed to without objection.", "ResolvingDifferences"),
+            action("H36210", "2025-11-12", "The previous question was ordered pursuant to the rule.", "ResolvingDifferences"),
+            action("17000", "2025-11-10", "Passed Senate with an amendment by Yea-Nay Vote. 60 - 40.", "Floor")
+        ]
+        let expected = [
+            "Passed Senate with an amendment by Yea-Nay Vote. 60 - 40.",
+            "The previous question was ordered pursuant to the rule.",
+            "Motion to reconsider laid on the table Agreed to without objection.",
+            "Presented to President.",
+            "Signed by President.",
+            "Became Public Law No: 119-37."
+        ]
+
+        XCTAssertEqual(BillDisplayFormatting.timelineActions(actions).compactMap(BillDisplayFormatting.timelineText(for:)), expected)
+        // Of a day's repeated line, the newest stored one is kept.
+        XCTAssertEqual(BillDisplayFormatting.timelineActions(actions).map(\.actionCode), ["17000", "H36210", "H38310", "E20000", "36000", "36000"])
+
+        let bill = Bill(
+            title: "Continuing Appropriations and Extensions Act",
+            category: "Budget",
+            soWhat: "",
+            actions: actions,
+            billStatus: .finalized,
+            guid: "BILLS-119hr5371",
+            userVoted: false
+        )
+        XCTAssertEqual(BillCompanionMemberRow.latestAction(for: bill)?.answer, "Became Public Law No: 119-37.")
+    }
+
     @MainActor
     func testTimelineShowsABillsOnlyActionWithoutText() {
         let intro = Bill.BillAction(actionCode: "Intro-S", actionDate: "2025-12-04", text: nil, type: "IntroReferral", sourceSystem: nil, committees: nil)
