@@ -209,16 +209,22 @@ enum BillDisplayFormatting {
     /// action with text shares its date, so a bill whose only introduction action has no text still
     /// shows it. It is left out when an action with text shares its date (Congress.gov gives an Intro-S
     /// IntroReferral action no text next to the Senate's own introduction text) or its type has no label.
+    ///
+    /// Actions of one day keep the stored order, which is Congress.gov's: newest first, as on its All Actions
+    /// page. Many Library of Congress lines carry no time ("Presented to President.", "Signed by President.",
+    /// "Became Public Law ..."), so the stored order is the only one that holds for a whole day. Ordering a day
+    /// by text put it in alphabetical order, and LATEST ACTION could name a procedural step for a bill that had
+    /// become law. Swift's sort is not stable, so the stored position is the tie-break.
     nonisolated static func timelineActions(_ actions: [Bill.BillAction]) -> [Bill.BillAction] {
         let datesWithText = Set(actions.compactMap { action -> String? in
             ownText(of: action).isEmpty ? nil : trimmedDate(of: action)
         })
-        let newestFirst = actions.sorted { a, b in
-            let da = a.actionDate ?? ""
-            let db = b.actionDate ?? ""
+        let newestFirst = actions.enumerated().sorted { a, b in
+            let da = a.element.actionDate ?? ""
+            let db = b.element.actionDate ?? ""
             if da != db { return da > db }
-            return (a.text ?? "") > (b.text ?? "")
-        }
+            return a.offset < b.offset
+        }.map(\.element)
 
         var seen = Set<String>()
         var out: [Bill.BillAction] = []

@@ -1446,10 +1446,11 @@ final class BillDetailRenderTests: XCTestCase {
             ),
             storedAt: storedAt,
             link: "https://www.govinfo.gov/app/details/BILLS-119hr1234ih",
+            // As Congress.gov stores them: newest first, within a day too.
             actions: [
-                Bill.BillAction(actionCode: nil, actionDate: "2026-10-09", text: "Introduced in House.", type: "IntroReferral", sourceSystem: nil, committees: nil),
+                Bill.BillAction(actionCode: nil, actionDate: "2026-10-14", text: "Subcommittee hearings held.", type: "Committee", sourceSystem: nil, committees: nil),
                 Bill.BillAction(actionCode: nil, actionDate: "2026-10-09", text: "Referred to the House Committee on Energy and Commerce.", type: "IntroReferral", sourceSystem: nil, committees: nil),
-                Bill.BillAction(actionCode: nil, actionDate: "2026-10-14", text: "Subcommittee hearings held.", type: "Committee", sourceSystem: nil, committees: nil)
+                Bill.BillAction(actionCode: nil, actionDate: "2026-10-09", text: "Introduced in House.", type: "IntroReferral", sourceSystem: nil, committees: nil)
             ] + extraActions,
             committees: [
                 Bill.BillCommittee(
