@@ -268,6 +268,7 @@ extension BillsStore {
                 existing: existing.billStatus,
                 existingStoredAt: existing.storedAt
             ),
+            vetoed: mergedVetoed(incoming: incoming, existing: existing, source: source),
             guid: incoming.guid ?? existing.guid,
             congress: incoming.congress ?? existing.congress,
             billType: incoming.billType ?? existing.billType,
@@ -314,6 +315,23 @@ extension BillsStore {
             incomingHoldsCurrentLifeAreas = false
         }
         return canonicalizedValues(incomingHoldsCurrentLifeAreas ? incoming.lifeAreas : existing.lifeAreas)
+    }
+
+    /// The veto flag (UX-51, project decision 2026-11-19), by the rule the life areas follow: a manifest row and a
+    /// /processed-bill response hold the bill's current flag, absent included, so the incoming one wins; any other
+    /// copy (a screen's copy, a stub, a bill read back from the cache) may lack it, so the existing one stays.
+    nonisolated private static func mergedVetoed(incoming: Bill, existing: Bill, source: IncomingBillSource) -> Bool? {
+        let incomingHoldsCurrentFlag: Bool
+        switch source {
+        case .manifestRow:
+            incomingHoldsCurrentFlag = true
+        case .loadedBill:
+            incomingHoldsCurrentFlag = incoming.isProcessedDetailHydrated == true
+        case .cachedBill:
+            incomingHoldsCurrentFlag = false
+        }
+        let flag = incomingHoldsCurrentFlag ? incoming.vetoed : existing.vetoed
+        return flag == true ? true : nil
     }
 
     /// Hydrated when either side is, except that a manifest placeholder newer than the hydrated

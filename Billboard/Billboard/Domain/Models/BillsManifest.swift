@@ -23,6 +23,9 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
     let priorityExpiresAt: String?
     let title: String
     let billStatus: String?
+    /// True when the bill's veto stands (project decision 2026-11-19); nil otherwise. The server sends it
+    /// only as true, beside an unchanged `billStatus`.
+    let vetoed: Bool?
     let civicProfile: [String: Double]?
 
     nonisolated init(
@@ -41,6 +44,7 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         priorityExpiresAt: String? = nil,
         title: String,
         billStatus: String? = nil,
+        vetoed: Bool? = nil,
         civicProfile: [String: Double]? = nil
     ) {
         self.guid = guid
@@ -58,6 +62,7 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         self.priorityExpiresAt = priorityExpiresAt
         self.title = title
         self.billStatus = billStatus
+        self.vetoed = vetoed
         self.civicProfile = civicProfile
     }
 
@@ -92,6 +97,9 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         priorityExpiresAt = try container.decodeIfPresent(String.self, forKey: .priorityExpiresAt)
         title = (try container.decodeIfPresent(String.self, forKey: .title)) ?? ""
         billStatus = try container.decodeIfPresent(String.self, forKey: .billStatus)
+        // A display-only flag never fails the whole manifest: a value that is not a boolean reads as absent,
+        // and so does false (the server sends only true).
+        vetoed = (try? container.decodeIfPresent(Bool.self, forKey: .vetoed)) == true ? true : nil
         civicProfile = try container.decodeIfPresent([String: Double].self, forKey: .civicProfile)
     }
 
@@ -112,6 +120,7 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         try container.encodeIfPresent(priorityExpiresAt, forKey: .priorityExpiresAt)
         try container.encode(title, forKey: .title)
         try container.encodeIfPresent(billStatus, forKey: .billStatus)
+        try container.encodeIfPresent(vetoed, forKey: .vetoed)
         try container.encodeIfPresent(civicProfile, forKey: .civicProfile)
     }
 
@@ -131,6 +140,7 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         case priorityExpiresAt
         case title
         case billStatus
+        case vetoed
         case civicProfile
     }
 
@@ -154,6 +164,7 @@ nonisolated struct BillsManifestItem: Codable, Hashable, Sendable {
         case priorityExpiresAt
         case title
         case billStatus
+        case vetoed
         case civicProfile
     }
 }
@@ -176,6 +187,7 @@ nonisolated extension BillsManifestItem {
             priorityExpiresAt: dto.priorityExpiresAt,
             title: dto.title ?? "",
             billStatus: dto.billStatus,
+            vetoed: dto.vetoed == true ? true : nil,
             civicProfile: dto.civicProfile
         )
     }

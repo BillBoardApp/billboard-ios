@@ -679,12 +679,14 @@ struct WeeklyBriefItemView: View {
 
     private var docketLine: DocketLine? {
         let status = item.billState?.billStatus
+        // VETOED for a vetoed bill (project decision 2026-11-19); `billState` keeps the status.
+        let vetoed = item.vetoed == true
         guard item.kind == .bill else { return nil }
         if let number = item.billNumber {
-            return DocketLine(number: number, status: status)
+            return DocketLine(number: number, status: status, vetoed: vetoed)
         }
         guard let status else { return nil }
-        return DocketLine(numbers: [], chamber: nil, status: status)
+        return DocketLine(numbers: [], chamber: nil, status: status, vetoed: vetoed)
     }
 
     private var memberAffiliation: String? {

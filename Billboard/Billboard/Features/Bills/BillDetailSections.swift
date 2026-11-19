@@ -12,12 +12,15 @@ import SwiftUI
 /// status stamp, a decided bill's included), the plain-language title, the official "To…" title in upright
 /// New York, "In the news" with its reason, the last-updated time, and the double rule. For a companion
 /// group (APPF-23) the docket line has every member's number and the group's status lead ("S. 456 PASSED").
+/// A vetoed bill, or a group whose lead is vetoed, is stamped VETOED (project decision 2026-11-19).
 struct BillFrontMatter: View {
     /// What the front matter shows, worked out from the bill so it can be drawn and tested without a store.
     struct Content: Equatable {
         /// The bill number, or a companion group's numbers, primary first; empty when unknown.
         var numbers: [String]
         var status: BillStatus
+        /// The bill, or the group's status lead, is vetoed: the stamp reads VETOED unless the status is Finalized.
+        var vetoed = false
         /// The member whose status the group shows, when it is not the primary.
         var companionLead: String? = nil
         var title: String
@@ -31,6 +34,7 @@ struct BillFrontMatter: View {
         init(
             numbers: [String],
             status: BillStatus,
+            vetoed: Bool = false,
             companionLead: String? = nil,
             title: String,
             officialTitle: String? = nil,
@@ -40,6 +44,7 @@ struct BillFrontMatter: View {
         ) {
             self.numbers = numbers
             self.status = status
+            self.vetoed = vetoed
             self.companionLead = companionLead
             self.title = title
             self.officialTitle = officialTitle
@@ -54,6 +59,7 @@ struct BillFrontMatter: View {
             self.init(
                 numbers: companion?.numbers ?? bill.officialBillNumber.map { [$0] } ?? [],
                 status: lead?.status ?? bill.billStatus,
+                vetoed: lead?.vetoed ?? bill.isVetoed,
                 companionLead: lead.flatMap { $0.isPrimary ? nil : $0.billNumber },
                 title: bill.title,
                 officialTitle: bill.displayOfficialTitle,
@@ -130,13 +136,14 @@ struct BillFrontMatter: View {
                     numbers: content.numbers,
                     chamber: content.chamber,
                     status: content.status,
+                    vetoed: content.vetoed,
                     companionLead: content.companionLead
                 )
                 .accessibilityIdentifier(Self.numberIdentifier)
                 .padding(.bottom, 10)
             } else {
                 // No number to file it under: the stamp alone keeps the decided status on the page.
-                StatusStamp(status: content.status)
+                StatusStamp(status: content.status, vetoed: content.vetoed)
                     .padding(.bottom, 10)
             }
 
@@ -780,7 +787,7 @@ struct BillCompanionMemberRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
-            DocketLine(number: number, status: bill?.billStatus)
+            DocketLine(number: number, status: bill?.billStatus, vetoed: bill?.isVetoed ?? false)
 
             if let bill, isHydrated {
                 details(for: bill)

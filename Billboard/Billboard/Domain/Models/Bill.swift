@@ -75,6 +75,10 @@ extension BillStatus {
         self == .passed || self == .finalized
     }
 
+    /// What a vetoed bill shows and reads in place of its status word (project decision 2026-11-19): the
+    /// VETOED stamp, the companion chip ("Vetoed · H.R. 10") and the on-device brief's eyebrow.
+    nonisolated static let vetoedLabel = "Vetoed"
+
     /// The status as the app shows and reads it out: "Became law" for `Finalized` (the server's word
     /// is kept for the wire), else the status itself ("New", "Updated", "Passed", "Failed").
     nonisolated var displayLabel: String {
@@ -174,6 +178,10 @@ struct Bill: Identifiable, Codable, Sendable {
     let lifeAreas: [String]
     let subCategory: String?
     var billStatus: BillStatus
+    /// The server's veto flag (project decision 2026-11-19): true when the bill's veto stands, nil otherwise.
+    /// The status keeps its value (Passed, or Failed once an override fails), so lists follow it as before;
+    /// only the outcome shown changes (`isVetoed`). Optional, so a bill cached without the key decodes.
+    var vetoed: Bool?
     // Source metadata (used to re-fetch processed bill details on demand)
     var guid: String?
     var congress: String?
@@ -256,6 +264,7 @@ struct Bill: Identifiable, Codable, Sendable {
         committees: [BillCommittee] = [],
         lifeAreas: [String] = [],
         billStatus: BillStatus,
+        vetoed: Bool? = nil,
         guid: String? = nil,
         congress: String? = nil,
         billType: String? = nil,
@@ -297,6 +306,7 @@ struct Bill: Identifiable, Codable, Sendable {
         self.committees = committees
         self.lifeAreas = lifeAreas
         self.billStatus = billStatus
+        self.vetoed = vetoed
         self.guid = guid
         self.congress = congress
         self.billType = billType
@@ -328,6 +338,18 @@ struct Bill: Identifiable, Codable, Sendable {
 }
 
 extension Bill {
+    /// The bill says VETOED wherever an outcome is labelled (project decision 2026-11-19): the server's flag
+    /// is set and the bill did not become law. A law is never VETOED, so VETOED and BECAME LAW never show
+    /// together.
+    nonisolated var isVetoed: Bool {
+        vetoed == true && billStatus != .finalized
+    }
+
+    /// The outcome as the app shows and reads it: "Vetoed" for a vetoed bill, else the status's label.
+    nonisolated var outcomeLabel: String {
+        isVetoed ? BillStatus.vetoedLabel : billStatus.displayLabel
+    }
+
     nonisolated var hasActivePriority: Bool {
         guard isPriority else { return false }
         guard let priorityExpiresAt else { return true }
@@ -423,6 +445,7 @@ extension Bill {
             committees: committees,
             lifeAreas: lifeAreas,
             billStatus: billStatus,
+            vetoed: vetoed,
             guid: guid,
             congress: congress,
             billType: billType,
@@ -450,6 +473,29 @@ extension Bill {
         copy.congressSenateYeaCount = congressSenateYeaCount
         copy.congressSenateNayCount = congressSenateNayCount
         return copy
+    }
+}
+
+// MARK: - Vetoes (project decision 2026-11-19)
+
+extension Bill.BillAction {
+    /// A veto (31000, "Vetoed by President.") or pocket veto (30000, "Pocket vetoed by President."), read from the
+    /// Library of Congress code, never the text. The House's own line is E30000, a code it also gives "Signed by
+    /// President.", so it does not count.
+    nonisolated var isVetoAction: Bool {
+        Self.vetoActionCodes.contains(trimmedActionCode)
+    }
+
+    /// A vote that failed to pass the bill over a veto: in the House (33000) or the Senate (35000).
+    nonisolated var isFailedOverrideAction: Bool {
+        Self.failedOverrideActionCodes.contains(trimmedActionCode)
+    }
+
+    nonisolated private static let vetoActionCodes: Set<String> = ["31000", "30000"]
+    nonisolated private static let failedOverrideActionCodes: Set<String> = ["33000", "35000"]
+
+    nonisolated private var trimmedActionCode: String {
+        (actionCode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

@@ -133,6 +133,29 @@ final class CompanionGroupIndexTests: XCTestCase {
         XCTAssertEqual(finalized.label, "Became law")
     }
 
+    /// Finalized 5 > vetoed 4 > Passed 3 > Failed 2 > Updated 1 > New 0 (project decision 2026-11-19).
+    func testStatusRanks() {
+        XCTAssertEqual([BillStatus.new, .updated, .failed, .passed, .finalized].map(CompanionGroupIndex.statusRank), [0, 1, 2, 3, 5])
+        var vetoed = bill(Self.house, status: .failed)
+        vetoed.vetoed = true
+        XCTAssertEqual(CompanionGroupIndex.statusRank(for: vetoed), 4)
+        vetoed.billStatus = .finalized
+        XCTAssertEqual(CompanionGroupIndex.statusRank(for: vetoed), 5, "a law is never vetoed")
+    }
+
+    /// A vetoed member whose override failed (Failed) leads a partner that only passed its own chamber, so the
+    /// card says the veto; when it is not the primary the chip names it.
+    func testAVetoedMemberLeadsAPassedPartner() {
+        var senate = bill(Self.senate, status: .failed)
+        senate.vetoed = true
+        let lead = index.statusLead(for: group, memberBills: [bill(Self.house, status: .passed), senate])
+
+        XCTAssertEqual(lead.guid, Self.senate)
+        XCTAssertEqual(lead.status, .failed, "the status is unchanged")
+        XCTAssertTrue(lead.vetoed)
+        XCTAssertEqual(lead.label, "Vetoed · S. 456")
+    }
+
     // MARK: - Vote matrix
 
     private func resolution(_ rows: [String: VoteType]) -> CompanionVoteResolution {

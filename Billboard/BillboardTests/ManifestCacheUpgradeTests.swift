@@ -6,6 +6,10 @@ import XCTest
 /// full manifest in `data.v4` (coverage `coverage.v2`) ranked by other users' vote count, counts
 /// included, and merged every windowed fetch into that order; 1.2 reads other keys (`data.v5`,
 /// `coverage.v3`), so that copy is never read and never merged into, and the launch deletes it.
+///
+/// UX-51 (project decision 2026-11-19): 1.2's copy has no veto flags, so 1.3 reads `data.v6` and `coverage.v4`
+/// and deletes 1.2's the same way; and, once after the update, it loads the full manifest so the bills held
+/// from 1.2 take their flags.
 final class ManifestCacheUpgradeTests: XCTestCase {
     private var cache = BillsManifestCache(namespace: "manifest-cache-upgrade-tests")
 
@@ -82,10 +86,10 @@ final class ManifestCacheUpgradeTests: XCTestCase {
     // MARK: - Not read
 
     func testTheKeysAreNotThoseOf11() {
-        XCTAssertEqual(cache.dataKey, "\(cache.namespace).data.v5")
-        XCTAssertEqual(cache.coverageKey, "\(cache.namespace).coverage.v3")
-        XCTAssertEqual(cache.timestampKey, "\(cache.namespace).timestamp.v5")
-        XCTAssertEqual(cache.byteCountKey, "\(cache.namespace).bytes.v2")
+        XCTAssertEqual(cache.dataKey, "\(cache.namespace).data.v6")
+        XCTAssertEqual(cache.coverageKey, "\(cache.namespace).coverage.v4")
+        XCTAssertEqual(cache.timestampKey, "\(cache.namespace).timestamp.v6")
+        XCTAssertEqual(cache.byteCountKey, "\(cache.namespace).bytes.v3")
 
         let keys = keysOf11
         XCTAssertEqual(Set([keys.data]).intersection([cache.dataKey, cache.companionGroupsKey]), [])
@@ -107,6 +111,94 @@ final class ManifestCacheUpgradeTests: XCTestCase {
             XCTAssertFalse(BillsService.cachedBillsManifestIsFull())
             XCTAssertFalse(BillsService.cachedBillsManifestIsFull(maxAge: 600))
         }
+    }
+
+    // MARK: - The cache 1.2 left (UX-51)
+
+    private var keysOf12: (data: String, timestamp: String, coverage: String, bytes: String) {
+        ("\(cache.namespace).data.v5", "\(cache.namespace).timestamp.v5", "\(cache.namespace).coverage.v3", "\(cache.namespace).bytes.v2")
+    }
+
+    /// 1.2's full copy as it wrote it: no veto flags.
+    private func writeCacheOf12() throws {
+        let file = try JSONEncoder().encode([try item("BILLS-119hr131", daysAgo: 30)])
+        let keys = keysOf12
+        XCTAssertTrue(DiskJSONCache.store(file, forKey: keys.data))
+        let defaults = UserDefaults.standard
+        defaults.set(Date().timeIntervalSince1970, forKey: keys.timestamp)
+        defaults.set("full", forKey: keys.coverage)
+        defaults.set(file.count, forKey: keys.bytes)
+    }
+
+    private func cacheOf12Exists() -> Bool {
+        let keys = keysOf12
+        let defaults = UserDefaults.standard
+        return DiskJSONCache.byteCount(forKey: keys.data) != nil
+            || [keys.timestamp, keys.coverage, keys.bytes].contains { defaults.object(forKey: $0) != nil }
+    }
+
+    func testTheCacheOf12IsNotReadAndTheLaunchDeletesIt() async throws {
+        let keys = keysOf12
+        XCTAssertTrue(cache.legacyDataKeys.contains(keys.data))
+        XCTAssertTrue(Set(cache.legacyDefaultsKeys).isSuperset(of: [keys.timestamp, keys.coverage, keys.bytes]))
+        try writeCacheOf12()
+
+        XCTAssertNil(cache.items(), "1.2's copy, without veto flags, is not read")
+        XCTAssertNil(cache.coverage())
+        BillsManifestCache.$current.withValue(cache) {
+            XCTAssertFalse(BillsService.cachedBillsManifestIsFull())
+        }
+
+        await cache.discardEarlierCachesInBackground().value
+        XCTAssertFalse(cacheOf12Exists())
+    }
+
+    func testTheFirstWriteAfterTheUpdateIsV6WithTheFlags() throws {
+        try writeCacheOf12()
+        var object: [String: Any] = [
+            "guid": "BILLS-119hr131", "congress": "119", "billType": "hr", "billID": "131",
+            "updatedAt": iso(daysAgo: 1), "title": "Bill BILLS-119hr131", "billStatus": "Failed", "vetoed": true
+        ]
+        let vetoed = try JSONDecoder().decode(BillsManifestItem.self, from: JSONSerialization.data(withJSONObject: object))
+        object["guid"] = "BILLS-119hr132"
+        object["billID"] = "132"
+        object.removeValue(forKey: "vetoed")
+        let plain = try JSONDecoder().decode(BillsManifestItem.self, from: JSONSerialization.data(withJSONObject: object))
+
+        XCTAssertEqual(cache.store([vetoed, plain], fetched: .full), .full)
+
+        XCTAssertNotNil(DiskJSONCache.data(forKey: "\(cache.namespace).data.v6"))
+        XCTAssertEqual(cache.items()?.map(\.vetoed), [true, nil])
+        XCTAssertFalse(cacheOf12Exists(), "the first write removes it too")
+    }
+
+    // MARK: - The one-time full load after the update (UX-51)
+
+    @MainActor
+    func testTheOneTimeFullLoadRunsOnceAndOnlyWhenItGotTheFullManifest() async throws {
+        let suite = "manifest-cache-upgrade-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        let scope = "manifest-cache-upgrade-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let service = FakeBillsService()
+        service.cachedManifest = []
+        service.manifestResults = [.failure(FakeServiceError()), .success([try item("BILLS-119hr131", daysAgo: 400)])]
+        let store = BillsStore(cacheScope: scope, service: service, preferencesService: FakePreferencesService())
+
+        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
+        XCTAssertEqual(service.manifestRequests, [nil], "a full fetch")
+        XCTAssertFalse(defaults.bool(forKey: store.vetoedFlagFullLoadKey), "a failed load is tried again on a later launch")
+
+        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
+        XCTAssertEqual(service.manifestRequests, [nil, nil])
+        XCTAssertTrue(store.hasFullManifestCoverage)
+        XCTAssertTrue(defaults.bool(forKey: store.vetoedFlagFullLoadKey))
+
+        await store.loadFullManifestOnceForVetoedFlagIfNeeded(defaults: defaults)
+        XCTAssertEqual(service.manifestRequests, [nil, nil], "once done, never again")
+        XCTAssertEqual(store.vetoedFlagFullLoadKey, "BillsStore.vetoedFlagFullLoad.v1.\(scope)")
+        await settleBillsCache(scope: scope)
     }
 
     // MARK: - Deleted at launch

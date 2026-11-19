@@ -224,6 +224,7 @@ extension BillsService {
             committees: dto.committees?.map(Bill.BillCommittee.init(dto:)) ?? [],
             lifeAreas: dto.lifeAreas,
             billStatus: processedBillStatus(dto.billStatus),
+            vetoed: dto.vetoed == true ? true : nil,
             sponsorMemberID: dto.sponsors.first.map { UUID.deterministic(from: $0) },
             relatedMemberIDs: processedBillMemberIDs(sponsors: dto.sponsors, cosponsors: dto.cosponsors),
             userVoted: false,

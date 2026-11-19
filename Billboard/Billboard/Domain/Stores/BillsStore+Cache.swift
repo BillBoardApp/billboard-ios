@@ -98,6 +98,9 @@ extension BillsStore {
     /// them: 1.1 saved them in the order it ranked bills by other users' vote count (INT-11), and with no
     /// cached manifest, or for the voted and watched bills kept outside its window, that saved order is
     /// the order Search and the topic lists show.
+    ///
+    /// Each restored bill the cached manifest lists takes its row's veto flag, in the window or not
+    /// (`applyingManifestVetoed`, UX-51), as a fetched manifest's apply does.
     nonisolated static func cacheRestoreSnapshot(
         cachedManifest: [BillsManifestItem],
         cachedBills: [Bill],
@@ -118,13 +121,13 @@ extension BillsStore {
 
         let restoredBills: [Bill]?
         if !visibleManifestEntries.isEmpty {
-            restoredBills = Self.mergeIncomingBillsPreservingProtected(
+            restoredBills = Self.applyingManifestVetoed(deduplicatedManifest, to: Self.mergeIncomingBillsPreservingProtected(
                 visibleManifestEntries.map(\.placeholderBill),
                 existing: normalizedCachedBills,
                 source: .manifestRow
-            )
+            ))
         } else if !normalizedCachedBills.isEmpty {
-            restoredBills = normalizedCachedBills
+            restoredBills = Self.applyingManifestVetoed(deduplicatedManifest, to: normalizedCachedBills)
         } else {
             restoredBills = nil
         }

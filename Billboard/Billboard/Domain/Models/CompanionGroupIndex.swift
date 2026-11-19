@@ -107,14 +107,18 @@ nonisolated struct CompanionStatusLead: Equatable, Sendable {
     /// The lead member's plain guid.
     let guid: String
     let status: BillStatus
+    /// The lead member is vetoed and did not become law (`Bill.isVetoed`, project decision 2026-11-19).
+    var vetoed = false
     let isPrimary: Bool
     /// The lead member's official number, e.g. "S. 456".
     let billNumber: String
 
     /// "Passed" when the primary leads, else the status naming the member: "Passed · S. 456". A
-    /// member that became law (Finalized, REL-44) reads "Became law" ("Became law · S. 456").
+    /// member that became law (Finalized, REL-44) reads "Became law" ("Became law · S. 456"), and a
+    /// vetoed member "Vetoed" ("Vetoed · H.R. 10").
     var label: String {
-        isPrimary ? status.displayLabel : "\(status.displayLabel) · \(billNumber)"
+        let word = vetoed && status != .finalized ? BillStatus.vetoedLabel : status.displayLabel
+        return isPrimary ? word : "\(word) · \(billNumber)"
     }
 }
 
@@ -328,37 +332,54 @@ nonisolated struct CompanionGroupIndex: Sendable, Equatable {
 
     // MARK: Status lead
 
-    /// The member with the highest status (Finalized 4 > Passed 3 > Failed 2 > Updated 1 > New or not
-    /// loaded 0); ties go to the later `storedAt`, then to the primary. `memberBills` are the loaded
-    /// members' bills (any order; legacy text-version bills count for their member).
+    /// The member with the highest rank (Finalized 5 > vetoed 4 > Passed 3 > Failed 2 > Updated 1 > New or
+    /// not loaded 0, `statusRank(for:)`); ties go to the later `storedAt`, then to the primary. `memberBills`
+    /// are the loaded members' bills (any order; legacy text-version bills count for their member).
     func statusLead(for group: BillCompanionGroup, memberBills: [Bill]) -> CompanionStatusLead {
-        var best: (guid: String, status: BillStatus, rank: Int, date: Date)?
+        var best: (guid: String, status: BillStatus, vetoed: Bool, rank: Int, date: Date)?
         for member in group.memberGuids {
             let bills = memberBills.filter { memberGuid(for: $0) == member }
             let candidates = bills.map { bill in
-                (status: bill.billStatus, rank: Self.statusRank(bill.billStatus), date: FlexibleISO8601.parse(bill.storedAt) ?? .distantPast)
+                (
+                    status: bill.billStatus,
+                    vetoed: bill.isVetoed,
+                    rank: Self.statusRank(for: bill),
+                    date: FlexibleISO8601.parse(bill.storedAt) ?? .distantPast
+                )
             }
             let top = candidates.max { lhs, rhs in
                 lhs.rank != rhs.rank ? lhs.rank < rhs.rank : lhs.date < rhs.date
-            } ?? (status: BillStatus.new, rank: 0, date: Date.distantPast)
-            // Strictly greater: an equal status and date keeps the earlier member (the primary first).
+            } ?? (status: BillStatus.new, vetoed: false, rank: 0, date: Date.distantPast)
+            // Strictly greater: an equal rank and date keeps the earlier member (the primary first).
             if let current = best, !(top.rank > current.rank || (top.rank == current.rank && top.date > current.date)) {
                 continue
             }
-            best = (member, top.status, top.rank, top.date)
+            best = (member, top.status, top.vetoed, top.rank, top.date)
         }
-        let lead = best ?? (group.primaryGuid, .new, 0, .distantPast)
+        let lead = best ?? (group.primaryGuid, .new, false, 0, .distantPast)
         return CompanionStatusLead(
             guid: lead.guid,
             status: lead.status,
+            vetoed: lead.vetoed,
             isPrimary: lead.guid == group.primaryGuid,
             billNumber: Self.billNumber(forGUID: lead.guid)
         )
     }
 
+    /// A member's rank in its group: its status's (`statusRank(_:)`), or 4 for a vetoed member that did not
+    /// become law (project decision 2026-11-19). A vetoed bill whose override failed is Failed (2), and ranked
+    /// by its status it lost to a partner that had only passed its own chamber (3), so the group's card said
+    /// "Passed · S. X" and hid the veto. The server ranks a Weekly Brief group's members the same way.
+    nonisolated static func statusRank(for bill: Bill) -> Int {
+        bill.isVetoed ? vetoedRank : statusRank(bill.billStatus)
+    }
+
+    /// A vetoed member's rank: above Passed, below Finalized.
+    nonisolated static let vetoedRank = 4
+
     nonisolated static func statusRank(_ status: BillStatus) -> Int {
         switch status {
-        case .finalized: return 4
+        case .finalized: return 5
         case .passed: return 3
         case .failed: return 2
         case .updated: return 1

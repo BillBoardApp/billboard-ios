@@ -589,8 +589,9 @@ final class FoundationComponentRenderTests: XCTestCase {
     // MARK: Stamps (spec 3.2)
 
     private static let allStamps: [StatusStamp.Kind] = [
-        .new, .updated, .passed, .failed, .becameLaw, .verified, .notVerified, .sealed, .unread,
-        .allCaughtUp, .nothingYet, .notFound, .couldNotLoad, .companionLead(number: "S. 456", status: .passed)
+        .new, .updated, .passed, .failed, .vetoed, .becameLaw, .verified, .notVerified, .sealed, .unread,
+        .allCaughtUp, .nothingYet, .notFound, .couldNotLoad, .companionLead(number: "S. 456", status: .passed),
+        .companionLead(number: "H.R. 10", status: .failed, vetoed: true)
     ]
 
     func testStampsRenderEveryKindInEveryLook() throws {
@@ -649,14 +650,25 @@ final class FoundationComponentRenderTests: XCTestCase {
         XCTAssertFalse(StatusStamp.Kind.passed.isDoubleRuled)
         XCTAssertTrue(StatusStamp.Kind.companionLead(number: "S. 456", status: .finalized).isDoubleRuled)
         XCTAssertEqual(StatusStamp.Kind.companionLead(number: "S. 456", status: .passed).word, "S. 456 Passed")
+        // VETOED (project decision 2026-11-19): the Failed colour, single-ruled; a law is never VETOED.
+        XCTAssertEqual(StatusStamp.Kind(status: .failed, vetoed: true), .vetoed)
+        XCTAssertEqual(StatusStamp.Kind(status: .passed, vetoed: true), .vetoed)
+        XCTAssertEqual(StatusStamp.Kind(status: .finalized, vetoed: true), .becameLaw)
+        XCTAssertEqual(StatusStamp.Kind.vetoed.word, "Vetoed")
+        XCTAssertFalse(StatusStamp.Kind.vetoed.isDoubleRuled)
+        XCTAssertEqual(StatusStamp.Kind.vetoed.paletteToken, BillboardPalette.statusFailed)
+        XCTAssertEqual(StatusStamp.Kind.companionLead(number: "H.R. 10", status: .failed, vetoed: true).word, "H.R. 10 Vetoed")
+        XCTAssertEqual(StatusStamp.Kind.companionLead(number: "H.R. 10", status: .passed, vetoed: true).spokenWord, "House bill 10 vetoed")
+        XCTAssertTrue(StatusStamp.Kind.companionLead(number: "H.R. 10", status: .finalized, vetoed: true).isDoubleRuled)
 
         let strings = AccessibilityTreeText.strings(of: VStack {
             ForEach(Array(Self.allStamps.enumerated()), id: \.offset) { _, kind in
                 StatusStamp(kind)
             }
         })
-        for expected in ["New", "Updated", "Passed", "Failed", "Became law", "Verified", "Not verified", "Sealed", "Unread",
-                         "All caught up", "Nothing yet", "Not found", "Couldn't load", "Senate bill 456 passed"] {
+        for expected in ["New", "Updated", "Passed", "Failed", "Vetoed", "Became law", "Verified", "Not verified", "Sealed", "Unread",
+                         "All caught up", "Nothing yet", "Not found", "Couldn't load", "Senate bill 456 passed",
+                         "House bill 10 vetoed"] {
             XCTAssertTrue(strings.contains(expected), "\(expected) in \(strings)")
         }
         XCTAssertFalse(strings.contains("BECAME LAW"), "VoiceOver hears words, not capitals")
@@ -672,6 +684,8 @@ final class FoundationComponentRenderTests: XCTestCase {
                 DocketLine(numbers: ["H.R. 10", "S. 10"], chamber: nil, status: .passed, companionLead: "S. 10")
                 DocketLine(number: "H.J.Res. 77", status: .finalized, companions: .init(["S.J.Res. 21"]))
                 DocketLine(number: "S. 456", status: .failed)
+                DocketLine(number: "H.R. 131", status: .failed, vetoed: true)
+                DocketLine(numbers: ["S. 10", "H.R. 10"], chamber: nil, status: .passed, vetoed: true, companionLead: "H.R. 10")
             }
         }
     }
@@ -714,6 +728,18 @@ final class FoundationComponentRenderTests: XCTestCase {
             DocketLine(number: "S. 5", status: .new, companions: .init(["H.R. 900", "S.J.Res. 21"], isIdentical: false)).accessibilityText,
             "Senate bill 5. New. Companion to House bill 900 and Senate joint resolution 21."
         )
+        // VETOED (project decision 2026-11-19): H.R. 131 alone, H.R. 131 leading its group as the primary, and a
+        // vetoed member that is not the primary leading.
+        XCTAssertEqual(DocketLine(number: "H.R. 131", status: .failed, vetoed: true).accessibilityText, "House bill 131. Vetoed.")
+        XCTAssertEqual(
+            DocketLine(numbers: ["H.R. 131", "S. 296"], chamber: nil, status: .failed, vetoed: true).accessibilityText,
+            "House bill 131 and Senate bill 296. Vetoed."
+        )
+        XCTAssertEqual(
+            DocketLine(numbers: ["S. 10", "H.R. 10"], chamber: nil, status: .passed, vetoed: true, companionLead: "H.R. 10").accessibilityText,
+            "Senate bill 10 and House bill 10. House bill 10 vetoed."
+        )
+        XCTAssertEqual(DocketLine(number: "H.R. 77", status: .finalized, vetoed: true).accessibilityText, "House bill 77. Became law.")
         XCTAssertEqual(DocketLine.chamber(forBillNumber: "H.R. 1"), .house)
         XCTAssertEqual(DocketLine.chamber(forBillNumber: "H.Con.Res. 3"), .house)
         XCTAssertEqual(DocketLine.chamber(forBillNumber: "S.J.Res. 21"), .senate)

@@ -1427,6 +1427,7 @@ final class BillDetailRenderTests: XCTestCase {
         status: BillStatus = .new,
         houseMembers: Int = 2,
         official: String? = BillDetailRenderTests.officialTitle,
+        vetoed: Bool? = nil,
         extraActions: [Bill.BillAction] = []
     ) -> Bill {
         let officialVotes = Bill.OfficialVotesBreakdown(house: houseVote(members: houseMembers), senate: nil, lastSyncedAt: nil, source: nil, completeness: nil)
@@ -1459,6 +1460,7 @@ final class BillDetailRenderTests: XCTestCase {
                 )
             ],
             billStatus: status,
+            vetoed: vetoed,
             guid: "BILLS-119hr1234",
             userVoted: false,
             isPriority: true,
@@ -1483,7 +1485,8 @@ final class BillDetailRenderTests: XCTestCase {
             title: "Clean Energy Reporting Act", officialTitle: officialTitle, lastUpdated: FlexibleISO8601.parse(storedAt)
         )),
         ("became-law", BillFrontMatter.Content(bill: documentBill(status: .finalized))),
-        ("no-number", BillFrontMatter.Content(numbers: [], status: .failed, title: "A bill with no number"))
+        ("no-number", BillFrontMatter.Content(numbers: [], status: .failed, title: "A bill with no number")),
+        ("vetoed", BillFrontMatter.Content(bill: documentBill(status: .failed, vetoed: true)))
     ]
 
     /// Front matter in light, dark, AX3 and AX5: the docket line (with the stamp on its own line at
@@ -1527,6 +1530,8 @@ final class BillDetailRenderTests: XCTestCase {
         XCTAssertTrue(pair.contains("House bill 10 and Senate bill 10. Senate bill 10 passed."), pair)
         let bare = AccessibilityTreeText.text(of: onDocument(BillFrontMatter(Self.frontMatters[3].content)))
         XCTAssertTrue(bare.contains("Failed"), "a bill with no number keeps its stamp: \(bare)")
+        let vetoed = AccessibilityTreeText.text(of: onDocument(BillFrontMatter(Self.frontMatters[4].content)))
+        XCTAssertTrue(vetoed.contains("House bill 1234. Vetoed."), "project decision 2026-11-19: \(vetoed)")
 
         let utc = TimeZone(identifier: "UTC")!
         let date = FlexibleISO8601.parse(Self.storedAt)!

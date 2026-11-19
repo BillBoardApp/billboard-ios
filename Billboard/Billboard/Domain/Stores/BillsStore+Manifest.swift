@@ -86,6 +86,8 @@ extension BillsStore {
                     priorityExpiresAt: keeper.priorityExpiresAt ?? duplicate.priorityExpiresAt,
                     title: keeper.title,
                     billStatus: keeper.billStatus ?? duplicate.billStatus,
+                    // The veto flag of the row whose status is kept (UX-51).
+                    vetoed: keeper.billStatus != nil || duplicate.billStatus == nil ? keeper.vetoed : duplicate.vetoed,
                     civicProfile: keeper.civicProfile ?? duplicate.civicProfile
                 )
                 mergeCount += 1
@@ -203,6 +205,7 @@ extension BillsStore {
             priorityExpiresAt: item.priorityExpiresAt?.trimmingCharacters(in: .whitespacesAndNewlines),
             title: item.title,
             billStatus: item.billStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+            vetoed: item.vetoed,
             civicProfile: item.civicProfile
         )
     }
@@ -213,7 +216,8 @@ extension BillsStore {
             let preparedEntries: [ManifestEntry]
             /// The entries inside the history window.
             let visibleEntries: [ManifestEntry]
-            /// The visible entries' placeholder bills merged with the existing bills.
+            /// The visible entries' placeholder bills merged with the existing bills, each listed bill with its
+            /// row's veto flag (`applyingManifestVetoed`).
             let mergedBills: [Bill]
             let resolvedActiveManifestBills: [Bill]
         }
@@ -229,7 +233,8 @@ extension BillsStore {
     /// Deduplicates `fetched` and, unless it and `companionGroups` match `current` and
     /// `currentCompanionIndex`, builds its entries and merges their placeholder bills into
     /// `existingBills`. The visible entries include each visible grouped bill's partners, so a group's
-    /// card has its primary's bill even when only the other member is in the window. Pure, so `load`
+    /// card has its primary's bill even when only the other member is in the window. Every merged bill the
+    /// manifest lists, in the window or not, then takes its row's veto flag (UX-51). Pure, so `load`
     /// runs it off the main actor.
     nonisolated static func manifestUpdate(
         for fetched: [BillsManifestItem],
@@ -251,11 +256,11 @@ extension BillsStore {
             historyWindow: historyWindow,
             companions: companionIndex
         )
-        let mergedBills = mergeIncomingBillsPreservingProtected(
+        let mergedBills = applyingManifestVetoed(manifest, to: mergeIncomingBillsPreservingProtected(
             visibleEntries.map(\.placeholderBill),
             existing: existingBills,
             source: .manifestRow
-        )
+        ))
         let resolvedActiveManifestBills = resolveManifestBills(
             manifestEntries: visibleEntries,
             billsByGuid: makeBillLookupByGuid(from: mergedBills),
@@ -271,6 +276,33 @@ extension BillsStore {
                 resolvedActiveManifestBills: resolvedActiveManifestBills
             )
         )
+    }
+
+    /// `bills` with each listed bill's `vetoed` taken from its manifest row, matched by guid, whether or not the
+    /// row is in the history window (UX-51, project decision 2026-11-19). The row is the authority: a row without
+    /// the flag clears it. A bill the manifest does not list is unchanged.
+    ///
+    /// Only the window's rows are merged into the loaded bills (`manifestUpdate`), and `ensureHydrated` does not
+    /// fetch a bill it holds as hydrated again, so without this copy a voted or watched bill held from 1.2 outside
+    /// the window would keep FAILED, on its card and its page, for as long as it brought no news.
+    nonisolated static func applyingManifestVetoed(_ manifest: [BillsManifestItem], to bills: [Bill]) -> [Bill] {
+        guard !manifest.isEmpty, !bills.isEmpty else { return bills }
+        var vetoedByGuid: [String: Bool] = [:]
+        vetoedByGuid.reserveCapacity(manifest.count)
+        for item in manifest {
+            let guid = item.guid.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !guid.isEmpty else { continue }
+            vetoedByGuid[guid] = item.vetoed == true
+        }
+        return bills.map { bill in
+            guard let guid = bill.guid?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let isVetoed = vetoedByGuid[guid] else { return bill }
+            let vetoed: Bool? = isVetoed ? true : nil
+            guard bill.vetoed != vetoed else { return bill }
+            var copy = bill
+            copy.vetoed = vetoed
+            return copy
+        }
     }
 
     nonisolated static func preparedManifestEntries(from items: [BillsManifestItem]) -> [ManifestEntry] {
@@ -309,6 +341,7 @@ extension BillsStore {
                   left.priorityExpiresAt == right.priorityExpiresAt,
                   left.title == right.title,
                   left.billStatus == right.billStatus,
+                  left.vetoed == right.vetoed,
                   left.civicProfile == right.civicProfile else {
                 return false
             }
@@ -344,6 +377,7 @@ extension BillsStore {
             storedAt: item.updatedAt,
             lifeAreas: lifeAreas,
             billStatus: BillStatus(rawValue: item.billStatus ?? "") ?? .new,
+            vetoed: item.vetoed == true ? true : nil,
             guid: item.guid,
             congress: item.congress,
             billType: item.billType,

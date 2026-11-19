@@ -223,6 +223,14 @@ final class FinalizedStatusTests: XCTestCase {
 
         let passedPartner = companions.statusLead(for: Self.group, memberBills: [bill(Self.house, .new), bill(Self.senate, .passed)])
         XCTAssertEqual(passedPartner.label, "Passed · S.J.Res. 91", "the Passed label rule is unchanged")
+
+        // A law outranks a vetoed partner (project decision 2026-11-19: Finalized 5, vetoed 4).
+        var vetoed = bill(Self.house, .failed)
+        vetoed.vetoed = true
+        let lawOverVeto = companions.statusLead(for: Self.group, memberBills: [vetoed, bill(Self.senate, .finalized, hoursAgo: 10)])
+        XCTAssertEqual(lawOverVeto.guid, Self.senate)
+        XCTAssertFalse(lawOverVeto.vetoed)
+        XCTAssertEqual(lawOverVeto.label, "Became law · S.J.Res. 91")
     }
 
     // MARK: 6. The on-device weekly brief
