@@ -15,6 +15,9 @@ struct CongressTab: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var userStore: UserStore
     @AppStorage(BillboardDisplayStorage.historyWindowDaysKey) private var historyWindowDays = BillboardHistoryWindow.default.rawValue
+    /// "Couldn't unfollow Tim Kaine.": an Unfollow whose save failed, so the member is back in the list. It stays
+    /// until the next Unfollow (UX-48).
+    @State private var unfollowError: String?
 
     /// The window the Bills tab is showing (it can be widened for the session), so "bills this
     /// week" counts the same bills.
@@ -49,10 +52,16 @@ struct CongressTab: View {
     }
 
     /// Unfollow only a member who is followed: `toggleMemberSubscription` flips the current
-    /// state, so a second tap during the update must not follow them again.
+    /// state, so a second tap during the update must not follow them again. If the save fails the member
+    /// comes back, and the section shows and says why.
     private func unfollow(_ member: CongressMemberManifestItem) {
         guard CongressTabModel.isFollowed(member, followedIDs: userStore.profile.subscribedMemberIDs) else { return }
-        userStore.toggleMemberSubscription(manifestId: member.id)
+        unfollowError = nil
+        let save = userStore.toggleMemberSubscription(manifestId: member.id)
+        Task {
+            guard await !save.value else { return }
+            unfollowError = CongressFollowedMembersSection.unfollowFailedText(memberName: member.name)
+        }
     }
 
     var body: some View {
@@ -86,6 +95,7 @@ struct CongressTab: View {
                     members: followed,
                     isLoading: isLoadingFollowedMembers,
                     isUnavailable: areFollowedMembersUnavailable,
+                    unfollowError: unfollowError,
                     onUnfollow: { unfollow($0) }
                 )
 
@@ -204,11 +214,19 @@ struct CongressFollowedMembersSection: View {
     let isLoading: Bool
     /// The profile follows members, but the members list could not be loaded.
     var isUnavailable: Bool = false
+    /// Under the list, said to VoiceOver, after an Unfollow whose save failed (UX-48).
+    var unfollowError: String? = nil
     let onUnfollow: (CongressMemberManifestItem) -> Void
 
     static let title = "Members you follow"
     static let emptyText = "Follow members to see their bills on your Bills tab."
     static let unavailableText = "The members you follow aren't available right now. Pull down to try again."
+    static let errorIdentifier = "congress.followed.error"
+
+    /// "Couldn't unfollow Tim Kaine.": the Unfollow's save failed and the member was put back (UX-48).
+    static func unfollowFailedText(memberName: String) -> String {
+        "Couldn't unfollow \(memberName)."
+    }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -234,6 +252,11 @@ struct CongressFollowedMembersSection: View {
                         row(index: index, member: member)
                     }
                 }
+            }
+
+            if let unfollowError {
+                RecordErrorText(unfollowError, announces: true)
+                    .accessibilityIdentifier(Self.errorIdentifier)
             }
         }
         // A container, so the controls inside keep their own ids.

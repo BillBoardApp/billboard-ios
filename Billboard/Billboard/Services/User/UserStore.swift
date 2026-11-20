@@ -818,14 +818,17 @@ final class UserStore: ObservableObject {
         }
     }
 
-    func updateSelectedBillContentTypes(_ newTypes: [BillContentTypePreference]) {
+    /// Replaces the bill types (App settings' switches): optimistic, then saved. The task's value is false when the
+    /// save failed and the old types were put back; the switch that started it says so (UX-48).
+    @discardableResult
+    func updateSelectedBillContentTypes(_ newTypes: [BillContentTypePreference]) -> Task<Bool, Never> {
         Task { await updateSelectedBillContentTypesAsync(newTypes) }
     }
 
-    private func updateSelectedBillContentTypesAsync(_ newTypes: [BillContentTypePreference]) async {
+    private func updateSelectedBillContentTypesAsync(_ newTypes: [BillContentTypePreference]) async -> Bool {
         let allTypes = Set(BillContentTypePreference.allCases)
         let cleanedSet = Set(newTypes)
-        guard !cleanedSet.isEmpty else { return }
+        guard !cleanedSet.isEmpty else { return true }
 
         let previous = profile.selectedBillContentTypes
         let explicitSelection = cleanedSet == allTypes
@@ -856,31 +859,35 @@ final class UserStore: ObservableObject {
             }
         } catch {
             setProfile(profile.updating(selectedBillContentTypes: previous))
-            setUserFacingError(
-                "Couldn't update your bill types.",
-                debug: error,
-                context: "updateSelectedBillContentTypesAsync() failed"
-            )
+            logFailure(error, context: "updateSelectedBillContentTypesAsync() failed")
+            return false
         }
+        return true
     }
 
 
-    func removeMember(_ memberId: UUID) {
+    /// Unfollows a member: optimistic, then saved. False when the save failed and the member was followed again.
+    @discardableResult
+    func removeMember(_ memberId: UUID) -> Task<Bool, Never> {
         Task {
             let manifestId = resolveManifestID(for: memberId)
-            await removeMemberAsync(memberId, manifestId: manifestId)
+            return await removeMemberAsync(memberId, manifestId: manifestId)
         }
     }
 
-    func toggleMemberSubscription(manifestId: String) {
+    /// Follows or unfollows a member (Follow on the member page, Unfollow on the Congress tab): optimistic, then
+    /// saved. The task's value is false when the save failed and the old follows were put back; the control that
+    /// started it says so (UX-48).
+    @discardableResult
+    func toggleMemberSubscription(manifestId: String) -> Task<Bool, Never> {
         Task {
             let uuid = UUID.deterministic(from: manifestId)
             let subscribed = profile.subscribedMemberIDs.contains(uuid)
-            await setMemberSubscribedAsync(manifestId: manifestId, subscribed: !subscribed)
+            return await setMemberSubscribedAsync(manifestId: manifestId, subscribed: !subscribed)
         }
     }
 
-    private func removeMemberAsync(_ memberId: UUID, manifestId: String?) async {
+    private func removeMemberAsync(_ memberId: UUID, manifestId: String?) async -> Bool {
         let previous = profile.subscribedMemberIDs
         let updated = profile.subscribedMemberIDs.filter { $0 != memberId }
         setProfile(profile.updating(subscribedMemberIDs: updated))
@@ -896,17 +903,15 @@ final class UserStore: ObservableObject {
             }
         } catch {
             setProfile(profile.updating(subscribedMemberIDs: previous))
-            setUserFacingError(
-                "Couldn't unfollow that member.",
-                debug: error,
-                context: "removeMemberAsync() failed"
-            )
+            logFailure(error, context: "removeMemberAsync() failed")
+            return false
         }
+        return true
     }
 
-    private func setMemberSubscribedAsync(manifestId: String, subscribed: Bool) async {
+    private func setMemberSubscribedAsync(manifestId: String, subscribed: Bool) async -> Bool {
         let cleanedManifestId = manifestId.trimmed
-        guard !cleanedManifestId.isEmpty else { return }
+        guard !cleanedManifestId.isEmpty else { return true }
 
         let memberUUID = UUID.deterministic(from: cleanedManifestId)
         let previous = profile.subscribedMemberIDs
@@ -934,91 +939,108 @@ final class UserStore: ObservableObject {
             }
         } catch {
             setProfile(profile.updating(subscribedMemberIDs: previous))
-            setUserFacingError(
-                "Couldn't update the members you follow.",
-                debug: error,
-                context: "setMemberSubscribedAsync() failed"
-            )
+            logFailure(error, context: "setMemberSubscribedAsync() failed")
+            return false
         }
+        return true
     }
 
     // MARK: - Watch sync
 
     /// Add a bill GUID to the backend watchlist (optimistic + backend sync).
     ///
-    /// - Parameter rollbackOnFailure:
-    ///   When true, restore the previous watch list if backend sync fails.
-    ///   Backfill callers can pass false to avoid retry loops when auth/backend is temporarily forbidden.
-    func addWatch(guid: String, rollbackOnFailure: Bool = true) {
-        addWatches(guids: [guid], rollbackOnFailure: rollbackOnFailure)
+    /// - Parameters:
+    ///   - rollbackOnFailure: When true, restore the previous watch list if backend sync fails.
+    ///     Backfill callers can pass false to avoid retry loops when auth/backend is temporarily forbidden.
+    ///   - onRollback: Runs just before a failed save restores the previous watch list, in the same turn.
+    /// - Returns: The save, or nil when the profile already holds every guid. Its value is false when the save
+    ///   failed (or user writes are not allowed); the Watch control says so (UX-48).
+    @discardableResult
+    func addWatch(guid: String, rollbackOnFailure: Bool = true, onRollback: (() -> Void)? = nil) -> Task<Bool, Never>? {
+        addWatches(guids: [guid], rollbackOnFailure: rollbackOnFailure, onRollback: onRollback)
     }
 
     /// Add many bill GUIDs to the backend watchlist in a single request.
     ///
     /// Used by cache backfill so we don't issue one network request per bill.
-    func addWatches(guids: [String], rollbackOnFailure: Bool = true) {
+    @discardableResult
+    func addWatches(
+        guids: [String],
+        rollbackOnFailure: Bool = true,
+        onRollback: (() -> Void)? = nil
+    ) -> Task<Bool, Never>? {
         let cleanedUnique = Array(
             Set(
                 guids.compactMap { $0.trimmedNonEmpty }
             )
         ).sorted()
-        guard !cleanedUnique.isEmpty else { return }
+        guard !cleanedUnique.isEmpty else { return nil }
 
         let previous = profile.watchedBillGUIDs
         let previousSet = Set(previous)
         let toAdd = cleanedUnique.filter { !previousSet.contains($0) }
-        guard !toAdd.isEmpty else { return }
+        guard !toAdd.isEmpty else { return nil }
 
         let updated = Array(previousSet.union(toAdd)).sorted()
         setProfile(profile.updating(watchedBillGUIDs: updated))
 
-        Task {
+        return Task {
             guard canPerformUserWrites else {
                 if rollbackOnFailure {
+                    onRollback?()
                     setProfile(profile.updating(watchedBillGUIDs: previous))
                 }
                 #if DEBUG
                 print("[UserStore] addWatches() skipped; user writes are currently ineligible")
                 #endif
-                return
+                return false
             }
 
             do {
                 let items = PreferencesMutations.watchItems(for: toAdd)
                 try await preferencesService.putPreferences(items)
+                return true
             } catch {
                 if APIErrorDebug.httpStatusCode(from: error) == 403 {
                     await refreshComplianceStatus()
                 }
                 if rollbackOnFailure {
+                    onRollback?()
                     setProfile(profile.updating(watchedBillGUIDs: previous))
                 }
                 #if DEBUG
                 print("[UserStore] addWatches() error -> \(PreferencesService.debugString(for: error))")
                 #endif
+                return false
             }
         }
     }
 
     /// Remove a bill GUID from the backend watchlist (optimistic + backend sync).
-    func removeWatch(guid: String) {
+    ///
+    /// - Returns: The save, or nil when the profile does not hold the guid. Its value is false when the save failed
+    ///   and the watch was put back; the Watch control says so (UX-48).
+    @discardableResult
+    func removeWatch(guid: String) -> Task<Bool, Never>? {
         let cleaned = guid.trimmed
-        guard !cleaned.isEmpty else { return }
-        guard profile.watchedBillGUIDs.contains(cleaned) else { return }
+        guard !cleaned.isEmpty else { return nil }
+        guard profile.watchedBillGUIDs.contains(cleaned) else { return nil }
 
         let previous = profile.watchedBillGUIDs
         let updated = previous.filter { $0 != cleaned }
         setProfile(profile.updating(watchedBillGUIDs: updated))
 
-        Task {
+        return Task {
             do {
                 let items = PreferencesMutations.watchItems(for: [cleaned])
                 try await preferencesService.deletePreferences(items)
+                return true
             } catch {
                 setProfile(profile.updating(watchedBillGUIDs: previous))
                 #if DEBUG
                 print("[UserStore] removeWatch() error -> \(PreferencesService.debugString(for: error))")
                 #endif
+                return false
             }
         }
     }
@@ -1044,6 +1066,12 @@ final class UserStore: ObservableObject {
 
     private func setUserFacingError(_ message: String, debug error: Error, context: String) {
         errorMessage = message
+        logFailure(error, context: context)
+    }
+
+    /// A failed save in the debug log only. Watch, Follow and the bill types leave `errorMessage` alone: the control
+    /// that started the save says it failed, and Updates reads `errorMessage` as "the profile didn't load" (UX-48).
+    private func logFailure(_ error: Error, context: String) {
         #if DEBUG
         print("[UserStore] \(context): \(PreferencesService.debugString(for: error))")
         #endif

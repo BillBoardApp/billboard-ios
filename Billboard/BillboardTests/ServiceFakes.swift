@@ -230,6 +230,9 @@ final class FakePreferencesService: PreferencesServicing {
     var preferences: [PreferencesItem] = []
     /// Thrown by `getPreferences` when set.
     var getPreferencesError: Error?
+    /// Thrown by `putPreferences` and `deletePreferences` when set, after the call is recorded.
+    var putError: Error?
+    var deleteError: Error?
     private(set) var putCalls: [[PreferencesItem]] = []
     private(set) var deleteCalls: [[PreferencesItem]] = []
 
@@ -237,8 +240,14 @@ final class FakePreferencesService: PreferencesServicing {
         if let getPreferencesError { throw getPreferencesError }
         return preferences
     }
-    func putPreferences(_ items: [PreferencesItem]) async throws { putCalls.append(items) }
-    func deletePreferences(_ items: [PreferencesItem]) async throws { deleteCalls.append(items) }
+    func putPreferences(_ items: [PreferencesItem]) async throws {
+        putCalls.append(items)
+        if let putError { throw putError }
+    }
+    func deletePreferences(_ items: [PreferencesItem]) async throws {
+        deleteCalls.append(items)
+        if let deleteError { throw deleteError }
+    }
 }
 
 // MARK: - Companion groups (APPF-23)

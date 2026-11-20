@@ -371,15 +371,33 @@ struct CongressMemberProfileLoaderView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var civicProfileMode: CongressMemberCivicProfileCardMode = .unavailable
+    /// "Couldn't unfollow this member.": the latest Follow tap's save failed and the follows were put back. It
+    /// stays until the next tap (UX-48).
+    @State private var followError: String?
+    /// The latest Follow tap, so an earlier one's failure is not shown after it.
+    @State private var latestFollowTap = UUID()
 
     private var isSubscribed: Bool {
         userStore.profile.subscribedMemberIDs.contains(UUID.deterministic(from: manifest.id))
     }
 
+    /// Follow or Unfollow at once; if the save fails the store puts it back, and the page shows and says so.
+    private func toggleFollow() {
+        let following = !isSubscribed
+        followError = nil
+        let tap = UUID()
+        latestFollowTap = tap
+        let save = userStore.toggleMemberSubscription(manifestId: manifest.id)
+        Task {
+            guard await !save.value, latestFollowTap == tap else { return }
+            followError = CongressFollowToolbarButton.saveFailedText(isFollowing: following)
+        }
+    }
+
     var body: some View {
         Group {
             if let member {
-                CongressMemberProfileView(member: member, civicProfileMode: civicProfileMode)
+                CongressMemberProfileView(member: member, civicProfileMode: civicProfileMode, followError: followError)
             } else if let errorMessage, !isLoading {
                 CongressMemberLoadErrorView(
                     message: errorMessage,
@@ -395,6 +413,8 @@ struct CongressMemberProfileLoaderView: View {
                     .navigationTitle(manifest.name)
             }
         }
+        // A failed Follow is said here, in every state of the page; the loaded page also shows it (UX-48).
+        .announcesToVoiceOver(followError)
         .navigationBarTitleDisplayMode(.inline)
         .glassNavigationBar()
         .toolbar {
@@ -407,7 +427,7 @@ struct CongressMemberProfileLoaderView: View {
                         reduceTransparency: reduceTransparency
                     )
                 ) {
-                    userStore.toggleMemberSubscription(manifestId: manifest.id)
+                    toggleFollow()
                 }
             }
         }
@@ -558,6 +578,14 @@ struct CongressFollowToolbarButton: View {
     static func accessibilityLabel(isFollowing: Bool) -> String { isFollowing ? "Unfollow" : "Follow" }
     static func systemImage(isFollowing: Bool) -> String { isFollowing ? "checkmark.circle" : "plus.circle" }
 
+    /// The member page's line when a tap's save failed and the follows were put back (UX-48). `isFollowing` is
+    /// the value the tap asked for.
+    static func saveFailedText(isFollowing: Bool) -> String {
+        isFollowing ? "Couldn't follow this member." : "Couldn't unfollow this member."
+    }
+
+    static let errorIdentifier = "member.subscription.error"
+
     var body: some View {
         Button(action: action) {
             DocumentToolbarLabel(
@@ -582,13 +610,15 @@ struct CongressFollowToolbarButton: View {
 struct CongressMemberProfileView: View {
     let member: CongressMember
     let civicProfileMode: CongressMemberCivicProfileCardMode
+    /// A failed Follow (UX-48), under the front matter.
+    var followError: String? = nil
 
     /// The bottom of the front matter in the page's coordinates.
     @State private var nameBottom: CGFloat = 0
 
     var body: some View {
         ScrollView {
-            CongressMemberPageContent(member: member, civicProfileMode: civicProfileMode) { bottom in
+            CongressMemberPageContent(member: member, civicProfileMode: civicProfileMode, followError: followError) { bottom in
                 nameBottom = bottom
             }
         }
@@ -605,6 +635,9 @@ struct CongressMemberProfileView: View {
 struct CongressMemberPageContent: View {
     let member: CongressMember
     let civicProfileMode: CongressMemberCivicProfileCardMode
+    /// "Couldn't follow this member." under the front matter, after a Follow whose save failed (UX-48). The
+    /// loader says it to VoiceOver, so it is said while the page is loading too.
+    var followError: String? = nil
     /// Told where the front matter ends, in the page's coordinates, for the bar's title.
     var onNameBottomChange: ((CGFloat) -> Void)? = nil
 
@@ -653,6 +686,13 @@ struct CongressMemberPageContent: View {
             DoubleRule()
                 .padding(.horizontal, BillboardStyle.Space.xl)
                 .padding(.top, 2)
+
+            if let followError {
+                RecordErrorText(followError)
+                    .padding(.horizontal, BillboardStyle.Space.xl)
+                    .padding(.top, BillboardStyle.Space.m)
+                    .accessibilityIdentifier(CongressFollowToolbarButton.errorIdentifier)
+            }
 
             RecordSection("Basics", showsRule: false) {
                 Ledger(rows: basicsRows)
