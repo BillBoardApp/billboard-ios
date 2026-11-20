@@ -677,8 +677,9 @@ final class VoteRefusalRollbackTests: XCTestCase {
     /// A Yea whose write failed with its outcome unknown (offline): the stamp stays, and the refusal strip says
     /// "Not saved yet. Check your connection." with Try again; no 4 s banner asking to "vote again", which the
     /// panel ignores. Change and the same vote send nothing, and the strip comes back when the buttons close. Try
-    /// again sends the shown vote again; once it is stored the strip goes and the stamp stays. At xxxLarge the
-    /// strip is the first row of Your vote, with its Try again.
+    /// again sends the shown vote again, and the strip stays, its Try again disabled, until the answer; once the
+    /// vote is stored the strip goes and the stamp stays. At xxxLarge the strip is the first row of Your vote, with
+    /// its Try again.
     func testAVoteNotSavedStaysWithItsStripAndTryAgain() {
         for size in [DynamicTypeSize.large, .xxxLarge] {
             let votes = FakeBillVotesService()
@@ -716,10 +717,17 @@ final class VoteRefusalRollbackTests: XCTestCase {
                 XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(size): back")
                 XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "\(size)")
 
-                // Try again sends the shown vote again; this time it is stored.
+                // Try again sends the shown vote again; this time it is stored. While it is out the strip stays, its
+                // Try again disabled, so VoiceOver's focus on it is kept.
                 votes.setFeedbackError = nil
+                let gate = Gate()
+                votes.holdSetFeedback = gate
                 XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier, settle: 1.2), "\(size)")
                 XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea, .yea], "\(size)")
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(size): kept while it sends")
+                let busy = host.traits(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier)
+                XCTAssertEqual(busy?.contains(.notEnabled), true, "\(size): Try again is disabled while it sends")
+                gate.open()
                 XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), "\(size): \(host.text())")
                 XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "\(size)")
                 XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "\(size): the stamp stays")

@@ -142,6 +142,27 @@ final class VoteFocusPlannerTests: XCTestCase {
         XCTAssertEqual(withoutVoiceOver.handle(.refused, voiceOverRunning: false), VoteFocusPlanner.Plan(focus: .refusal))
     }
 
+    // MARK: Try again saved the vote (UX-49)
+
+    /// Try again on a vote not saved yet saved it, and its strip, which held focus, goes. With VoiceOver focus moves to
+    /// the stamp, whose one-time label says the vote; without it "You voted Yea." is announced, as after a vote.
+    func testASavedTryAgainMovesFocusToTheStampOrSaysTheVote() {
+        var planner = VoteFocusPlanner()
+        _ = planner.handle(.committed(stamp(.yea), isChange: false, opensResults: true), voiceOverRunning: true)
+        _ = planner.handle(.refused, voiceOverRunning: true)
+        XCTAssertEqual(planner.handle(.retrySaved(stamp(.yea)), voiceOverRunning: true), VoteFocusPlanner.Plan(focus: .stamp))
+        XCTAssertEqual(planner.oneTimeStampLabel, "You voted Yea on October 17.")
+        XCTAssertEqual(planner.handle(.stampFocusLeft, voiceOverRunning: true), .nothing)
+        XCTAssertNil(planner.oneTimeStampLabel)
+
+        var withoutVoiceOver = VoteFocusPlanner()
+        XCTAssertEqual(
+            withoutVoiceOver.handle(.retrySaved(stamp(.nay)), voiceOverRunning: false),
+            VoteFocusPlanner.Plan(announcement: "You voted Nay.")
+        )
+        XCTAssertNil(withoutVoiceOver.oneTimeStampLabel)
+    }
+
     // MARK: Actions
 
     /// The stamp's "Go to Results" goes to the Results title; the sealed sheet's "Go to vote buttons" to the

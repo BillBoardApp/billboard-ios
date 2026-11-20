@@ -512,6 +512,8 @@ struct VoteFocusPlanner: Equatable {
         case statsArrived(belowFloor: VoteResultsFormatting.FloorLine?)
         /// The server refused the vote (APPF-27), or its write failed and it shows not saved yet (UX-49).
         case refused
+        /// Try again on a vote not saved yet saved it (UX-49): the strip that held VoiceOver's focus goes.
+        case retrySaved(BallotStampCopy)
         /// VoiceOver focus left the stamp: its one-time label is spent.
         case stampFocusLeft
         /// The stamp's "Go to Results".
@@ -558,6 +560,13 @@ struct VoteFocusPlanner: Equatable {
             awaitingStats = false
             oneTimeStampLabel = nil
             return Plan(focus: .refusal)
+        case let .retrySaved(stamp):
+            // Focus was on the strip's Try again: it goes to the stamp, which says the vote once, as after a vote.
+            guard voiceOverRunning else {
+                return Plan(announcement: BillVoteBarModel.committedAnnouncement(stamp.choice, isChange: false))
+            }
+            oneTimeStampLabel = stamp.committedLabel(isChange: false)
+            return Plan(focus: .stamp)
         case .stampFocusLeft:
             oneTimeStampLabel = nil
             return .nothing

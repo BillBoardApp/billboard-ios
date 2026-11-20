@@ -32,6 +32,8 @@ struct BillVoteBar: View {
     var refusal: String? = nil
     /// The refusal strip's Try again, for a vote not saved yet: sends it again (UX-49). Nil draws none.
     var onTryAgain: (() -> Void)? = nil
+    /// Try again is sending the vote: the strip stays, its Try again disabled, until the result (UX-49).
+    var isTryingAgain = false
     /// When the shown vote was cast, for the stamp's date; nil draws the no-date form.
     var votedAt: Date? = nil
     /// The vote just tapped, drawn inked over the buttons until `BillDetail` clears it (spec 5.1).
@@ -323,7 +325,7 @@ struct BillVoteBar: View {
     private func stripView(_ strip: BillVoteBarModel.Strip) -> some View {
         switch strip {
         case .refusal(let text):
-            VoteStrip(kind: .refusal(text), onTryAgain: onTryAgain, focus: focus)
+            VoteStrip(kind: .refusal(text), onTryAgain: onTryAgain, isTryingAgain: isTryingAgain, focus: focus)
         case .changing:
             VoteStrip(kind: .changing, onCancel: onCollapse)
         case .coachMark:
@@ -449,6 +451,8 @@ struct VoteStrip: View {
     var onDismissCoachMark: () -> Void = {}
     /// The refusal strip's Try again, which sends the shown vote again (UX-49); nil draws none.
     var onTryAgain: (() -> Void)? = nil
+    /// Try again is sending the vote: it stays, disabled, so VoiceOver's focus on it is kept until the result.
+    var isTryingAgain = false
     /// The refusal strip takes VoiceOver focus after a refusal (`.refusal`).
     var focus: AccessibilityFocusState<VoteFocusTarget?>.Binding? = nil
 
@@ -589,6 +593,7 @@ struct VoteStrip: View {
 
     private func refusalTryAgain(_ action: @escaping () -> Void) -> some View {
         textButton(VoteResultsFormatting.tryAgainTitle, identifier: BillVoteBarModel.refusalTryAgainIdentifier, action: action)
+            .disabled(isTryingAgain)
     }
 
     private func coachMarkText(_ text: String) -> some View {
