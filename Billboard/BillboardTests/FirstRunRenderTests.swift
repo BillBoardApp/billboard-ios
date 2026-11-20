@@ -89,6 +89,31 @@ final class FirstRunRenderTests: XCTestCase {
         }
     }
 
+    /// Confirm your account's two links, "Resend code" and "Back to sign in", each stand on a 44 pt row (spec 2.8,
+    /// UX-46), so their 44 pt targets do not overlap: stacked bare, a tap on the lower half of Resend code went back
+    /// to Sign in.
+    func testCodeStepLinksStandOnTheirOwn44PointRows() throws {
+        let auth = AuthManager()
+        auth.cancelSignIn()
+        let store = UserStore(preferencesService: StaticPreferencesService(items: []), congressService: FakeCongressService())
+        for size in [DynamicTypeSize.large, .accessibility3] {
+            let host = AccessibilityTreeText.Host(
+                NavigationStack {
+                    CreateAccountView(confirming: PendingSignUpConfirmation(email: "voter@example.com", password: "Secret-123"))
+                }
+                .environmentObject(auth)
+                .environmentObject(store)
+                .environment(\.dynamicTypeSize, size),
+                size: CGSize(width: 390, height: 1400),
+                settle: 0.3
+            )
+            defer { host.close() }
+            let resend = try XCTUnwrap(host.frame(of: "Resend code"), host.text())
+            let back = try XCTUnwrap(host.frame(of: "Back to sign in"), host.text())
+            XCTAssertGreaterThanOrEqual(back.midY - resend.midY, 44, "\(size): the two 44 pt targets overlap")
+        }
+    }
+
     // MARK: - Where do you vote?
 
     func testLocationSetupFormRenders() throws {
