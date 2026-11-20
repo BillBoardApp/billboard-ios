@@ -208,24 +208,30 @@ final class BillVoteStore: ObservableObject {
     }
 
     /// Reads the server's rows for `billIds` again, whatever the cache holds: bill detail calls it when
-    /// the server answered `RESULTS_LOCKED` (INT-11), so the screen follows the rows the server holds. A
-    /// bill with a vote write still being sent (`unconfirmedVotes`), or written while this read was out,
-    /// is left as it is, so an optimistic vote is never overwritten. Failures stay quiet.
-    func refreshVotes(for billIds: [String]) async {
+    /// the server answered `RESULTS_LOCKED` (INT-11), so the screen follows the rows the server holds, and when
+    /// Results opened for a vote it shows as not saved yet (UX-49). A bill with a vote write still being sent
+    /// (`unconfirmedVotes`), or written while this read was out, is left as it is, so an optimistic vote is
+    /// never overwritten. Failures stay quiet.
+    ///
+    /// Returns the rows read and stored, by bill (an Abstain row as `.voted(.abstain)`): empty when the read
+    /// failed, and without a bill the server left out or that was left as it is.
+    @discardableResult
+    func refreshVotes(for billIds: [String]) async -> [String: VoteState] {
         let ids = Array(Set(billIds.compactMap { BillsStore.trimmedOrNil($0) }))
             .filter { unconfirmedVotes[$0] == nil }
             .sorted()
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty else { return [:] }
         do {
             let writes = voteWriteTokens(ids)
             let remote = try await service.fetchFeedback(billIds: ids)
-            applyRemote(remote, to: ids, unlessWrittenSince: writes)
+            return applyRemote(remote, to: ids, unlessWrittenSince: writes)
         } catch {
             #if DEBUG
             if !APIErrorResponse.isCancellation(error) {
                 print(">>> [BillVoteStore] refreshVotes failed: \(APIErrorDebug.debugString(for: error))")
             }
             #endif
+            return [:]
         }
     }
 
@@ -258,9 +264,16 @@ final class BillVoteStore: ObservableObject {
     }
 
     /// Stores the server's rows for `ids`. An id the server left out stays as it is (never assumed not
-    /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken.
-    private func applyRemote(_ remote: [String: BillVotesService.RemoteVoteState], to ids: [String], unlessWrittenSince writes: [String: UUID]) {
+    /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken. Returns
+    /// the rows it stored (an Abstain row as `.voted(.abstain)`).
+    @discardableResult
+    private func applyRemote(
+        _ remote: [String: BillVotesService.RemoteVoteState],
+        to ids: [String],
+        unlessWrittenSince writes: [String: UUID]
+    ) -> [String: VoteState] {
         let now = Date()
+        var stored: [String: VoteState] = [:]
         for id in ids {
             guard let state = remote[id],
                   unconfirmedVotes[id] == nil,
@@ -269,11 +282,14 @@ final class BillVoteStore: ObservableObject {
             case .voted(let rv):
                 cache.setVoted(billId: id, vote: rv.vote, votedAt: rv.votedAt, now: now)
                 statesByBillId[id] = rv.vote.countsAsVote ? .voted(rv.vote) : .notVoted
+                stored[id] = .voted(rv.vote)
             case .notVoted:
                 cache.setNotVoted(billId: id, now: now)
                 statesByBillId[id] = .notVoted
+                stored[id] = .notVoted
             }
         }
+        return stored
     }
 
     /// Optimistic voting write flow.

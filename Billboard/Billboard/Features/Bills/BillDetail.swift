@@ -936,13 +936,38 @@ private struct BillDetailContent: View {
             await store.updateReasons(billId: reasonsGuid, vote: vote, reasons: orderedReasons) ? .stored : .notSaved
         }
         Task {
-            await handleVoteSync(syncTask, savedMessage: "Reasons saved", onFailure: {
+            await handleVoteSync(syncTask, savedMessage: "Reasons saved", onSaved: {
+                // The update sends the whole row: the vote is saved too (UX-49).
+                unsavedVoteConfirmed(vote)
+            }, onFailure: {
                 // Let the next change (or leaving the screen) try again.
                 if syncedReasons == reasons {
                     syncedReasons = previouslySynced
                 }
             })
         }
+    }
+
+    /// The server holds `vote`, the vote shown as not saved yet, though its own write failed: a reasons update,
+    /// which sends the whole row, was stored, or the row was read back (UX-49). The strip goes, unless a newer vote
+    /// is being sent or the screen now shows another.
+    private func unsavedVoteConfirmed(_ vote: VoteType) {
+        guard isVoteUnsaved, voteCasts.latest == nil, pendingVote?.voteType == vote else { return }
+        withAnimation(reduceMotion ? nil : BallotMoment.rollback) {
+            isVoteUnsaved = false
+        }
+    }
+
+    /// Results opened for a vote shown as not saved yet: the server holds a vote from this user on the bill, maybe
+    /// this one (a write that timed out after the server stored it). Its row is read, and when it is the shown
+    /// vote the strip goes (UX-49). Another row (the vote before a change) leaves the strip and its Try again.
+    @MainActor
+    private func confirmUnsavedVoteFromServer() async {
+        guard isVoteUnsaved, voteCasts.latest == nil, let shown = pendingVote?.voteType,
+              let target = BillsStore.trimmedOrNil(voteTargetGuid) else { return }
+        let rows = await voteStore.refreshVotes(for: [target])
+        guard rows[target] == .voted(shown) else { return }
+        unsavedVoteConfirmed(shown)
     }
 
     /// Waits for a vote or reasons write, then confirms it and refreshes the results.
@@ -981,6 +1006,9 @@ private struct BillDetailContent: View {
            BillVoteBarModel.fetchesStatsAfterWrite(result: result, stillUnlocked: hasVoted),
            let statsBillGuid {
             await loadBillStats(billGuid: statsBillGuid)
+            if billStats != nil {
+                await confirmUnsavedVoteFromServer()
+            }
         }
     }
 
