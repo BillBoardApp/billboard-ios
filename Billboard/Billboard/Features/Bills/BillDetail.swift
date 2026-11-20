@@ -305,6 +305,11 @@ private struct BillDetailContent: View {
     @State private var voteCasts = BillVoteCastLedger()
     /// The Watch controls' value until the stores reflect the toggle.
     @State private var watchOverride: Bool?
+    /// "Couldn't stop watching this bill." under the Watch row, said to VoiceOver: the latest toggle's save failed
+    /// and the watch was put back. It stays until the next toggle (UX-48).
+    @State private var watchSaveError: String?
+    /// The latest toggle, so an earlier one's failure is not shown after it.
+    @State private var latestWatchToggle = UUID()
     /// Counts the votes that scroll Your vote to the top (spec 3.13): see `BillDetail.scrollsToYourVote`.
     @State private var yourVoteScrollCount = 0
     /// Where the bill's title ends, in the page's content: the bar shows "Bill" once it has scrolled under
@@ -769,7 +774,8 @@ private struct BillDetailContent: View {
         topicPrompt.post(topicPrompt.trigger.pageEnded(ending))
     }
 
-    /// The Watch toolbar button and toggle (the only controls that change watch).
+    /// The Watch toolbar button and toggle (the only controls that change watch). The change shows and is said
+    /// at once; if its save fails, the stores put the watch back and the Watch row says so (UX-48).
     private func setWatch(_ watch: Bool) {
         guard watch != currentWatchValue else { return }
         let plan = BillWatchPlan.make(watch: watch, targetGuid: voteTargetGuid, memberGuids: watchGuids)
@@ -778,12 +784,20 @@ private struct BillDetailContent: View {
             _ = billIDForVoting()
         }
         watchOverride = watch
-        plan.apply(billID: billID, billsStore: billsStore, userStore: userStore)
+        watchSaveError = nil
+        let toggle = UUID()
+        latestWatchToggle = toggle
+        let save = plan.apply(billID: billID, billsStore: billsStore, userStore: userStore)
         if storeWatchValue == watch {
             watchOverride = nil
         }
         HapticFeedback.selection()
         AccessibilityNotification.Announcement(BillWatchCopy.announcement(isWatching: watch)).post()
+        Task {
+            guard await !save.value, latestWatchToggle == toggle else { return }
+            watchOverride = nil
+            watchSaveError = BillWatchCopy.saveFailedText(isWatching: watch)
+        }
     }
 
     private func toggleReason(_ reason: VoteReason) {
@@ -1073,6 +1087,7 @@ private struct BillDetailContent: View {
                     reasonOrder: pendingVote.map { VoteReasonOrder.order(for: $0.voteType, seed: reasonOrderSeed) } ?? [],
                     onToggleReason: toggleReason,
                     onSetWatch: setWatch,
+                    watchError: watchSaveError,
                     companionCaption: companionVoteCaption,
                     companionConflictNote: companionConflictNote,
                     showsRule: lead != .yourVote,

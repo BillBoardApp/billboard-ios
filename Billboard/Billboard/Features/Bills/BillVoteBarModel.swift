@@ -714,16 +714,36 @@ struct BillWatchPlan: Equatable {
 extension BillWatchPlan {
     /// Writes the plan through the stores: the profile's watch rows (`PUT`/`DELETE /preferences`,
     /// type Watch) and the bills store's local flags. The bills store marks an added watch on its
-    /// bill when the profile changes (`BillsStore.reconcileWatchesFromProfile`).
-    func apply(billID: UUID, billsStore: BillsStore, userStore: UserStore) {
-        if let addGuid {
-            userStore.addWatch(guid: addGuid)
+    /// bill when the profile changes (`BillsStore.reconcileWatchesFromProfile`); a failed add clears
+    /// that mark as the profile is put back, so the watch is not sent again as an older local one.
+    ///
+    /// - Returns: Whether every write saved. False once one failed and its watch was put back: the
+    ///   Watch control then says so (UX-48).
+    @discardableResult
+    func apply(billID: UUID, billsStore: BillsStore, userStore: UserStore) -> Task<Bool, Never> {
+        var saves: [Task<Bool, Never>] = []
+        if let addGuid, let save = userStore.addWatch(
+            guid: addGuid,
+            onRollback: { billsStore.clearWatchMark(guid: addGuid) }
+        ) {
+            saves.append(save)
         }
         if unwatchBill {
-            billsStore.unwatch(billID: billID)
+            saves += billsStore.unwatch(billID: billID)
         }
         for guid in removeGuids {
-            userStore.removeWatch(guid: guid)
+            if let save = userStore.removeWatch(guid: guid) {
+                saves.append(save)
+            }
+        }
+        return Task {
+            var saved = true
+            for save in saves {
+                if await !save.value {
+                    saved = false
+                }
+            }
+            return saved
         }
     }
 }
@@ -748,6 +768,14 @@ enum BillWatchCopy {
     static func announcement(isWatching: Bool) -> String {
         isWatching ? "Watching this bill" : "Stopped watching this bill"
     }
+
+    /// Shown under the Watch row and said to VoiceOver when a toggle's save failed and the watch was put back
+    /// (UX-48). `isWatching` is the value the toggle asked for.
+    static func saveFailedText(isWatching: Bool) -> String {
+        isWatching ? "Couldn't watch this bill." : "Couldn't stop watching this bill."
+    }
+
+    static let errorIdentifier = "bill.watch.error"
 }
 
 // MARK: - Vote saved event

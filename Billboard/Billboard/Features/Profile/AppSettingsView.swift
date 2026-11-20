@@ -40,6 +40,14 @@ enum AppSettingsCopy {
     static func canTurnOff(_ contentType: BillContentTypePreference, enabled: Set<BillContentTypePreference>) -> Bool {
         !(enabled.count == 1 && enabled.contains(contentType))
     }
+
+    /// "Couldn't turn off joint resolutions.": under the Bill types switches, and said to VoiceOver, when a switch's
+    /// save failed and the switch was put back (UX-48). `isOn` is the value the switch asked for.
+    static func billTypeSaveFailedText(_ contentType: BillContentTypePreference, isOn: Bool) -> String {
+        "Couldn't turn \(isOn ? "on" : "off") \(billTypeTitle(contentType).lowercased())."
+    }
+
+    static let billTypesErrorIdentifier = "settings.billTypes.error"
 }
 
 /// App settings (spec D 2.5.7; Civic Record spec 4.69): Appearance, Bill types, how far back the Bills tab
@@ -50,6 +58,8 @@ struct AppSettingsView: View {
     @AppStorage(ProductTutorialStorage.replayRequestedKey) private var replayTutorialRequested = false
     @AppStorage(BillboardDisplayStorage.historyWindowDaysKey) private var billboardHistoryWindowDays = BillboardHistoryWindow.default.rawValue
     @AppStorage(AppearancePreference.storageKey) private var appearance: AppearancePreference = .system
+    /// A switch's failed save (UX-48), until the next switch is flipped.
+    @State private var billTypesError: String?
 
     private var selectedBillboardHistoryWindow: BillboardHistoryWindow {
         BillboardHistoryWindow.from(rawValue: billboardHistoryWindowDays)
@@ -70,9 +80,14 @@ struct AppSettingsView: View {
                     guard AppSettingsCopy.canTurnOff(contentType, enabled: updated) else { return }
                     updated.remove(contentType)
                 }
-                userStore.updateSelectedBillContentTypes(
+                billTypesError = nil
+                let save = userStore.updateSelectedBillContentTypes(
                     Array(updated).sorted { $0.sortOrder < $1.sortOrder }
                 )
+                Task {
+                    guard await !save.value else { return }
+                    billTypesError = AppSettingsCopy.billTypeSaveFailedText(contentType, isOn: newValue)
+                }
             }
         )
     }
@@ -113,7 +128,13 @@ struct AppSettingsView: View {
             } header: {
                 RecordListHeader("Bill types")
             } footer: {
-                RecordListFooter(AppSettingsCopy.billTypesFooter)
+                VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
+                    if let billTypesError {
+                        RecordErrorText(billTypesError)
+                            .accessibilityIdentifier(AppSettingsCopy.billTypesErrorIdentifier)
+                    }
+                    RecordListFooter(AppSettingsCopy.billTypesFooter)
+                }
             }
             .recordListRows()
 
@@ -156,6 +177,9 @@ struct AppSettingsView: View {
             .recordListRows()
         }
         .recordList()
+        // A failed switch is said from the list, not its footer: a list makes its rows only as they scroll into
+        // view (UX-48).
+        .announcesToVoiceOver(billTypesError)
         .navigationTitle("App settings")
         .navigationBarTitleDisplayMode(.inline)
         .glassNavigationBar()

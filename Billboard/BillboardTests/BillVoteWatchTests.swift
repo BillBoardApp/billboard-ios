@@ -76,9 +76,10 @@ final class BillVoteWatchTests: XCTestCase {
         let stores = await makeStores(bills: [house, senate], groups: [group], watchedGuids: [Self.senate])
 
         let plan = BillWatchPlan.make(watch: false, targetGuid: Self.house, memberGuids: group.memberGuids)
-        plan.apply(billID: house.id, billsStore: stores.bills, userStore: stores.user)
+        let saved = await plan.apply(billID: house.id, billsStore: stores.bills, userStore: stores.user).value
         await settle()
 
+        XCTAssertTrue(saved, "the stop saved")
         XCTAssertFalse(stores.bills.isWatched(billID: house.id))
         XCTAssertFalse(stores.user.profile.watchedBillGUIDs.contains(Self.senate))
         let deleted = stores.userPreferences.deleteCalls.flatMap { $0 }
@@ -91,16 +92,67 @@ final class BillVoteWatchTests: XCTestCase {
         let bill = companionTestBill(Self.unwatchedGuid)
         let stores = await makeStores(bills: [bill], groups: [], watchedGuids: [])
 
-        BillWatchPlan.make(watch: true, targetGuid: Self.unwatchedGuid, memberGuids: [Self.unwatchedGuid])
+        let saved = await BillWatchPlan.make(watch: true, targetGuid: Self.unwatchedGuid, memberGuids: [Self.unwatchedGuid])
             .apply(billID: bill.id, billsStore: stores.bills, userStore: stores.user)
+            .value
         await settle()
 
+        XCTAssertTrue(saved, "the watch saved")
         XCTAssertEqual(stores.user.profile.watchedBillGUIDs, [Self.unwatchedGuid])
         let added = stores.userPreferences.putCalls.flatMap { $0 }.filter { $0.type == "Watch" }
         XCTAssertEqual(added.map(\.preference), [Self.unwatchedGuid])
         // The tab shell reconciles the bills store from the profile.
         stores.bills.reconcileWatchesFromProfile(stores.user.profile.watchedBillGUIDs)
         XCTAssertTrue(stores.bills.isWatched(billID: bill.id))
+        await settleBillsCache(scope: stores.scope)
+    }
+
+    // MARK: - A failed save (UX-48)
+
+    /// The stop's save fails: the watch is put back, and the toggle is told, so it can say so.
+    func testAFailedStopPutsTheWatchBack() async {
+        var watched = companionTestBill(Self.watchedGuid)
+        watched.userWatched = true
+        let stores = await makeStores(bills: [watched], groups: [], watchedGuids: [Self.watchedGuid])
+        stores.userPreferences.deleteError = URLError(.notConnectedToInternet)
+
+        let saved = await BillWatchPlan.make(watch: false, targetGuid: Self.watchedGuid, memberGuids: [Self.watchedGuid])
+            .apply(billID: watched.id, billsStore: stores.bills, userStore: stores.user)
+            .value
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(stores.userPreferences.deleteCalls.count, 1, "the stop was sent")
+        XCTAssertEqual(stores.user.profile.watchedBillGUIDs, [Self.watchedGuid], "the watch is back")
+        // The tab shell reconciles the bills store from the profile.
+        stores.bills.reconcileWatchesFromProfile(stores.user.profile.watchedBillGUIDs)
+        XCTAssertTrue(stores.bills.isWatched(billID: watched.id))
+        XCTAssertNil(stores.user.errorMessage, "nothing in the shared message")
+        await settleBillsCache(scope: stores.scope)
+    }
+
+    /// The watch's save fails: the watch is put back and stays off. The bills store had marked the bill watched when
+    /// the profile took the watch; that mark goes too, or the next reconcile would take it for an older local watch
+    /// missing from the server and send it again, with no way back.
+    func testAFailedWatchIsPutBackAndNotSentAgain() async {
+        let bill = companionTestBill(Self.unwatchedGuid)
+        let stores = await makeStores(bills: [bill], groups: [], watchedGuids: [])
+        stores.userPreferences.putError = URLError(.notConnectedToInternet)
+
+        let save = BillWatchPlan.make(watch: true, targetGuid: Self.unwatchedGuid, memberGuids: [Self.unwatchedGuid])
+            .apply(billID: bill.id, billsStore: stores.bills, userStore: stores.user)
+        // The tab shell reconciles as the profile takes the watch, before the save ends.
+        stores.bills.reconcileWatchesFromProfile(stores.user.profile.watchedBillGUIDs)
+        XCTAssertTrue(stores.bills.isWatched(billID: bill.id), "precondition: marked while the save runs")
+        let saved = await save.value
+        // ... and again as the profile puts it back.
+        stores.bills.reconcileWatchesFromProfile(stores.user.profile.watchedBillGUIDs)
+        await settle()
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(stores.userPreferences.putCalls.count, 1, "sent once, not again by the reconcile")
+        XCTAssertEqual(stores.user.profile.watchedBillGUIDs, [])
+        XCTAssertFalse(stores.bills.isWatched(billID: bill.id))
+        XCTAssertNil(stores.user.errorMessage)
         await settleBillsCache(scope: stores.scope)
     }
 

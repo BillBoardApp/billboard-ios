@@ -12,24 +12,48 @@ extension BillsStore {
 
     /// Remove a bill from the watchlist (e.g., after a passed bill is viewed/dismissed). For a bill in
     /// a companion group (APPF-23) the watch is removed from every member.
-    func unwatch(billID: UUID) {
+    ///
+    /// - Returns: The profile's saves (`UserStore.removeWatch(guid:)`), one per Watch row removed, for the Watch
+    ///   control to say a failure (UX-48).
+    @discardableResult
+    func unwatch(billID: UUID) -> [Task<Bool, Never>] {
         if let group = companionGroup(forBillID: billID) {
-            unwatchMembers(of: group, except: nil)
-            return
+            return unwatchMembers(of: group, except: nil)
         }
         guard let index = bills.firstIndex(where: { $0.id == billID }),
-              bills[index].userWatched else { return }
+              bills[index].userWatched else { return [] }
         bills[index].userWatched = false
         cacheBills(bills)
 
         // Sync unwatch to backend preferences.
-        if let guid = bills[index].guid?.trimmingCharacters(in: .whitespacesAndNewlines), !guid.isEmpty {
-            userStore?.removeWatch(guid: guid)
+        if let guid = bills[index].guid?.trimmingCharacters(in: .whitespacesAndNewlines), !guid.isEmpty,
+           let save = userStore?.removeWatch(guid: guid) {
+            return [save]
+        }
+        return []
+    }
+
+    /// Clears the watch mark of the loaded bills with `guid`, and sends nothing: a Watch from the toggle whose save
+    /// failed (UX-48). It runs before the profile drops the guid, so `reconcileWatchesFromProfile` does not take
+    /// the mark for an older local watch and send it again.
+    func clearWatchMark(guid: String) {
+        var changed = false
+        performActiveManifestBillsBatchUpdate {
+            for index in bills.indices where bills[index].userWatched {
+                guard bills[index].guid?.trimmingCharacters(in: .whitespacesAndNewlines) == guid else { continue }
+                bills[index].userWatched = false
+                changed = true
+            }
+        }
+        if changed {
+            cacheBills(bills)
         }
     }
 
-    /// Unwatches every loaded bill of `group`'s members that is watched, except `excludedID`.
-    private func unwatchMembers(of group: BillCompanionGroup, except excludedID: UUID?) {
+    /// Unwatches every loaded bill of `group`'s members that is watched, except `excludedID`. Returns the
+    /// profile's saves.
+    @discardableResult
+    private func unwatchMembers(of group: BillCompanionGroup, except excludedID: UUID?) -> [Task<Bool, Never>] {
         let memberIDs = Set(group.memberGuids.flatMap { loadedBills(ofMember: $0).map(\.id) })
         var removedGuids: [String] = []
         performActiveManifestBillsBatchUpdate {
@@ -41,9 +65,9 @@ extension BillsStore {
                 }
             }
         }
-        guard !removedGuids.isEmpty else { return }
+        guard !removedGuids.isEmpty else { return [] }
         cacheBills(bills)
-        removedGuids.forEach { userStore?.removeWatch(guid: $0) }
+        return removedGuids.compactMap { userStore?.removeWatch(guid: $0) }
     }
 
     /// Record a vote and optional watch flag for a bill.
