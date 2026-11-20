@@ -83,7 +83,8 @@ struct NewPasswordRequiredView: View {
                 }
 
                 if case .error(let message) = auth.status {
-                    RecordErrorText(message)
+                    // Said again when the next try ends, as on Sign in (UX-45).
+                    RecordErrorText(message, announces: !auth.isBusy)
                 }
 
                 BBActionButton(

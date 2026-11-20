@@ -11,6 +11,11 @@ struct AdultAttestationGateView: View {
     @State private var errorMessage: String?
     @State private var isConfirmingUnder18: Bool = false
 
+    /// Starts with `errorMessage` under the text (tests); the app opens the gate without one.
+    init(errorMessage: String? = nil) {
+        _errorMessage = State(initialValue: errorMessage)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: BillboardStyle.Space.l) {
@@ -26,7 +31,7 @@ struct AdultAttestationGateView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let errorMessage {
-                    RecordErrorText(errorMessage)
+                    RecordErrorText(errorMessage, announces: true)
                 }
 
                 BBActionButton(

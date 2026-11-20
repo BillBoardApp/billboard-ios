@@ -170,7 +170,7 @@ struct NotificationsSectionContent: View {
             }
 
             if let errorMessage, !errorMessage.isEmpty {
-                RecordErrorText(errorMessage)
+                RecordErrorText(errorMessage, announces: true)
                     .accessibilityIdentifier("profile.notifications.error")
             }
         }

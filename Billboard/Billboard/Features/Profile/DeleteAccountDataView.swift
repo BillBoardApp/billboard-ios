@@ -33,6 +33,12 @@ struct DeleteAccountDataView: View {
     @State private var errorMessage: String?
     @FocusState private var focusedField: Field?
 
+    /// Starts with these lines under the button (tests); the app opens the screen with neither.
+    init(statusMessage: String? = nil, errorMessage: String? = nil) {
+        _statusMessage = State(initialValue: statusMessage)
+        _errorMessage = State(initialValue: errorMessage)
+    }
+
     private var canDelete: Bool {
         !isBusy && DeleteAccountCopy.isConfirmed(confirmText)
     }
@@ -97,6 +103,10 @@ struct DeleteAccountDataView: View {
             }
         }
         .recordList()
+        // The progress lines and the error, said to VoiceOver as they change (UX-45). On the list, not its rows:
+        // a list makes its rows only as they scroll into view, and at the largest text sizes these lines are below
+        // the fold.
+        .announcesToVoiceOver(statusMessage ?? errorMessage)
         .navigationTitle(DeleteAccountCopy.screenTitle)
         .navigationBarTitleDisplayMode(.inline)
         .glassNavigationBar()

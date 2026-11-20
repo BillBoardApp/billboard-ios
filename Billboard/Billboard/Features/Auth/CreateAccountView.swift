@@ -66,6 +66,7 @@ struct CreateAccountView: View {
 
     /// Starts on `step` with these values (render tests); the app opens the empty form with the switch off.
     /// `signUpExpired` opens the form as `restartSignUp` leaves it: the expired line, scrolled into view.
+    /// `errorMessage` starts the step with that line under it.
     init(
         step: Step = .enterDetails,
         origin: Origin = .signUp,
@@ -74,7 +75,8 @@ struct CreateAccountView: View {
         confirmPassword: String = "",
         isAdultConfirmed: Bool = false,
         code: String = "",
-        signUpExpired: Bool = false
+        signUpExpired: Bool = false,
+        errorMessage: String? = nil
     ) {
         _step = State(initialValue: step)
         self.origin = origin
@@ -83,7 +85,7 @@ struct CreateAccountView: View {
         _confirmPassword = State(initialValue: confirmPassword)
         _isAdultConfirmed = State(initialValue: isAdultConfirmed)
         _confirmationCode = State(initialValue: code)
-        _errorMessage = State(initialValue: signUpExpired ? AuthErrorMessages.signUpExpired : nil)
+        _errorMessage = State(initialValue: signUpExpired ? AuthErrorMessages.signUpExpired : errorMessage)
         _expiredSignUpRestarts = State(initialValue: signUpExpired ? 1 : 0)
     }
 
@@ -125,6 +127,12 @@ struct CreateAccountView: View {
 
     private var confirmButton: FormButtonState {
         CreateAccountForm.confirmButton(code: confirmationCode, isBusy: isBusy)
+    }
+
+    /// The error line while the code step shows, else nil.
+    private var codeStepError: String? {
+        if case .confirmCode = step { return errorMessage }
+        return nil
     }
 
     private var showsPasswordMismatch: Bool {
@@ -341,7 +349,7 @@ struct CreateAccountView: View {
                     }
 
                     if let errorMessage {
-                        RecordErrorText(errorMessage)
+                        RecordErrorText(errorMessage, announces: true)
                             .accessibilityIdentifier("signup.error")
                             .id(Self.errorLineID)
                     }
@@ -361,6 +369,14 @@ struct CreateAccountView: View {
                 // Once the form has replaced the code step.
                 await Task.yield()
                 proxy.scrollTo(Self.errorLineID, anchor: .bottom)
+            }
+            // The code step's error sits under Resend code and Back to sign in, below the fold at large text sizes:
+            // just far enough to show it whenever it appears or changes (UX-45).
+            .task(id: codeStepError) {
+                guard codeStepError != nil else { return }
+                // Once the line is laid out.
+                await Task.yield()
+                proxy.scrollTo(Self.errorLineID)
             }
         }
     }
@@ -426,8 +442,8 @@ struct CreateAccountView: View {
 
     /// The account behind the code step is gone (an unconfirmed sign-up is deleted after a while, REL-53):
     /// back to the form with the email and password kept, so the person can sign up again. The form scrolls
-    /// down to the expired line under Create account, and VoiceOver says it, as it says Resend code's line:
-    /// otherwise the long form opened at its top with no reason given.
+    /// down to the expired line under Create account, and VoiceOver says it, as it says every error line here
+    /// (UX-45): otherwise the long form opened at its top with no reason given.
     @MainActor
     private func restartSignUp() {
         AppLog.auth.info("Code step: the unconfirmed sign-up no longer exists; back to the form")
@@ -435,7 +451,6 @@ struct CreateAccountView: View {
         step = .enterDetails
         errorMessage = AuthErrorMessages.signUpExpired
         expiredSignUpRestarts += 1
-        AccessibilityNotification.Announcement(AuthErrorMessages.signUpExpired).post()
     }
 
     /// Sign-in from the "Account ready" step, keeping the email from sign-up.

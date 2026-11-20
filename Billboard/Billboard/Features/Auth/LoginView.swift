@@ -95,7 +95,9 @@ struct LoginView: View {
                 }
 
                 if let statusMessage {
-                    RecordErrorText(statusMessage)
+                    // Said to VoiceOver, whose focus stays on Sign in (UX-45). The line stays up while the next
+                    // sign-in runs, so it is said again when that one ends, even with the same words.
+                    RecordErrorText(statusMessage, announces: !auth.isBusy)
                         .accessibilityIdentifier("login.error")
 
                     // A message that sends people to us offers the way there (UX-39).
