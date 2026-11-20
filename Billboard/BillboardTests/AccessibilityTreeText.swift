@@ -206,6 +206,13 @@ enum AccessibilityTreeText {
             return AccessibilityTreeText.element(labelled: label, in: controller.view, seen: &seen, depth: 0)?.accessibilityTraits
         }
 
+        /// The accessibility traits of the first element whose identifier is exactly `identifier`, or nil when there is
+        /// none (for a control that two share a label with, such as the vote strip's Try again and Results').
+        func traits(ofIdentifier identifier: String) -> UIAccessibilityTraits? {
+            var seen = Set<ObjectIdentifier>()
+            return AccessibilityTreeText.element(identified: identifier, in: controller.view, seen: &seen, depth: 0)?.accessibilityTraits
+        }
+
         /// The accessibility hint of the first element labelled exactly `label`: nil when there is no such element
         /// or it has no hint (an empty hint counts as none).
         func hint(of label: String) -> String? {

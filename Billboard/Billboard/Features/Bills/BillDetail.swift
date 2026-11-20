@@ -362,6 +362,9 @@ private struct BillDetailContent: View {
     /// timeout, a server error): the vote stays, and the refusal strip says "Not saved yet. Check your
     /// connection." with Try again (UX-49), until the next vote tap.
     @State private var isVoteUnsaved = false
+    /// Try again on that strip is sending the vote: the strip stays, its Try again disabled, until the result, so
+    /// VoiceOver's focus on it is not lost (UX-49).
+    @State private var isRetryingVote = false
     /// Counts refusals (and votes not saved): the error haptic.
     @State private var refusals = 0
     /// Counts refusals shown as a row of Your vote (from xxxLarge up), which the page scrolls to.
@@ -692,9 +695,13 @@ private struct BillDetailContent: View {
 
         reasonSyncTask?.cancel()
         reasonSyncTask = nil
-        // The next vote tap ends a refusal's strip (spec 3.10.2), and a vote not saved yet's (UX-49).
+        // The next vote tap ends a refusal's strip (spec 3.10.2), and a vote not saved yet's (UX-49). Try again keeps
+        // the not-saved strip until its result (`voteWriteEnded`).
         refusalText = nil
-        isVoteUnsaved = false
+        isRetryingVote = isRetry && isVoteUnsaved
+        if !isRetryingVote {
+            isVoteUnsaved = false
+        }
         withAnimation(reduceMotion ? nil : BallotMoment.ink) {
             pendingVote = vote
             isChangingVote = false
@@ -784,17 +791,37 @@ private struct BillDetailContent: View {
     ///
     /// When the write failed with its outcome unknown (offline, a timeout, a server error), the stores keep the
     /// vote and so does the screen: the stamp stays, and the same strip says "Not saved yet. Check your
-    /// connection." with Try again, which sends the vote again (UX-49).
+    /// connection." with Try again, which sends the vote again (UX-49). The strip stays while Try again sends, its
+    /// button disabled. Saved, it goes, and VoiceOver's focus moves to the stamp, which says the vote; not saved
+    /// again, it is shown and said again.
     ///
     /// `targetGuid` is where the vote was sent, which the vote store files a refusal under: for a companion group it
     /// can be a member's legacy text-version guid, which `voteRowGuids` does not hold.
     private func voteWriteEnded(_ castToken: UUID, result: VoteWriteResult, targetGuid: String?) {
         let outcome = voteCasts.finish(castToken, result: result)
+        // This cast was the latest (no newer vote decides) and came from Try again on the not-saved strip.
+        let endsRetry = isRetryingVote && voteCasts.latest == nil
+        if endsRetry {
+            isRetryingVote = false
+        }
         if outcome == .unsaved {
             withAnimation(BallotMoment.rollback) {
                 isVoteUnsaved = true
             }
             voteStripShown()
+            return
+        }
+        if endsRetry, result == .stored, let choice = barChoice {
+            // Saved: the strip goes, and VoiceOver's focus, which was on its Try again, moves to the stamp once the
+            // strip has faded (UX-49).
+            withAnimation(reduceMotion ? nil : BallotMoment.rollback) {
+                isVoteUnsaved = false
+            }
+            let stamp = BallotStampCopy(choice: choice, votedAt: shownVoteDate)
+            let plan = focusPlanner.handle(.retrySaved(stamp), voiceOverRunning: UIAccessibility.isVoiceOverRunning)
+            DispatchQueue.main.asyncAfter(deadline: .now() + BillDetail.refusalFocusDelay) {
+                apply(plan)
+            }
             return
         }
         guard case .rollBack(let undismiss) = outcome else { return }
@@ -810,6 +837,7 @@ private struct BillDetailContent: View {
             inkedVote = nil
             isChangingVote = false
             didJustVote = false
+            isVoteUnsaved = false
             refusalText = refusal
         }
         voteStripShown()
@@ -1219,6 +1247,7 @@ private struct BillDetailContent: View {
                     showsRule: lead != .yourVote,
                     movedRows: movedVoteRows,
                     onTryAgainVote: voteStripTryAgain,
+                    isTryingAgainVote: isRetryingVote,
                     votedAt: shownVoteDate,
                     stampFocusLabel: focusPlanner.oneTimeStampLabel,
                     focus: $voteFocus,
@@ -1309,6 +1338,7 @@ private struct BillDetailContent: View {
                 showsCoachMark: showsVoteCoachMark,
                 refusal: voteStripText,
                 onTryAgain: voteStripTryAgain,
+                isTryingAgain: isRetryingVote,
                 votedAt: shownVoteDate,
                 inked: inkedVote,
                 animatesInk: true,
