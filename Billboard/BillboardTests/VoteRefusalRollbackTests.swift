@@ -348,7 +348,7 @@ final class VoteRefusalRollbackTests: XCTestCase {
         XCTAssertEqual(run.vote, .rolledBack(restored: .unknown))
         XCTAssertFalse(run.reasonsSaved, "no \"Reasons saved\"")
         XCTAssertEqual(run.votes.setFeedbackCalls, [.init(billId: Self.guid, feedback: .yea, reasons: [])])
-        XCTAssertEqual(run.voteStore.lastError, AuthErrorMessages.voteNotSaved)
+        XCTAssertEqual(run.voteStore.lastError, BillVoteBarModel.refusalFallbackText)
         XCTAssertEqual(run.voteStore.vote(for: Self.guid), .unknown)
         XCTAssertNil(run.store.bill(for: run.billID)?.userVote)
         XCTAssertFalse(run.store.isVoted(billID: run.billID))
