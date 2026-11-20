@@ -59,6 +59,35 @@ final class NotificationSettingsLoadTests: XCTestCase {
         XCTAssertEqual(Self.types(of: masterOff.settings), [true, true, true, true, true])
     }
 
+    // MARK: - Sign-out
+
+    /// Sign-out forgets the switches this device saved, the master switch too. The next account to sign in here then
+    /// starts from every switch on, and its bill pages' Watch row makes its promise, instead of reading the last
+    /// account's "Notifications are off in Profile." The server keeps each account's own copy, which Profile loads.
+    func testSignOutForgetsTheSavedSwitchesForTheNextAccount() {
+        var saved = Self.someTypesOff
+        saved.notificationsEnabled = false
+        saveOnDevice(saved)
+        let before = NotificationSettingsStore.savedSettings(defaults: defaults)
+        XCTAssertFalse(before.notificationsEnabled, "precondition: the last account turned Notifications off")
+        XCTAssertEqual(
+            BillWatchNotificationBlock.make(permission: .authorized, settings: before, isWatching: true, hasAskedPermission: true),
+            .notificationsOff
+        )
+
+        NotificationSettingsStore.clearSavedSettings(defaults: defaults)
+
+        let after = NotificationSettingsStore.savedSettings(defaults: defaults)
+        XCTAssertEqual(after, .allEnabled)
+        XCTAssertNil(defaults.object(forKey: AppNotificationStorage.notificationsEnabledKey))
+        XCTAssertNil(PushPresentationSettings.load(defaults: defaults))
+        XCTAssertNil(
+            BillWatchNotificationBlock.make(permission: .authorized, settings: after, isWatching: true, hasAskedPermission: true),
+            "the Watch row makes its promise"
+        )
+        XCTAssertEqual(NotificationSettingsStore(defaults: defaults, service: FakeDeviceNotificationSettingsService()).settings, .allEnabled)
+    }
+
     // MARK: - A failed load
 
     func testAFailedLoadKeepsTheSavedCopyAndEverySwitchDisabled() async {
