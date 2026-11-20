@@ -265,18 +265,23 @@ struct CreateAccountView: View {
                             state: confirmButton
                         )
 
+                        // Each link stands on its own full-width 44 pt row (spec 2.8, UX-46), as on the age gate: the
+                        // style's 44 pt target does not add height, so stacked bare they overlapped, and a tap on the
+                        // lower half of Resend code went back to Sign in.
                         VStack(spacing: 0) {
                             Button("Resend code") {
                                 Task { await resendCode() }
                             }
                             .buttonStyle(BillboardButtonStyle(kind: .textLink))
                             .disabled(isBusy)
+                            .frame(maxWidth: .infinity, minHeight: 44)
 
                             Button("Back to sign in") {
                                 dismiss()
                             }
                             .buttonStyle(BillboardButtonStyle(kind: .textLink))
                             .disabled(isBusy)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .frame(maxWidth: .infinity)
 
