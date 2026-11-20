@@ -7,27 +7,23 @@ import UIKit
 /// One undoable change, such as a skip on Bills or a Clear on Updates (spec D 2.1.2).
 ///
 /// The caller applies the local change before registering. `undo` restores exactly what the
-/// change removed. `commit` runs deferred side effects only, if the action has any, and runs at most
-/// once; neither closure runs if the other already ran. A skip or Clear has none: it never ends a
-/// watch (UX-47).
+/// change removed, at most once. When the window closes the change simply stands: nothing is
+/// deferred to it (a skip or Clear never ends a watch, UX-47).
 struct UndoAction {
     /// Toast text, such as "Skipped H.R. 1234" or "Cleared 3 bills".
     let message: String
     /// What VoiceOver announces; defaults to "<message>. Undo available."
     let accessibilityMessage: String
     let undo: @MainActor () -> Void
-    let commit: @MainActor () -> Void
 
     init(
         message: String,
         accessibilityMessage: String? = nil,
-        undo: @escaping @MainActor () -> Void,
-        commit: @escaping @MainActor () -> Void = {}
+        undo: @escaping @MainActor () -> Void
     ) {
         self.message = message
         self.accessibilityMessage = accessibilityMessage ?? "\(message). Undo available."
         self.undo = undo
-        self.commit = commit
     }
 }
 
@@ -38,7 +34,7 @@ struct UndoTimerCancellation {
     let cancel: () -> Void
 }
 
-/// Schedules the commit timer. Tests swap in a manual scheduler.
+/// Schedules the timer that closes the undo window. Tests swap in a manual scheduler.
 @MainActor
 protocol UndoTimerScheduling {
     func schedule(after seconds: TimeInterval, _ fire: @escaping @MainActor @Sendable () -> Void) -> UndoTimerCancellation
@@ -60,12 +56,12 @@ struct TaskUndoTimerScheduler: UndoTimerScheduling {
 
 /// The app-wide undo window (spec D 2.1.2). Only the latest action is undoable.
 ///
-/// A registered action commits on the earliest of: its timer (4 s, or 10 s while VoiceOver or Switch
-/// Control runs, Civic Record spec 3.19), a newer `register`, the app entering the background, or an
-/// explicit `commitPending()`
+/// A registered action commits (its change stands, and Undo goes) on the earliest of: its timer (4 s,
+/// or 10 s while VoiceOver or Switch Control runs, Civic Record spec 3.19), a newer `register`, the
+/// app entering the background, or an explicit `commitPending()`
 /// (the tab shell calls it on a tab switch, and bill detail when it opens with its vote bar, which
-/// the toast would cover). `undo()` restores it instead. If the app is killed
-/// inside the window, neither runs: the local change stands and deferred side effects are lost.
+/// the toast would cover). `undo()` restores it instead. If the app is killed inside the window, the
+/// local change stands.
 ///
 /// `.undoToastHost()` (placed once, in `TabsBar`) shows the toast for the pending action.
 @MainActor
@@ -129,11 +125,7 @@ final class UndoCenter: ObservableObject {
 
     /// Makes `action` the undoable one, committing any earlier pending action first.
     func register(_ action: UndoAction) {
-        // A commit closure could itself register an action; commit that too, so nothing is
-        // left neither committed nor undone.
-        while let earlier = takePendingAction() {
-            earlier.commit()
-        }
+        commitPending()
 
         let voiceOverRunning = isVoiceOverRunning()
         // Switch Control steps through the screen to reach Undo, as VoiceOver does; only VoiceOver
@@ -160,13 +152,12 @@ final class UndoCenter: ObservableObject {
         }
     }
 
-    /// Commits the pending action now, if any.
+    /// Commits the pending action now, if any: its change stands, and its toast and timer go.
     func commitPending() {
-        guard let action = takePendingAction() else { return }
-        action.commit()
+        _ = takePendingAction()
     }
 
-    /// Restores the pending action, if any. Its commit never runs.
+    /// Restores the pending action, if any.
     func undo() {
         guard let action = takePendingAction() else { return }
         undoCount += 1
@@ -180,8 +171,8 @@ final class UndoCenter: ObservableObject {
         undo()
     }
 
-    /// Clears the pending state before running a closure, so a closure that registers a new
-    /// action (or calls back into the center) sees a consistent state.
+    /// Clears the pending state before `undo` runs, so an undo that registers a new action (or
+    /// calls back into the center) sees a consistent state.
     private func takePendingAction() -> UndoAction? {
         guard let action = pendingAction else { return nil }
         pendingAction = nil
