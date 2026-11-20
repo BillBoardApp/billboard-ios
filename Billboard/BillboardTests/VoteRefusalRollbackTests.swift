@@ -663,6 +663,119 @@ final class VoteRefusalRollbackTests: XCTestCase {
         }
     }
 
+    /// A reason picked after a vote not saved yet sends the whole row again (the vote with the reason). Once that is
+    /// stored the vote is saved, so the strip and its Try again go; the stamp stays.
+    func testAReasonSavedAfterAVoteNotSavedYetEndsTheStrip() throws {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        votes.setFeedbackError = URLError(.notConnectedToInternet)
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes)
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        try APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+
+            votes.setFeedbackError = nil
+            let reason = try XCTUnwrap(
+                host.identifiers().sorted().first { $0.hasPrefix("bill.feedback.") && $0 != VoteReasonPicker.moreIdentifier },
+                host.text()
+            )
+            XCTAssertTrue(host.activate(identifier: reason), host.text())
+            XCTAssertTrue(host.run(until: { votes.setFeedbackCalls.count == 2 }), "the reasons update: \(votes.setFeedbackCalls)")
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea, .yea])
+            XCTAssertEqual(votes.setFeedbackCalls.last?.reasons.count, 1, "with the reason")
+
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
+    /// A write that timed out after the server stored it: Results open on the follow-up stats, and the server's row,
+    /// read back, is the shown vote, so the strip goes.
+    func testResultsThatOpenOnTheShownVoteEndTheStrip() {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        votes.setFeedbackError = URLError(.timedOut)
+        votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .yea, votedAt: Date()))])
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes)
+        let transport = statsTransport(responses: [Self.statsBody])
+        APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea])
+
+            XCTAssertTrue(host.run(until: { votes.batchRequests == [[Self.guid]] }), "the row is read back: \(votes.batchRequests)")
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            XCTAssertNil(host.label(ofIdentifier: SealedTally.resultsIdentifier), "Results are open")
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
+            XCTAssertEqual(votes.setFeedbackCalls.count, 1, "nothing sent again")
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
+    /// A change from Nay to Yea that timed out, on a page whose first stats load failed: the follow-up stats come back
+    /// for the Nay the server still holds, so the strip and its Try again stay.
+    func testResultsThatOpenOnTheVoteBeforeAChangeKeepTheStrip() {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.voted(BillVotesService.RemoteVote(vote: .nay, votedAt: Date().addingTimeInterval(-60))))
+        votes.setFeedbackError = URLError(.timedOut)
+        votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .nay, votedAt: Date().addingTimeInterval(-60)))])
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes)
+        // The first stats load fails (a body that does not decode); the one after the change works.
+        let transport = statsTransport(responses: [Data("not stats".utf8), Self.statsBody])
+        APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.run(until: { host.strings().contains { $0.contains(VoteResultsFormatting.unavailableText) } }), "precondition: no stats: \(host.text())")
+            XCTAssertTrue(host.activate("Change your vote", settle: 0.6), host.text())
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea])
+
+            XCTAssertTrue(host.run(until: { votes.batchRequests == [[Self.guid]] }), "the row is read back: \(votes.batchRequests)")
+            host.run(0.5)
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", host.text())
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
+    /// Stats for `guid`, over the floor.
+    private static let statsBody = Data(#"""
+    {"billId":"BILLS-119hr4100","totals":{"votes":46,"yea":25,"nay":15,"abstain":6,"decisionVotes":40,"yeaPct":62.5},
+     "segments":{"verified":{"votes":12,"yea":7,"nay":5,"abstain":0,"decisionVotes":12,"yeaPct":58.3},
+                 "selfAttested":{"votes":34,"yea":18,"nay":10,"abstain":6,"decisionVotes":28,"yeaPct":64.3}},
+     "rollups":{"byState":{},"byDistrict":{}}}
+    """#.utf8)
+
+    /// The page's requests fail as offline, except `GET /bill-stats`, which takes `responses` in turn.
+    private func statsTransport(responses: [Data]) -> RecordingTransport {
+        let transport = RecordingTransport()
+        transport.responses = responses
+        transport.failure = { request in request.path == "bill-stats" ? nil : URLError(.notConnectedToInternet) }
+        return transport
+    }
+
     /// The strip's Try again, in the panel and as a row of Your vote, beside the words and under them at the
     /// accessibility sizes. A refused vote's strip has none: its vote is gone and the buttons are back.
     func testTheNotSavedStripOffersTryAgain() throws {

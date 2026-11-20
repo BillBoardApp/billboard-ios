@@ -493,18 +493,25 @@ final class ResultsGateTests: XCTestCase {
 
         // RESULTS_LOCKED: the server holds no row, so the screen stops counting the kept vote as a row.
         votes.batchResult = .success([Self.guid: .notVoted])
-        await store.refreshVotes(for: [Self.guid, " "])
+        let rows = await store.refreshVotes(for: [Self.guid, " "])
         XCTAssertEqual(votes.batchRequests, [[Self.guid]])
+        XCTAssertEqual(rows, [Self.guid: .notVoted], "the rows read and stored")
         XCTAssertEqual(store.vote(for: Self.guid), .notVoted)
         XCTAssertFalse(unlocks(store))
         XCTAssertTrue(unlocks(store, pending: .yea), "the screen that cast it still shows it, awaiting save")
 
-        // A failed read changes nothing and stays quiet.
+        // A failed read changes nothing, stays quiet and reports no rows.
         votes.batchResult = .failure(URLError(.notConnectedToInternet))
         store.lastError = nil
-        await store.refreshVotes(for: [Self.guid])
+        let none = await store.refreshVotes(for: [Self.guid])
+        XCTAssertEqual(none, [:])
         XCTAssertNil(store.lastError)
         XCTAssertEqual(store.vote(for: Self.guid), .notVoted)
+
+        // An Abstain row is reported as such (the published state says not voted).
+        votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .abstain, votedAt: Date()))])
+        let abstain = await store.refreshVotes(for: [Self.guid])
+        XCTAssertEqual(abstain, [Self.guid: .voted(.abstain)])
     }
 }
 
