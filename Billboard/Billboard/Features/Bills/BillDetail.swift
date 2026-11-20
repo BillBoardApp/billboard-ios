@@ -314,6 +314,10 @@ private struct BillDetailContent: View {
     /// "Couldn't stop watching this bill." under the Watch row, said to VoiceOver: the latest toggle's save failed
     /// and the watch was put back. It stays until the next toggle (UX-48).
     @State private var watchSaveError: String?
+    /// The same words in the top banner when the toolbar's Watch made the change: the row is usually off screen
+    /// then. The banner says them ("Error: …"), so the row's line stays quiet (`watchErrorIsInBanner`).
+    @State private var watchBannerError: String?
+    @State private var watchErrorIsInBanner = false
     /// The latest toggle, so an earlier one's failure is not shown after it.
     @State private var latestWatchToggle = UUID()
     /// What the Watch row's caption reads (UX-47): iOS permission (nil until read), the switches this device last
@@ -896,8 +900,9 @@ private struct BillDetailContent: View {
 
     /// The Watch toolbar button and toggle (the only controls that change watch: a vote, Skip and Clear never do,
     /// UX-47). The change shows and is said at once; if its save fails, the stores put the watch back and the Watch
-    /// row says so (UX-48). Turning it on asks for notification permission if the app never has (UX-47).
-    private func setWatch(_ watch: Bool) {
+    /// row says so, and for the toolbar's button (`fromToolbar`) the top banner too, near it (UX-48). Turning it on
+    /// asks for notification permission if the app never has (UX-47).
+    private func setWatch(_ watch: Bool, fromToolbar: Bool = false) {
         guard watch != currentWatchValue else { return }
         let plan = BillWatchPlan.make(watch: watch, targetGuid: voteTargetGuid, memberGuids: watchGuids)
         if plan.addGuid != nil {
@@ -906,6 +911,8 @@ private struct BillDetailContent: View {
         }
         watchOverride = watch
         watchSaveError = nil
+        watchBannerError = nil
+        watchErrorIsInBanner = false
         let toggle = UUID()
         latestWatchToggle = toggle
         let save = plan.apply(billID: billID, billsStore: billsStore, userStore: userStore)
@@ -920,7 +927,12 @@ private struct BillDetailContent: View {
         Task {
             guard await !save.value, latestWatchToggle == toggle else { return }
             watchOverride = nil
-            watchSaveError = BillWatchCopy.saveFailedText(isWatching: watch)
+            let failure = BillWatchCopy.saveFailedText(isWatching: watch)
+            watchSaveError = failure
+            if fromToolbar {
+                watchErrorIsInBanner = true
+                watchBannerError = failure
+            }
         }
     }
 
@@ -1239,9 +1251,10 @@ private struct BillDetailContent: View {
                     reasonVoteType: pendingVote?.voteType,
                     reasonOrder: pendingVote.map { VoteReasonOrder.order(for: $0.voteType, seed: reasonOrderSeed) } ?? [],
                     onToggleReason: toggleReason,
-                    onSetWatch: setWatch,
+                    onSetWatch: { setWatch($0) },
                     watchCaption: BillWatchCopy.rowSubtitle(blockedBy: watchNotificationBlock),
                     watchError: watchSaveError,
+                    announcesWatchError: !watchErrorIsInBanner,
                     companionCaption: companionVoteCaption,
                     companionConflictNote: companionConflictNote,
                     showsRule: lead != .yourVote,
@@ -1429,6 +1442,8 @@ private struct BillDetailContent: View {
                 get: { billsStore.errorMessage },
                 set: { billsStore.errorMessage = $0 }
             ))
+            // A failed save from the toolbar's Watch, under the button that made it (UX-48).
+            BBErrorBanner(message: $watchBannerError)
         }
         .toolbar {
             // Watch and Share in one glass group (spec 3.12, frames 4 to 8).
@@ -1489,7 +1504,7 @@ private struct BillDetailContent: View {
         let label = BillWatchCopy.toolbarLabel(isWatching: isWatching)
         let symbol = BillWatchCopy.symbolName(isWatching: isWatching)
         return Button {
-            setWatch(!isWatching)
+            setWatch(!isWatching, fromToolbar: true)
         } label: {
             DocumentToolbarLabel(title: label, systemImage: symbol, glyphColor: toolbarGlyphColor)
         }
