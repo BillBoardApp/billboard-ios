@@ -15,9 +15,14 @@ struct CongressTab: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var userStore: UserStore
     @AppStorage(BillboardDisplayStorage.historyWindowDaysKey) private var historyWindowDays = BillboardHistoryWindow.default.rawValue
-    /// "Couldn't unfollow Tim Kaine.": an Unfollow whose save failed, so the member is back in the list. It stays
-    /// until the next Unfollow (UX-48).
-    @State private var unfollowError: String?
+    /// The member whose Unfollow's save failed, so they are back in the list with "Couldn't unfollow Tim Kaine."
+    /// under it (UX-48). It goes with the next Unfollow, a pull to refresh, or once the member is no longer followed
+    /// (unfollowed on their page), when the line would no longer be true.
+    @State private var unfollowFailure: CongressMemberManifestItem?
+
+    private var unfollowError: String? {
+        unfollowFailure.map { CongressFollowedMembersSection.unfollowFailedText(memberName: $0.name) }
+    }
 
     /// The window the Bills tab is showing (it can be widened for the session), so "bills this
     /// week" counts the same bills.
@@ -56,11 +61,11 @@ struct CongressTab: View {
     /// comes back, and the section shows and says why.
     private func unfollow(_ member: CongressMemberManifestItem) {
         guard CongressTabModel.isFollowed(member, followedIDs: userStore.profile.subscribedMemberIDs) else { return }
-        unfollowError = nil
+        unfollowFailure = nil
         let save = userStore.toggleMemberSubscription(manifestId: member.id)
         Task {
             guard await !save.value else { return }
-            unfollowError = CongressFollowedMembersSection.unfollowFailedText(memberName: member.name)
+            unfollowFailure = member
         }
     }
 
@@ -124,11 +129,18 @@ struct CongressTab: View {
         .scrollDismissesKeyboard(.interactively)
         .billboardBackground()
         .refreshable {
+            unfollowFailure = nil
             await manifestStore.load(forceRefresh: true)
         }
         .task(id: isActive) {
             guard isActive else { return }
             await manifestStore.load(forceRefresh: false)
+        }
+        .onChange(of: userStore.profile.subscribedMemberIDs) { _, followedIDs in
+            // Unfollowed elsewhere: "Couldn't unfollow" is no longer true.
+            if let failed = unfollowFailure, !CongressTabModel.isFollowed(failed, followedIDs: followedIDs) {
+                unfollowFailure = nil
+            }
         }
         .accessibilityIdentifier("congress.screen")
     }

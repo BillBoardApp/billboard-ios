@@ -185,6 +185,66 @@ final class PreferenceSaveFailureTests: XCTestCase {
         XCTAssertNil(user.errorMessage)
     }
 
+    /// The Congress tab's Unfollow, on the real path: a save that fails puts the member back, and Members you follow
+    /// shows and says "Couldn't unfollow Tim Kaine." under the list. Once the member is unfollowed elsewhere (their
+    /// page), the line goes, and it does not come back when they are followed again. An Unfollow that saves shows
+    /// nothing.
+    func testTheCongressTabSaysAFailedUnfollowWhileItIsTrue() throws {
+        let preferences = FakePreferencesService()
+        preferences.preferences = PreferencesMutations.congressMemberItems(values: [Self.memberID])
+        let user = signedInUserNow(preferences)
+        let followed = [UUID.deterministic(from: Self.memberID)]
+        XCTAssertEqual(user.profile.subscribedMemberIDs, followed, "precondition: the member is followed")
+        preferences.deleteError = Self.offline
+        let congress = FakeCongressService()
+        congress.cachedManifest = [try manifestMember()]
+        congress.cacheIsFresh = true
+        let scope = "save-failure-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let billsService = FakeBillsService()
+        billsService.cachedManifest = []
+        let billsStore = BillsStore(bills: [], cacheScope: scope, service: billsService, preferencesService: FakePreferencesService())
+        let spoken = SpokenLines()
+        let text = "Couldn't unfollow Tim Kaine."
+        let unfollow = "congress.followed.unfollow.0"
+        let host = AccessibilityTreeText.Host(
+            NavigationStack { CongressTab(isActive: true, search: .constant(CongressSearchState())) }
+                .environmentObject(CongressMembersManifestStore(service: congress))
+                .environmentObject(AppState())
+                .environmentObject(user)
+                .environmentObject(billsStore)
+                .environment(\.announceToVoiceOver, spoken.announce),
+            size: CGSize(width: 390, height: 3000),
+            settle: 0.5
+        )
+        defer { host.close() }
+        XCTAssertNil(host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier), "no error before the tap")
+
+        XCTAssertTrue(host.activate(identifier: unfollow), host.text())
+        XCTAssertTrue(host.run(until: { host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier) != nil }), host.text())
+        XCTAssertEqual(host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier), text)
+        XCTAssertEqual(spoken.lines, [text])
+        XCTAssertEqual(preferences.deleteCalls.count, 1, "the unfollow was sent")
+        XCTAssertEqual(user.profile.subscribedMemberIDs, followed, "followed again")
+        XCTAssertNotNil(host.label(ofIdentifier: unfollow), "back in the list")
+
+        // Unfollowed on the member's page, which saves: the line is no longer true.
+        preferences.deleteError = nil
+        _ = user.toggleMemberSubscription(manifestId: Self.memberID)
+        XCTAssertTrue(host.run(until: { host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier) == nil }), host.text())
+        XCTAssertEqual(user.profile.subscribedMemberIDs, [])
+
+        // Followed again, then unfollowed here with a save that works: nothing is shown or said.
+        _ = user.toggleMemberSubscription(manifestId: Self.memberID)
+        XCTAssertTrue(host.run(until: { host.label(ofIdentifier: unfollow) != nil }), host.text())
+        XCTAssertNil(host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier), "the old failure does not come back")
+        XCTAssertTrue(host.activate(identifier: unfollow), host.text())
+        XCTAssertTrue(host.run(until: { user.profile.subscribedMemberIDs.isEmpty }), host.text())
+        host.run(0.3)
+        XCTAssertNil(host.label(ofIdentifier: CongressFollowedMembersSection.errorIdentifier), host.text())
+        XCTAssertEqual(spoken.lines, [text], "said once")
+    }
+
     /// Members you follow shows the failed Unfollow under the list and says it.
     func testMembersYouFollowSaysAFailedUnfollow() throws {
         let spoken = SpokenLines()
