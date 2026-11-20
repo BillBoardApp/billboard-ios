@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Billboard
 
@@ -108,6 +109,34 @@ final class NotificationSettingsLoadTests: XCTestCase {
         XCTAssertTrue(model.isMasterDisabled)
         XCTAssertTrue(model.areKindTogglesDisabled)
         XCTAssertTrue(service.updateCalls.isEmpty)
+    }
+
+    /// Profile's section loads again each time Profile shows (back from a page, or from another tab). A load failure
+    /// already up stays up through that load, so the line, which is said to VoiceOver when it appears (UX-45), is not
+    /// said again each time. A pull to refresh clears it first, so a failure that repeats there is said again; a load
+    /// that works clears it.
+    func testALoadFailureStaysUpThroughALoadOnShowingAgain() async {
+        let service = FakeDeviceNotificationSettingsService()
+        service.fetchResult = .failure(Self.offline)
+        let store = NotificationSettingsStore(defaults: defaults, service: service)
+        await store.load()
+        XCTAssertEqual(store.errorMessage, NotificationSettingsStore.loadFailedMessage)
+
+        var seen: [String?] = []
+        let recording = store.$errorMessage.dropFirst().sink { seen.append($0) }
+        defer { recording.cancel() }
+
+        await store.load()
+        XCTAssertFalse(seen.contains(nil), "the line never went: \(seen)")
+        XCTAssertEqual(store.errorMessage, NotificationSettingsStore.loadFailedMessage)
+
+        seen = []
+        await store.load(isRefresh: true)
+        XCTAssertEqual(seen, [nil, NotificationSettingsStore.loadFailedMessage], "a pull to refresh shows it anew")
+
+        service.fetchResult = .success(.allEnabled)
+        await store.load()
+        XCTAssertNil(store.errorMessage, "a load that works clears it")
     }
 
     /// "Turn on notifications" saves the master switch without going through the switches. Before the server's copy

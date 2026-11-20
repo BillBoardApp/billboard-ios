@@ -567,8 +567,8 @@ struct ProfileHeader: View {
 }
 
 /// The user's email in the `body` role, `ink2`, for the Profile and Settings headers (spec 4.60, 4.68). An address
-/// has no place to break a line, so a long one broke between any two letters ("alex.morgan@example.co", then
-/// "m"); a zero-width space before the "@" and before each dot of the domain lets it wrap there instead.
+/// has no place to break a line, so a long one broke between any two letters (the last "m" of ".com" alone on a
+/// line); a zero-width space before the "@" and before each dot of the domain lets it wrap there instead.
 /// VoiceOver reads the address as written.
 struct EmailText: View {
     let email: String
@@ -694,7 +694,7 @@ struct ProfileView: View {
             // The masthead chips' score and streak too (UX-39 N11).
             await civicScoreStore.refresh()
             await refreshProfileData()
-            await notificationSettingsStore.load()
+            await notificationSettingsStore.load(isRefresh: true)
         }
         .task(id: isActive) {
             guard isActive else { return }

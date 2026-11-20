@@ -44,9 +44,16 @@ final class NotificationSettingsStore: ObservableObject {
         return settings
     }
 
-    func load() async {
+    /// Reads the server's copy. A failure shows "Couldn't load your notification settings. Pull down to try again.",
+    /// which Profile says to VoiceOver when it appears (UX-45). The section loads again each time Profile shows (back
+    /// from a page, or from another tab): a line already up stays up through that load, and goes only when a load
+    /// works, so it is not said again each time. A pull to refresh (`isRefresh`) clears it first, so a failure that
+    /// repeats there is said again.
+    func load(isRefresh: Bool = false) async {
         isLoading = true
-        errorMessage = nil
+        if isRefresh {
+            errorMessage = nil
+        }
         defer { isLoading = false }
 
         let deviceID = DeviceIdStore.getOrCreate()
@@ -55,6 +62,7 @@ final class NotificationSettingsStore: ObservableObject {
             loaded.deviceID = deviceID
             settings = loaded
             hasLoadedServerCopy = true
+            errorMessage = nil
             persistLocalSettings(loaded)
         } catch {
             // Leaving the screen mid-load is not a failure (APPF-22).
