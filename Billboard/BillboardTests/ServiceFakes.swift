@@ -223,6 +223,22 @@ final class FakeCivicService: CivicServicing {
     func fetchCivicProfile() async throws -> CivicProfileResponse { try profileResult.get() }
 }
 
+// MARK: - Device notification settings
+
+@MainActor
+final class FakeDeviceNotificationSettingsService: DeviceNotificationSettingsServicing {
+    var fetchResult: Result<DeviceNotificationSettings, Error> = .success(.allEnabled)
+    /// Every copy sent to the server; each save answers with the copy it was sent.
+    private(set) var updateCalls: [DeviceNotificationSettings] = []
+
+    func fetchSettings(deviceID: String) async throws -> DeviceNotificationSettings { try fetchResult.get() }
+
+    func updateSettings(_ settings: DeviceNotificationSettings) async throws -> DeviceNotificationSettings {
+        updateCalls.append(settings)
+        return settings
+    }
+}
+
 // MARK: - Preferences
 
 @MainActor

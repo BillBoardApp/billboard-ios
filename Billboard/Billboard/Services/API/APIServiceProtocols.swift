@@ -172,3 +172,24 @@ extension WeeklyDigestService {
         }
     }
 }
+
+// MARK: - Device notification settings
+
+protocol DeviceNotificationSettingsServicing: Sendable {
+    func fetchSettings(deviceID: String) async throws -> DeviceNotificationSettings
+    func updateSettings(_ settings: DeviceNotificationSettings) async throws -> DeviceNotificationSettings
+}
+
+extension DeviceNotificationSettingsService {
+    struct Live: DeviceNotificationSettingsServicing {
+        nonisolated init() {}
+
+        func fetchSettings(deviceID: String) async throws -> DeviceNotificationSettings {
+            try await DeviceNotificationSettingsService.fetchSettings(deviceID: deviceID)
+        }
+
+        func updateSettings(_ settings: DeviceNotificationSettings) async throws -> DeviceNotificationSettings {
+            try await DeviceNotificationSettingsService.updateSettings(settings)
+        }
+    }
+}

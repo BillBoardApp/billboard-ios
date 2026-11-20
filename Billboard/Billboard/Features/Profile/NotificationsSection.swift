@@ -48,6 +48,9 @@ struct NotificationsSectionModel: Equatable {
     var settings: DeviceNotificationSettings
     /// Loading or saving the device settings.
     var isBusy = false
+    /// The server's copy has not loaded yet (UX-50). The switches show the copy this device last saved but stay
+    /// disabled: a change saves all six values, and would send that copy back over the server's.
+    var isAwaitingServerCopy = false
 
     static let deniedHint = "Notifications are off in iOS Settings. Turn them on there to use these options."
     static let notAskedHint = "Billboard needs your permission before it can send notifications. Turn them on to use these options."
@@ -65,11 +68,11 @@ struct NotificationsSectionModel: Equatable {
     /// The master switch shows the effective state: off until iOS permission is granted.
     var isMasterOn: Bool { settings.notificationsEnabled && !isDeliveryBlockedBySystem }
 
-    var isMasterDisabled: Bool { isBusy || isDeliveryBlockedBySystem }
+    var isMasterDisabled: Bool { isBusy || isAwaitingServerCopy || isDeliveryBlockedBySystem }
 
     /// The per-type switches keep their stored values but cannot change while nothing can arrive.
     var areKindTogglesDisabled: Bool {
-        isBusy || isDeliveryBlockedBySystem || !settings.notificationsEnabled
+        isBusy || isAwaitingServerCopy || isDeliveryBlockedBySystem || !settings.notificationsEnabled
     }
 
     /// The value next to "iOS permission".
@@ -97,6 +100,18 @@ struct NotificationsSectionModel: Equatable {
         if isPermissionDenied { return Self.deniedHint }
         if isPermissionNotAsked { return Self.notAskedHint }
         return nil
+    }
+}
+
+extension NotificationsSectionModel {
+    /// The section's model for the store as it is now (`NotificationsSection`).
+    init(permission: UNAuthorizationStatus?, store: NotificationSettingsStore) {
+        self.init(
+            permission: permission,
+            settings: store.settings,
+            isBusy: store.isLoading || store.isSaving,
+            isAwaitingServerCopy: !store.hasLoadedServerCopy
+        )
     }
 }
 
@@ -255,11 +270,7 @@ struct NotificationsSection: View {
     @State private var permission: UNAuthorizationStatus?
 
     private var model: NotificationsSectionModel {
-        NotificationsSectionModel(
-            permission: permission,
-            settings: store.settings,
-            isBusy: store.isLoading || store.isSaving
-        )
+        NotificationsSectionModel(permission: permission, store: store)
     }
 
     var body: some View {

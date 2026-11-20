@@ -8,16 +8,39 @@ final class NotificationSettingsStore: ObservableObject {
     /// Shown when a change could not be saved; the switch goes back to its previous position.
     static let saveFailedMessage = "Couldn't save that change. Check your connection and try again."
 
-    @Published private(set) var settings: DeviceNotificationSettings = .allEnabled
+    @Published private(set) var settings: DeviceNotificationSettings
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var isSaving: Bool = false
     @Published var errorMessage: String?
+    /// The server's copy has loaded at least once (UX-50). Until then `settings` is the copy this device last
+    /// saved, which may be out of date, and the switches stay off limits: any change saves all six values.
+    @Published private(set) var hasLoadedServerCopy: Bool = false
 
     private let defaults: UserDefaults
+    private let service: any DeviceNotificationSettingsServicing
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        service: any DeviceNotificationSettingsServicing = DeviceNotificationSettingsService.Live()
+    ) {
         self.defaults = defaults
-        self.settings.notificationsEnabled = defaults.object(forKey: AppNotificationStorage.notificationsEnabledKey) as? Bool ?? true
+        self.service = service
+        self.settings = Self.savedSettings(defaults: defaults)
+    }
+
+    /// The settings as this device last saved them (UX-50): the master switch from its own key, and the five types
+    /// from the snapshot `persistLocalSettings` keeps. Every switch is on when nothing is saved yet.
+    private static func savedSettings(defaults: UserDefaults) -> DeviceNotificationSettings {
+        var settings = DeviceNotificationSettings.allEnabled
+        if let saved = PushPresentationSettings.load(defaults: defaults) {
+            settings.notifyNew = saved.notifyNew
+            settings.notifyUpdated = saved.notifyUpdated
+            settings.notifyAlert = saved.notifyAlert
+            settings.notifyPassed = saved.notifyPassed
+            settings.notifyFailed = saved.notifyFailed
+        }
+        settings.notificationsEnabled = defaults.object(forKey: AppNotificationStorage.notificationsEnabledKey) as? Bool ?? true
+        return settings
     }
 
     func load() async {
@@ -27,14 +50,15 @@ final class NotificationSettingsStore: ObservableObject {
 
         let deviceID = DeviceIdStore.getOrCreate()
         do {
-            var loaded = try await DeviceNotificationSettingsService.fetchSettings(deviceID: deviceID)
+            var loaded = try await service.fetchSettings(deviceID: deviceID)
             loaded.deviceID = deviceID
             settings = loaded
+            hasLoadedServerCopy = true
             persistLocalSettings(loaded)
         } catch {
             // Leaving the screen mid-load is not a failure (APPF-22).
             if APIErrorResponse.isCancellation(error) { return }
-            // Keep local state as fallback when the backend is unreachable.
+            // Keep the copy on screen. Until one load has worked, the switches stay off limits (UX-50).
             errorMessage = Self.loadFailedMessage
         }
     }
@@ -92,7 +116,7 @@ final class NotificationSettingsStore: ObservableObject {
         defer { isSaving = false }
 
         do {
-            var saved = try await DeviceNotificationSettingsService.updateSettings(next)
+            var saved = try await service.updateSettings(next)
             saved.deviceID = settings.deviceID
             settings = saved
             persistLocalSettings(saved)
