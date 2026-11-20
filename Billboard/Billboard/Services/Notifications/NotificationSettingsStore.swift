@@ -137,4 +137,13 @@ final class NotificationSettingsStore: ObservableObject {
         defaults.set(settings.notificationsEnabled, forKey: AppNotificationStorage.notificationsEnabledKey)
         PushPresentationSettings.save(settings, defaults: defaults)
     }
+
+    /// Sign-out: forgets the switches this device saved, the master switch and the types' snapshot, so the next
+    /// account to sign in here starts from every switch on (`savedSettings`), not from the last account's. The
+    /// server keeps each account's own copy, which Profile loads. Profile and the bill page's Watch row read this
+    /// copy until then (UX-47, UX-50).
+    static func clearSavedSettings(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: AppNotificationStorage.notificationsEnabledKey)
+        PushPresentationSettings.clear(defaults: defaults)
+    }
 }

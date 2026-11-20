@@ -305,7 +305,7 @@ final class AuthManager: ObservableObject {
 
     private func purgeLocalDataForSignOut(userId: String?) {
         PushRegistrationService.clearCachedRegistrations()
-        PushPresentationSettings.clear()
+        NotificationSettingsStore.clearSavedSettings()
         VerificationAddressStore.clearAll()
         UserLocalDataPurge.purge(userId: userId)
     }
