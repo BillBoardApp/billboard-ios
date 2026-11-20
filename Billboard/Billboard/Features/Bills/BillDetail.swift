@@ -737,7 +737,7 @@ private struct BillDetailContent: View {
             let castToken = voteCasts.begin(dismissing: dismissed)
             return Task { @MainActor () -> VoteWriteResult in
                 let result = await writeTask.value
-                voteWriteEnded(castToken, result: result)
+                voteWriteEnded(castToken, result: result, targetGuid: targetGuid)
                 return result
             }
         }
@@ -785,7 +785,10 @@ private struct BillDetailContent: View {
     /// When the write failed with its outcome unknown (offline, a timeout, a server error), the stores keep the
     /// vote and so does the screen: the stamp stays, and the same strip says "Not saved yet. Check your
     /// connection." with Try again, which sends the vote again (UX-49).
-    private func voteWriteEnded(_ castToken: UUID, result: VoteWriteResult) {
+    ///
+    /// `targetGuid` is where the vote was sent, which the vote store files a refusal under: for a companion group it
+    /// can be a member's legacy text-version guid, which `voteRowGuids` does not hold.
+    private func voteWriteEnded(_ castToken: UUID, result: VoteWriteResult, targetGuid: String?) {
         let outcome = voteCasts.finish(castToken, result: result)
         if outcome == .unsaved {
             withAnimation(BallotMoment.rollback) {
@@ -799,7 +802,8 @@ private struct BillDetailContent: View {
         reasonSyncTask?.cancel()
         reasonSyncTask = nil
         syncedReasons = []
-        let refusal = voteStore.lastError(about: voteRowGuids)?.trimmedNonEmpty ?? BillVoteBarModel.refusalFallbackText
+        let refusal = voteStore.lastError(about: voteRowGuids + [targetGuid].compactMap { $0 })?.trimmedNonEmpty
+            ?? BillVoteBarModel.refusalFallbackText
         voteStore.lastError = nil
         withAnimation(BallotMoment.rollback) {
             pendingVote = nil
@@ -1388,7 +1392,7 @@ private struct BillDetailContent: View {
             // text goes to the vote panel instead (spec 3.10.2, 3.19). Only this bill's: one about another bill,
             // such as a refusal that came after its page was left, never shows here (UX-49).
             BBErrorBanner(message: Binding(
-                get: { voteCasts.latest == nil ? voteStore.lastError(about: voteRowGuids) : nil },
+                get: { voteCasts.latest == nil ? voteStore.lastError(about: voteErrorGuids) : nil },
                 set: { voteStore.lastError = $0 }
             ))
             BBErrorBanner(message: Binding(
@@ -1499,6 +1503,12 @@ extension BillDetailContent {
     /// Every guid the user's vote row can sit on: each member of a companion group, and the bill's.
     fileprivate var voteRowGuids: [String] {
         (companionGroup?.memberGuids ?? []) + [billGuid].compactMap { $0 }
+    }
+
+    /// The guids a vote error on this page can be about (`BillVoteStore.lastError(about:)`): `voteRowGuids`, and
+    /// where votes and reasons go, which for a companion group can be a member's legacy text-version guid (UX-49).
+    fileprivate var voteErrorGuids: [String] {
+        voteRowGuids + [voteTargetGuid].compactMap { $0 }
     }
 
     /// The guid the stats are fetched for: a group's primary (the server combines its members), else
