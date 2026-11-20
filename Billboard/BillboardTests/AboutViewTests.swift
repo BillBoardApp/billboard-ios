@@ -50,7 +50,7 @@ final class AboutViewTests: XCTestCase {
             [
                 "Plain-English summaries of bills in Congress, written with AI from the official text",
                 "Vote Yea, Nay or Abstain on any bill",
-                "See combined results after you vote, and how your representatives voted"
+                "See combined results after you vote, and how your representatives voted."
             ]
         )
         XCTAssertEqual(
