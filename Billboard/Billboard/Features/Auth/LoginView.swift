@@ -2,12 +2,15 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var auth: AuthManager
+    @Environment(\.announceToVoiceOver) private var announceToVoiceOver
 
     @State private var email: String
     @State private var password: String
     /// Set when sign-in finds the account's email unconfirmed: pushes the code step for it (UX-39).
     @State private var pendingConfirmation: PendingSignUpConfirmation?
     @FocusState private var focusedField: Field?
+    /// Sign in is the screen showing, not under a pushed one (Create account, Forgot password).
+    @State private var isOnScreen = true
 
     /// Starts the form with these values (render tests); the app opens it empty.
     init(email: String = "", password: String = "") {
@@ -96,8 +99,11 @@ struct LoginView: View {
 
                 if let statusMessage {
                     // Said to VoiceOver, whose focus stays on Sign in (UX-45). The line stays up while the next
-                    // sign-in runs, so it is said again when that one ends, even with the same words.
+                    // sign-in runs, so it is said again when that one ends, even with the same words. Under a pushed
+                    // screen it still follows the shared sign-in state, which Create account's own sign-in changes,
+                    // and that screen says its own error: here it stays quiet, and is not said again on the way back.
                     RecordErrorText(statusMessage, announces: !auth.isBusy)
+                        .environment(\.announceToVoiceOver, isOnScreen ? announceToVoiceOver : { _ in })
                         .accessibilityIdentifier("login.error")
 
                     // A message that sends people to us offers the way there (UX-39).
@@ -145,6 +151,8 @@ struct LoginView: View {
                 await auth.refresh()
             }
         }
+        .onAppear { isOnScreen = true }
+        .onDisappear { isOnScreen = false }
         .preTabBar()
     }
 }
