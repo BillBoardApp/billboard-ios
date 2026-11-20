@@ -184,10 +184,10 @@ final class VoteRefusalRollbackTests: XCTestCase {
 
         let result = await store.submitVote(billID: bill.id, vote: .yea, watch: nil)?.value
 
-        XCTAssertEqual(result, .notSaved)
+        XCTAssertEqual(result, .unconfirmed)
         XCTAssertEqual(voteStore.vote(for: Self.guid), .voted(.yea))
         XCTAssertEqual(store.bill(for: bill.id)?.userVote, .yea)
-        XCTAssertEqual(voteStore.lastError, "Your vote may not have saved. Check your connection and vote again.")
+        XCTAssertNil(voteStore.lastError, "the bill page says it (UX-49)")
         await settleBillsCache(scope: scope)
     }
 
@@ -385,7 +385,7 @@ final class VoteRefusalRollbackTests: XCTestCase {
         // A failure without a code keeps the vote (spec D 2.8.4), so its reasons go with it.
         let run = await castYeaAndQueueReasons(answers: [URLError(.timedOut), nil])
 
-        XCTAssertEqual(run.vote, .notSaved)
+        XCTAssertEqual(run.vote, .unconfirmed)
         XCTAssertTrue(run.reasonsSaved)
         XCTAssertEqual(run.votes.setFeedbackCalls.map(\.reasons), [[], ["public_safety"]])
         XCTAssertEqual(run.voteStore.vote(for: Self.guid), .voted(.yea))
@@ -593,6 +593,136 @@ final class VoteRefusalRollbackTests: XCTestCase {
         XCTAssertEqual(rows.refusal, AuthErrorMessages.voteDailyLimit, "from xxxLarge up the strip is a row of Your vote")
     }
 
+    // MARK: - A vote not saved yet (UX-49)
+
+    /// The page's stores, built here and not with the async `makeCompanionStore`: the hosted page needs the main
+    /// run loop, which an async test holds.
+    private func pageStores(_ bill: Bill, votes: FakeBillVotesService) -> (store: BillsStore, voteStore: BillVoteStore) {
+        let scope = "not-saved-strip-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let service = FakeBillsService()
+        service.cachedManifest = []
+        let store = BillsStore(bills: [bill], cacheScope: scope, service: service, preferencesService: FakePreferencesService())
+        let voteStore = BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil)), service: votes)
+        store.connect(voteStore: voteStore)
+        return (store, voteStore)
+    }
+
+    /// A Yea whose write failed with its outcome unknown (offline): the stamp stays, and the refusal strip says
+    /// "Not saved yet. Check your connection." with Try again; no 4 s banner asking to "vote again", which the
+    /// panel ignores. Change and the same vote send nothing, and the strip comes back when the buttons close. Try
+    /// again sends the shown vote again; once it is stored the strip goes and the stamp stays. At xxxLarge the
+    /// strip is the first row of Your vote, with its Try again.
+    func testAVoteNotSavedStaysWithItsStripAndTryAgain() {
+        for size in [DynamicTypeSize.large, .xxxLarge] {
+            let votes = FakeBillVotesService()
+            votes.singleResult = .success(.notVoted)
+            votes.setFeedbackError = URLError(.notConnectedToInternet)
+            let bill = pageBill()
+            let (store, voteStore) = pageStores(bill, votes: votes)
+            let transport = RecordingTransport()
+            transport.failure = { _ in URLError(.notConnectedToInternet) }
+            APIClient.$current.withValue(transport.client) {
+                let host = AccessibilityTreeText.Host(
+                    page(bill, store: store, voteStore: voteStore, size: size),
+                    size: CGSize(width: 390, height: 9000),
+                    settle: 0.6
+                )
+                defer { host.close() }
+                XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), "\(size): \(host.text())")
+                XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea], "\(size)")
+
+                XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), "\(size): \(host.text())")
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(size)")
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "Try again", "\(size)")
+                XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "\(size): the stamp stays")
+                XCTAssertFalse(host.strings().contains("Vote Nay"), "\(size): the vote is not undone")
+                let strings = host.strings()
+                XCTAssertEqual(strings.filter { $0.contains(AuthErrorMessages.voteNotSaved) }.count, 1, "\(size): once, in the strip, not the banner: \(strings)")
+                XCTAssertFalse(strings.contains { $0.localizedCaseInsensitiveContains("vote again") }, "\(size): \(strings)")
+                XCTAssertNil(voteStore.lastError, "\(size): nothing app-wide")
+
+                // Change, then the same vote: nothing is sent, and the vote is still not saved.
+                XCTAssertTrue(host.activate("Change your vote", settle: 0.6), "\(size)")
+                XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "\(size): \"Change your vote\" while the buttons are open")
+                XCTAssertTrue(host.activate("Vote Yea, your current vote", settle: 0.6), "\(size): \(host.text())")
+                XCTAssertEqual(votes.setFeedbackCalls.count, 1, "\(size): the same vote sends nothing")
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(size): back")
+                XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "\(size)")
+
+                // Try again sends the shown vote again; this time it is stored.
+                votes.setFeedbackError = nil
+                XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier, settle: 1.2), "\(size)")
+                XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea, .yea], "\(size)")
+                XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), "\(size): \(host.text())")
+                XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "\(size)")
+                XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "\(size): the stamp stays")
+                XCTAssertEqual(voteStore.vote(for: Self.guid), .voted(.yea), "\(size)")
+            }
+            withExtendedLifetime(voteStore) {}
+        }
+    }
+
+    /// The strip's Try again, in the panel and as a row of Your vote, beside the words and under them at the
+    /// accessibility sizes. A refused vote's strip has none: its vote is gone and the buttons are back.
+    func testTheNotSavedStripOffersTryAgain() throws {
+        for size in [DynamicTypeSize.large, .accessibility3] {
+            for placement in [VoteStrip.Placement.panel, .page] {
+                var tries = 0
+                let strip = VoteStrip(kind: .refusal(AuthErrorMessages.voteNotSaved), placement: placement, onTryAgain: { tries += 1 })
+                let host = AccessibilityTreeText.Host(strip.environment(\.dynamicTypeSize, size), size: CGSize(width: 351, height: 600))
+                defer { host.close() }
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(size) \(placement)")
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "Try again", "\(size) \(placement)")
+                let words = try XCTUnwrap(host.frame(ofIdentifier: BillVoteBarModel.refusalIdentifier))
+                let button = try XCTUnwrap(host.frame(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+                if size.isAccessibilitySize {
+                    XCTAssertGreaterThanOrEqual(button.minY, words.maxY - 1, "\(placement): under the words")
+                } else {
+                    XCTAssertGreaterThanOrEqual(button.minX, words.maxX - 1, "\(placement): beside the words")
+                }
+                XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier))
+                XCTAssertEqual(tries, 1, "\(size) \(placement)")
+            }
+        }
+        let refused = AccessibilityTreeText.Host(VoteStrip(kind: .refusal(AuthErrorMessages.voteDailyLimit)), size: CGSize(width: 351, height: 300))
+        defer { refused.close() }
+        XCTAssertNil(refused.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+    }
+
+    /// An error about another bill never shows on this bill's page, also when it arrives while the page is open
+    /// (a reasons update sent as that bill's page was left); one about this bill does. A bill-list error left from
+    /// before the page opened is cleared, not shown.
+    func testThePagesBannerShowsOnlyItsOwnBillsErrors() {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes)
+        store.errorMessage = BillsStore.loadFailedBanner
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertNil(store.errorMessage, "cleared when the page opened")
+            XCTAssertFalse(host.strings().contains(BillsStore.loadFailedBanner), host.text())
+
+            votes.setFeedbackError = URLError(.timedOut)
+            Task { await voteStore.updateReasons(billId: "BILLS-119s4200", vote: .yea, reasons: [.education]) }
+            XCTAssertTrue(host.run(until: { voteStore.lastError != nil }))
+            host.run(0.3)
+            XCTAssertFalse(host.strings().contains(BillVoteStore.reasonsNotSavedMessage), "about another bill: \(host.text())")
+
+            Task { await voteStore.updateReasons(billId: Self.guid, vote: .yea, reasons: [.education]) }
+            XCTAssertTrue(host.run(until: { host.strings().contains(BillVoteStore.reasonsNotSavedMessage) }), "about this bill: \(host.text())")
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
     // MARK: - The pieces
 
     func testTheBarFallsBackToTheBillsStoresVoteOnlyWithoutAVoteStoreRow() {
@@ -624,6 +754,16 @@ final class VoteRefusalRollbackTests: XCTestCase {
         XCTAssertEqual(ledger.dismissedBillIDs, [], "a stored Abstain keeps its dismissal")
 
         let kept = ledger.begin()
-        XCTAssertEqual(ledger.finish(kept, result: .notSaved), .keep)
+        XCTAssertEqual(ledger.finish(kept, result: .notSaved), .keep, "cancelled, or overtaken")
+
+        // A write whose outcome is unknown keeps the vote and says it is not saved yet (UX-49); an Abstain keeps
+        // its bills off the Bills list.
+        let unsaved = ledger.begin(dismissing: [first])
+        XCTAssertEqual(ledger.finish(unsaved, result: .unconfirmed), .unsaved)
+        XCTAssertEqual(ledger.dismissedBillIDs, [])
+        let overtaken = ledger.begin()
+        let newer = ledger.begin()
+        XCTAssertEqual(ledger.finish(overtaken, result: .unconfirmed), .keep, "the newer vote decides")
+        XCTAssertEqual(ledger.finish(newer, result: .stored), .keep)
     }
 }

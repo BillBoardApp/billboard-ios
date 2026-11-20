@@ -198,6 +198,10 @@ struct BillDetail: View {
         }
         .onAppear {
             Self.endUndoWindow()
+            // An error left in the bills store before the page opened is not this page's to show: the Bills tab
+            // says a failed load in its own notice, and this page shows its own load failure. It would otherwise
+            // show in the banner of whichever bill page opened next (UX-49).
+            billsStore.errorMessage = nil
         }
         // The vote bar is the only bar at the bottom of a bill page, in every mode: the tab capsule leaves
         // as the page is pushed, comes back after it is popped and over a page pushed from it (a member
@@ -347,7 +351,11 @@ private struct BillDetailContent: View {
     /// The refused vote's reason (APPF-27, spec 3.10.2), shown in the panel (or Your vote) until the next vote
     /// tap or Change.
     @State private var refusalText: String?
-    /// Counts refusals: the error haptic.
+    /// The vote shown here was cast on the page and its write failed with the outcome unknown (offline, a
+    /// timeout, a server error): the vote stays, and the refusal strip says "Not saved yet. Check your
+    /// connection." with Try again (UX-49), until the next vote tap.
+    @State private var isVoteUnsaved = false
+    /// Counts refusals (and votes not saved): the error haptic.
     @State private var refusals = 0
     /// Counts refusals shown as a row of Your vote (from xxxLarge up), which the page scrolls to.
     @State private var refusalScrollCount = 0
@@ -484,7 +492,25 @@ private struct BillDetailContent: View {
     /// The panel's strips that are rows of Your vote from xxxLarge up, and the full stamp at the
     /// accessibility sizes (spec 3.10, 3.13).
     private var movedVoteRows: BillVoteBarModel.YourVoteRows {
-        voteBarModel.yourVoteRows(in: sizeClass, refusal: refusalText, showsCoachMark: showsVoteCoachMark)
+        voteBarModel.yourVoteRows(in: sizeClass, refusal: voteStripText, showsCoachMark: showsVoteCoachMark)
+    }
+
+    /// The refusal strip's words: a refused vote's reason, else "Not saved yet. Check your connection." for a
+    /// vote not saved yet (UX-49). That one gives way to "Change your vote" while Change has the buttons open,
+    /// and comes back when they close on the same vote.
+    private var voteStripText: String? {
+        if let refusalText { return refusalText }
+        return showsNotSavedStrip ? AuthErrorMessages.voteNotSaved : nil
+    }
+
+    private var showsNotSavedStrip: Bool {
+        isVoteUnsaved && !isChangingVote
+    }
+
+    /// The strip's Try again, only for a vote not saved yet: sends the shown vote again (UX-49).
+    private var voteStripTryAgain: (() -> Void)? {
+        guard refusalText == nil, showsNotSavedStrip else { return nil }
+        return retryUnsavedVote
     }
 
     /// When the shown vote was cast, for the stamp's date: the held row's time, else the bill's.
@@ -623,8 +649,9 @@ private struct BillDetailContent: View {
 
         reasonSyncTask?.cancel()
         reasonSyncTask = nil
-        // The next vote tap ends a refusal's strip (spec 3.10.2).
+        // The next vote tap ends a refusal's strip (spec 3.10.2), and a vote not saved yet's (UX-49).
         refusalText = nil
+        isVoteUnsaved = false
         withAnimation(reduceMotion ? nil : BallotMoment.ink) {
             pendingVote = vote
             isChangingVote = false
@@ -711,13 +738,25 @@ private struct BillDetailContent: View {
     /// restored vote (Results seal again), and a refused Abstain puts the bill back on the Bills list. The
     /// refusal's text (the daily limit's, from the vote store) shows in the panel, or first in Your vote
     /// from xxxLarge up, not in the top banner, with the error haptic and VoiceOver focus on it (spec 3.10.2).
+    ///
+    /// When the write failed with its outcome unknown (offline, a timeout, a server error), the stores keep the
+    /// vote and so does the screen: the stamp stays, and the same strip says "Not saved yet. Check your
+    /// connection." with Try again, which sends the vote again (UX-49).
     private func voteWriteEnded(_ castToken: UUID, result: VoteWriteResult) {
-        guard case .rollBack(let undismiss) = voteCasts.finish(castToken, result: result) else { return }
+        let outcome = voteCasts.finish(castToken, result: result)
+        if outcome == .unsaved {
+            withAnimation(BallotMoment.rollback) {
+                isVoteUnsaved = true
+            }
+            voteStripShown()
+            return
+        }
+        guard case .rollBack(let undismiss) = outcome else { return }
         readState.undismissBills(undismiss)
         reasonSyncTask?.cancel()
         reasonSyncTask = nil
         syncedReasons = []
-        let refusal = voteStore.lastError?.trimmedNonEmpty ?? BillVoteBarModel.refusalFallbackText
+        let refusal = voteStore.lastError(about: voteRowGuids)?.trimmedNonEmpty ?? BillVoteBarModel.refusalFallbackText
         voteStore.lastError = nil
         withAnimation(BallotMoment.rollback) {
             pendingVote = nil
@@ -726,15 +765,7 @@ private struct BillDetailContent: View {
             didJustVote = false
             refusalText = refusal
         }
-        refusals += 1
-        if sizeClass != .regular {
-            refusalScrollCount += 1
-        }
-        // Once the strip is on screen (after the cross-fade), so VoiceOver can land on it.
-        let plan = focusPlanner.handle(.refused, voiceOverRunning: UIAccessibility.isVoiceOverRunning)
-        DispatchQueue.main.asyncAfter(deadline: .now() + BillDetail.refusalFocusDelay) {
-            apply(plan)
-        }
+        voteStripShown()
         // A vote that was not known before this one is checked again, so the bar does not stay on
         // "Checking your vote…"; a read that fails says so (`voteCheckFailed`). Errors stay out of the
         // banner, which keeps the refusal's text.
@@ -750,6 +781,20 @@ private struct BillDetailContent: View {
                 }
                 voteCheckFailed = failed
             }
+        }
+    }
+
+    /// The refusal strip has just come up (a refusal, or a vote not saved yet): the error haptic, the page scrolls
+    /// to it where it is the first row of Your vote (from xxxLarge up), and VoiceOver focus moves to it (spec 3.10.2).
+    private func voteStripShown() {
+        refusals += 1
+        if sizeClass != .regular {
+            refusalScrollCount += 1
+        }
+        // Once the strip is on screen (after the cross-fade), so VoiceOver can land on it.
+        let plan = focusPlanner.handle(.refused, voiceOverRunning: UIAccessibility.isVoiceOverRunning)
+        DispatchQueue.main.asyncAfter(deadline: .now() + BillDetail.refusalFocusDelay) {
+            apply(plan)
         }
     }
 
@@ -971,8 +1016,9 @@ private struct BillDetailContent: View {
         }
     }
 
-    /// Try again on "Results show once your vote is saved.": sends the vote the screen shows again, and
-    /// leaves the page where it is (the answer shows where Try again was tapped).
+    /// Try again on "Results show once your vote is saved." and on the strip of a vote not saved yet (UX-49):
+    /// sends the vote the screen shows again, and leaves the page where it is (the answer shows where Try again
+    /// was tapped).
     private func retryUnsavedVote() {
         guard let retryChoice else { return }
         castVote(retryChoice, isRetry: true)
@@ -1092,6 +1138,7 @@ private struct BillDetailContent: View {
                     companionConflictNote: companionConflictNote,
                     showsRule: lead != .yourVote,
                     movedRows: movedVoteRows,
+                    onTryAgainVote: voteStripTryAgain,
                     votedAt: shownVoteDate,
                     stampFocusLabel: focusPlanner.oneTimeStampLabel,
                     focus: $voteFocus,
@@ -1180,7 +1227,8 @@ private struct BillDetailContent: View {
             BillVoteBar(
                 model: voteBarModel,
                 showsCoachMark: showsVoteCoachMark,
-                refusal: refusalText,
+                refusal: voteStripText,
+                onTryAgain: voteStripTryAgain,
                 votedAt: shownVoteDate,
                 inked: inkedVote,
                 animatesInk: true,
@@ -1254,9 +1302,10 @@ private struct BillDetailContent: View {
         }
         .overlay(alignment: .top) {
             // Errors not tied to the vote. While a vote is being sent its outcome is not known yet: a refusal's
-            // text goes to the vote panel instead (spec 3.10.2, 3.19).
+            // text goes to the vote panel instead (spec 3.10.2, 3.19). Only this bill's: one about another bill,
+            // such as a refusal that came after its page was left, never shows here (UX-49).
             BBErrorBanner(message: Binding(
-                get: { voteCasts.latest == nil ? voteStore.lastError : nil },
+                get: { voteCasts.latest == nil ? voteStore.lastError(about: voteRowGuids) : nil },
                 set: { voteStore.lastError = $0 }
             ))
             BBErrorBanner(message: Binding(
