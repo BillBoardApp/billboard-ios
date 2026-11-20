@@ -245,6 +245,8 @@ extension BillVoteBarModel {
     static let captionIdentifier = "bill.vote.caption"
     static let coachMarkDismissIdentifier = "bill.vote.coachMark.dismiss"
     static let refusalIdentifier = "bill.vote.refusal"
+    /// Try again on the refusal strip of a vote not saved yet (UX-49).
+    static let refusalTryAgainIdentifier = "bill.vote.refusal.tryAgain"
     static let cancelIdentifier = "bill.vote.cancel"
 
     /// Voice Control: the visible word, and the spoken label where it differs ("Tap Yea" works as well
@@ -495,7 +497,7 @@ enum VoteFocusTarget: Hashable {
 /// - Commit, VoiceOver not running (Switch Control, Voice Control): "You voted Yea." is announced at once.
 /// - The stats for that vote arrive: "Results are open.", once per vote that opened them; under the floor (UX-34)
 ///   the floor line's words instead, "Results open at 5 Yea or Nay votes." (project decision of 2026-10-29).
-/// - Refused: focus moves to the refusal strip; nothing waits any more.
+/// - Refused, or not saved yet (UX-49): focus moves to the refusal strip; nothing waits any more.
 /// - "Go to Results" on the stamp: focus moves to the Results title; "Go to vote buttons" on the sealed sheet:
 ///   to the first vote button.
 struct VoteFocusPlanner: Equatable {
@@ -507,7 +509,7 @@ struct VoteFocusPlanner: Equatable {
         /// The stats for the stored vote arrived; `belowFloor` is the line Results show under the floor (UX-34),
         /// nil over it.
         case statsArrived(belowFloor: VoteResultsFormatting.FloorLine?)
-        /// The server refused the vote (APPF-27).
+        /// The server refused the vote (APPF-27), or its write failed and it shows not saved yet (UX-49).
         case refused
         /// VoiceOver focus left the stamp: its one-time label is spent.
         case stampFocusLeft
@@ -649,8 +651,12 @@ enum BillResultsAccess: Equatable {
 /// latest cast's result can change the screen; an earlier one's is overtaken by the newer vote.
 struct BillVoteCastLedger: Equatable {
     enum Outcome: Equatable {
-        /// Nothing changes: the vote was stored, kept after a failure, or a newer vote decides.
+        /// Nothing changes: the vote was stored, its write was cancelled, or a newer vote decides.
         case keep
+        /// The write failed and its outcome is unknown (`VoteWriteResult.unconfirmed`): the vote stays on
+        /// screen (an Abstain keeps its bills off the Bills list), and the refusal strip says it is not saved yet,
+        /// with Try again (UX-49).
+        case unsaved
         /// The server refused the vote and the stores rolled it back: drop the screen's choice (the bar,
         /// Your vote and Results then show the restored vote), and put these bills back on the Bills list
         /// (an Abstain cast here took them off).
@@ -676,9 +682,15 @@ struct BillVoteCastLedger: Equatable {
         latest = nil
         let dismissed = dismissedBillIDs
         dismissedBillIDs = []
-        guard case .rolledBack(let restored) = result else { return .keep }
-        // A restored Abstain row (stored earlier) still keeps the bill off the list.
-        return .rollBack(undismiss: restored == .voted(.abstain) ? [] : dismissed)
+        switch result {
+        case .stored, .notSaved:
+            return .keep
+        case .unconfirmed:
+            return .unsaved
+        case .rolledBack(let restored):
+            // A restored Abstain row (stored earlier) still keeps the bill off the list.
+            return .rollBack(undismiss: restored == .voted(.abstain) ? [] : dismissed)
+        }
     }
 }
 

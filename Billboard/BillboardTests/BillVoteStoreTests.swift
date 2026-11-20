@@ -32,17 +32,18 @@ final class BillVoteStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedVoteKeepsTheOptimisticStateAndReportsIt() async {
+    func testFailedVoteKeepsTheOptimisticStateAndLeavesItToTheBillPage() async {
         let service = FakeBillVotesService()
         service.setFeedbackError = FakeServiceError()
         let store = makeStore(service)
 
-        let stored = await store.setVote(billId: billId, vote: .nay)
+        let result = await store.submitVote(billId: billId, vote: .nay)
 
-        XCTAssertFalse(stored)
+        XCTAssertEqual(result, .unconfirmed)
         XCTAssertEqual(store.vote(for: billId), .voted(.nay))
-        // Nothing retries a failed vote, so the copy no longer says it will.
-        XCTAssertEqual(store.lastError, "Your vote may not have saved. Check your connection and vote again.")
+        // The bill page says it in its refusal strip, with Try again (UX-49). No app-wide message: one would show
+        // on the next bill page opened when the page was left before the write failed.
+        XCTAssertNil(store.lastError)
     }
 
     @MainActor
@@ -392,7 +393,7 @@ final class BillVoteStoreTests: XCTestCase {
             ("APP_ATTEST_UNKNOWN_KEY", "We couldn't confirm this is the Billboard app on your iPhone. Update the app and try again."),
             ("DEVICE_ACCOUNT_LIMIT", "This iPhone has reached the limit of 3 Billboard accounts."),
             ("APP_UPDATE_REQUIRED", "This version of Billboard can't vote or create accounts any more. Update to continue."),
-            ("APP_ATTEST_UNAVAILABLE", "Your vote may not have saved. Check your connection and vote again."),
+            ("APP_ATTEST_UNAVAILABLE", "Not saved yet. Check your connection."),
             ("ADULT_REQUIRED", "Confirm your age before doing that."),
             ("ACCOUNT_INELIGIBLE", "This account isn't eligible to do that."),
             ("ACCOUNT_DELETION_IN_PROGRESS", "This account is being deleted.")
@@ -412,25 +413,70 @@ final class BillVoteStoreTests: XCTestCase {
         }
     }
 
+    /// A failure whose outcome is unknown keeps the vote and ends `.unconfirmed`: the bill page shows "Not saved
+    /// yet. Check your connection." with Try again (UX-49), and nothing is left in the app-wide message.
     @MainActor
-    func testFailuresThatMayHaveStoredTheVoteKeepItAndShowTheirCopy() async {
-        let cases: [(error: Error, message: String)] = [
-            (backendError("SOMETHING_NEW"), "Your vote may not have saved. Check your connection and vote again."),
-            (httpStatusError(503), "Your vote may not have saved. Check your connection and vote again."),
-            (httpStatusError(429), "Your vote may not have saved. Check your connection and vote again."),
-            (URLError(.notConnectedToInternet), "Your vote may not have saved. Check your connection and vote again.")
+    func testFailuresThatMayHaveStoredTheVoteKeepItForTheBillPageToSay() async {
+        let errors: [Error] = [
+            backendError("SOMETHING_NEW"),
+            httpStatusError(503),
+            httpStatusError(429),
+            URLError(.notConnectedToInternet),
+            URLError(.timedOut)
         ]
-        for (error, message) in cases {
+        for error in errors {
             let service = FakeBillVotesService()
             service.setFeedbackError = error
             let store = makeStore(service)
 
             let result = await store.submitVote(billId: billId, vote: .nay)
 
-            XCTAssertEqual(result, .notSaved, "\(error)")
-            XCTAssertEqual(store.lastError, message, "\(error)")
+            XCTAssertEqual(result, .unconfirmed, "\(error)")
+            XCTAssertNil(store.lastError, "\(error)")
             XCTAssertEqual(store.vote(for: billId), .voted(.nay), "an unknown outcome keeps the vote: \(error)")
+            XCTAssertEqual(BillVoteStore.voteFailure(for: error).message, "Not saved yet. Check your connection.", "\(error)")
         }
+    }
+
+    /// The vote strip's words ask for nothing the vote panel ignores (UX-49): tapping the shown vote again sends
+    /// nothing, so they no longer say "vote again".
+    @MainActor
+    func testTheNotSavedCopyAsksForNothingThePanelIgnores() {
+        XCTAssertEqual(AuthErrorMessages.voteNotSaved, "Not saved yet. Check your connection.")
+        XCTAssertFalse(AuthErrorMessages.voteNotSaved.lowercased().contains("vote again"))
+    }
+
+    /// Every vote error is about bills: a bill page shows it only for its own bills (UX-49).
+    @MainActor
+    func testVoteErrorsAreTiedToTheirBill() async {
+        let other = "BILLS-119s2ih"
+        let service = FakeBillVotesService()
+        let store = makeStore(service)
+        await store.setVote(billId: billId, vote: .yea)
+
+        // A reasons update that failed.
+        service.setFeedbackError = FakeServiceError()
+        await store.updateReasons(billId: billId, vote: .yea, reasons: [.education])
+        XCTAssertEqual(store.lastError(about: [billId]), BillVoteStore.reasonsNotSavedMessage)
+        XCTAssertEqual(store.lastError(about: [other, billId]), BillVoteStore.reasonsNotSavedMessage, "a companion group's page")
+        XCTAssertNil(store.lastError(about: [other]), "never on another bill's page")
+        XCTAssertNil(store.lastError(about: []))
+
+        // A refused vote.
+        service.setFeedbackError = backendError("VOTE_DAILY_LIMIT")
+        _ = await store.submitVote(billId: other, vote: .nay)
+        XCTAssertEqual(store.lastError(about: [other]), AuthErrorMessages.voteDailyLimit)
+        XCTAssertNil(store.lastError(about: [billId]), "the newer error is about the other bill")
+
+        // A failed read of the vote.
+        service.singleResult = .failure(URLError(.notConnectedToInternet))
+        let third = "BILLS-119hr3ih"
+        await store.fetchVoteIfNeeded(for: third)
+        XCTAssertEqual(store.lastError(about: [third]), BillVoteStore.checkVoteFailedMessage)
+        XCTAssertNil(store.lastError(about: [other]))
+
+        store.lastError = nil
+        XCTAssertNil(store.lastError(about: [third]), "closed")
     }
 
     @MainActor

@@ -27,8 +27,11 @@ struct BillVoteBar: View {
     let model: BillVoteBarModel
     /// The first-vote coach mark (spec 3.10.1).
     var showsCoachMark: Bool = false
-    /// The refused vote's reason (APPF-27, spec 3.10.2), until the next vote tap or leaving the page.
+    /// The refused vote's reason (APPF-27, spec 3.10.2), until the next vote tap or leaving the page; or
+    /// "Not saved yet. Check your connection." for a vote kept on screen that is not saved yet (UX-49).
     var refusal: String? = nil
+    /// The refusal strip's Try again, for a vote not saved yet: sends it again (UX-49). Nil draws none.
+    var onTryAgain: (() -> Void)? = nil
     /// When the shown vote was cast, for the stamp's date; nil draws the no-date form.
     var votedAt: Date? = nil
     /// The vote just tapped, drawn inked over the buttons until `BillDetail` clears it (spec 5.1).
@@ -320,7 +323,7 @@ struct BillVoteBar: View {
     private func stripView(_ strip: BillVoteBarModel.Strip) -> some View {
         switch strip {
         case .refusal(let text):
-            VoteStrip(kind: .refusal(text), focus: focus)
+            VoteStrip(kind: .refusal(text), onTryAgain: onTryAgain, focus: focus)
         case .changing:
             VoteStrip(kind: .changing, onCancel: onCollapse)
         case .coachMark:
@@ -423,7 +426,8 @@ struct BallotButtonLabel: View {
 /// - Changing: "Change your vote" (`caption`, ink 2) and Cancel (an ink text button, 44 pt target).
 /// - Coach mark: its words (`caption`, ink) and Not now (an ink text button, 44 pt target); no hand symbol.
 /// - Refusal: `exclamationmark.circle` in `danger` and the refusal's text (`caption`, ink), one element read
-///   "Error: …", id `bill.vote.refusal`.
+///   "Error: …", id `bill.vote.refusal`. For a vote kept on screen that is not saved yet, Try again beside the
+///   words (under them at the accessibility sizes), an ink text button as Not now is (UX-49).
 struct VoteStrip: View {
     enum Kind: Equatable {
         case caption(String)
@@ -443,6 +447,8 @@ struct VoteStrip: View {
     var placement: Placement = .panel
     var onCancel: () -> Void = {}
     var onDismissCoachMark: () -> Void = {}
+    /// The refusal strip's Try again, which sends the shown vote again (UX-49); nil draws none.
+    var onTryAgain: (() -> Void)? = nil
     /// The refusal strip takes VoiceOver focus after a refusal (`.refusal`).
     var focus: AccessibilityFocusState<VoteFocusTarget?>.Binding? = nil
 
@@ -540,22 +546,49 @@ struct VoteStrip: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(BillVoteBarModel.coachMarkIdentifier)
         case .refusal(let text):
-            HStack(alignment: .firstTextBaseline, spacing: 9) {
-                Image(systemName: "exclamationmark.circle")
-                    .textRole(.caption)
-                    .foregroundStyle(BillboardColors.danger)
-                Text(text)
-                    .textRole(.caption)
-                    .foregroundStyle(BillboardColors.primaryText)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if let onTryAgain {
+                // The words wrap beside Try again; at the accessibility sizes Try again goes under them.
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: BillboardStyle.Space.xs) {
+                            refusalMessage(text)
+                            refusalTryAgain(onTryAgain)
+                        }
+                    } else {
+                        HStack(spacing: 10) {
+                            refusalMessage(text)
+                            refusalTryAgain(onTryAgain)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+            } else {
+                refusalMessage(text)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(BillVoteBarModel.refusalAccessibilityLabel(text))
-            .accessibilityIdentifier(BillVoteBarModel.refusalIdentifier)
-            .accessibilityFocusTarget(focus, equals: .refusal)
         }
+    }
+
+    /// The error mark and the refusal's words, one element read "Error: …".
+    private func refusalMessage(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Image(systemName: "exclamationmark.circle")
+                .textRole(.caption)
+                .foregroundStyle(BillboardColors.danger)
+            Text(text)
+                .textRole(.caption)
+                .foregroundStyle(BillboardColors.primaryText)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(BillVoteBarModel.refusalAccessibilityLabel(text))
+        .accessibilityIdentifier(BillVoteBarModel.refusalIdentifier)
+        .accessibilityFocusTarget(focus, equals: .refusal)
+    }
+
+    private func refusalTryAgain(_ action: @escaping () -> Void) -> some View {
+        textButton(VoteResultsFormatting.tryAgainTitle, identifier: BillVoteBarModel.refusalTryAgainIdentifier, action: action)
     }
 
     private func coachMarkText(_ text: String) -> some View {

@@ -6,9 +6,12 @@ import SwiftUI
 nonisolated enum VoteWriteResult: Equatable, Sendable {
     /// The server stored the vote.
     case stored
-    /// The vote was not confirmed and stays as sent: the outcome is unknown (offline, a timeout, a server
-    /// error without a code), the write was cancelled, or the server refused it while a newer vote on the
-    /// bill was waiting (that vote's result decides).
+    /// The write failed and its outcome is unknown (offline, a timeout, a server error without a code the app
+    /// knows): the vote stays as sent. Bill detail keeps it on screen and says it is not saved yet, with Try
+    /// again (UX-49).
+    case unconfirmed
+    /// The vote was not confirmed and stays as sent, with nothing to say: the write was cancelled, or the
+    /// server refused it while a newer vote on the bill was waiting (that vote's result decides).
     case notSaved
     /// The server refused the vote and the bill's vote went back to `restored`: its row from before the
     /// votes the server has not confirmed (`.voted(.abstain)` for an Abstain row, `.unknown` when the
@@ -27,9 +30,13 @@ nonisolated enum VoteWriteResult: Equatable, Sendable {
 final class BillVoteStore: ObservableObject {
     @Published private(set) var statesByBillId: [String: VoteState] = [:]
 
-    /// User-facing error message for the most recent failed operation.
-    /// Views can bind to this with `BBErrorBanner(message: $voteStore.lastError)`.
+    /// User-facing error message for the most recent failed operation. Every one is about some bills
+    /// (`lastErrorBillIds`): bill detail shows it with `lastError(about:)`.
     @Published var lastError: String?
+
+    /// The bills (guids) `lastError` is about, so bill detail shows it only on their page, never on another
+    /// bill's, also when it arrives after its page was left (UX-49).
+    private var lastErrorBillIds: Set<String> = []
 
     private let cache: BillVoteCache
     private let service: any BillVotesServicing
@@ -146,7 +153,7 @@ final class BillVoteStore: ObservableObject {
             return nil
         } catch {
             if APIErrorResponse.isCancellation(error) { return nil }
-            lastError = Self.loadVotesFailedMessage
+            report(Self.loadVotesFailedMessage, about: missing)
             #if DEBUG
             print(">>> [BillVoteStore] fetchVotes failed: \(APIErrorDebug.debugString(for: error))")
             #endif
@@ -191,7 +198,7 @@ final class BillVoteStore: ObservableObject {
             if APIErrorResponse.isCancellation(error) { return nil }
             let message = Self.checkVoteFailedMessage
             if reportError {
-                lastError = message
+                report(message, about: [cleaned])
             }
             #if DEBUG
             print(">>> [BillVoteStore] fetchVoteIfNeeded failed: \(APIErrorDebug.debugString(for: error))")
@@ -275,10 +282,10 @@ final class BillVoteStore: ObservableObject {
     /// - Updates cache immediately.
     /// - Calls server idempotently (overwrite existing vote).
     ///
-    /// A failed write keeps the optimistic vote and reports it (nothing retries it), except a vote the
-    /// server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT` and the other coded refusals, sent before the
-    /// server stores anything), which rolls the bill back to its vote before this one (spec D 2.8.4,
-    /// APPF-27). Server codes get their own copy.
+    /// A failed write keeps the optimistic vote and ends `.unconfirmed` (nothing retries it; bill detail offers
+    /// Try again, UX-49), except a vote the server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT` and the
+    /// other coded refusals, sent before the server stores anything), which rolls the bill back to its vote
+    /// before this one (spec D 2.8.4, APPF-27) and sets `lastError`. Server codes get their own copy.
     ///
     /// Returns true once the server has stored the vote.
     @discardableResult
@@ -336,22 +343,23 @@ final class BillVoteStore: ObservableObject {
                     self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
                     return .notSaved
                 }
-                let failure = Self.voteFailure(for: error)
-                var result = VoteWriteResult.notSaved
-                if failure.rollsBack {
-                    // Also when a newer vote decides: reasons queued for this one must not send it again.
-                    self.refusedVotes[cleaned, default: []].insert(voteToken)
-                    if let restored = self.rollBackRefusedVote(billId: cleaned, token: voteToken) {
-                        result = .rolledBack(restored: restored)
-                    }
-                } else {
-                    // Keep the optimistic state so the UI feels instant, but tell the user.
-                    self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
-                }
-                self.lastError = failure.message
                 #if DEBUG
                 print(">>> [BillVoteStore] setVote failed: \(APIErrorDebug.debugString(for: error))")
                 #endif
+                let failure = Self.voteFailure(for: error)
+                guard failure.rollsBack else {
+                    // Keep the optimistic state: bill detail says the vote is not saved yet, with Try again
+                    // (UX-49). No `lastError`: a page that was left says nothing, so it never shows on another bill.
+                    self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
+                    return .unconfirmed
+                }
+                // Also when a newer vote decides: reasons queued for this one must not send it again.
+                self.refusedVotes[cleaned, default: []].insert(voteToken)
+                var result = VoteWriteResult.notSaved
+                if let restored = self.rollBackRefusedVote(billId: cleaned, token: voteToken) {
+                    result = .rolledBack(restored: restored)
+                }
+                self.report(failure.message, about: [cleaned])
                 return result
             }
         }
@@ -388,6 +396,20 @@ final class BillVoteStore: ObservableObject {
             statesByBillId[billId] = Self.normalizeState(.voted(previous))
         }
         return pending.baseline
+    }
+
+    // MARK: - Errors (UX-49)
+
+    /// `lastError` when it is about one of `billIds` (a bill page's guids), else nil.
+    func lastError(about billIds: [String]) -> String? {
+        guard let lastError, billIds.contains(where: lastErrorBillIds.contains) else { return nil }
+        return lastError
+    }
+
+    /// Sets `lastError` to `message`, about `billIds`.
+    private func report(_ message: String, about billIds: [String]) {
+        lastErrorBillIds = Set(billIds)
+        lastError = message
     }
 
     // MARK: - Failure copy (spec D 2.8.4)
@@ -472,7 +494,7 @@ final class BillVoteStore: ObservableObject {
                 return .stored
             } catch {
                 if APIErrorResponse.isCancellation(error) { return .notSaved }
-                self?.lastError = Self.reasonsFailureMessage(for: error)
+                self?.report(Self.reasonsFailureMessage(for: error), about: [cleaned])
                 #if DEBUG
                 print(">>> [BillVoteStore] updateReasons failed: \(APIErrorDebug.debugString(for: error))")
                 #endif

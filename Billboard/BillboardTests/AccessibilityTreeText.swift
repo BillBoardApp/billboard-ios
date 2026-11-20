@@ -186,6 +186,19 @@ enum AccessibilityTreeText {
             return activated
         }
 
+        /// `activate(_:settle:)` for the first element whose identifier is exactly `identifier`, where two controls
+        /// share a label (the vote strip's Try again and Results').
+        @discardableResult
+        func activate(identifier: String, settle: TimeInterval = 0.2) -> Bool {
+            var seen = Set<ObjectIdentifier>()
+            guard let element = AccessibilityTreeText.element(identified: identifier, in: controller.view, seen: &seen, depth: 0) else {
+                return false
+            }
+            let activated = element.accessibilityActivate()
+            run(settle)
+            return activated
+        }
+
         /// The accessibility traits of the first element labelled exactly `label`, or nil when there is none
         /// (for the header and selected traits).
         func traits(of label: String) -> UIAccessibilityTraits? {

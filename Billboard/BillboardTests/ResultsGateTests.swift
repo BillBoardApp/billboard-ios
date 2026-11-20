@@ -135,7 +135,8 @@ final class ResultsGateTests: XCTestCase {
         }
         XCTAssertFalse(BillVoteBarModel.fetchesStatsAfterWrite(result: .notSaved, stillUnlocked: false), "locked again")
         XCTAssertFalse(BillVoteBarModel.fetchesStatsAfterWrite(result: .stored, stillUnlocked: false))
-        XCTAssertTrue(BillVoteBarModel.fetchesStatsAfterWrite(result: .notSaved, stillUnlocked: true), "kept after a failure: the server decides")
+        XCTAssertTrue(BillVoteBarModel.fetchesStatsAfterWrite(result: .notSaved, stillUnlocked: true), "kept, cancelled or overtaken: the server decides")
+        XCTAssertTrue(BillVoteBarModel.fetchesStatsAfterWrite(result: .unconfirmed, stillUnlocked: true), "kept after a failure: the server decides")
         XCTAssertTrue(BillVoteBarModel.fetchesStatsAfterWrite(result: .stored, stillUnlocked: true))
     }
 
@@ -372,7 +373,7 @@ final class ResultsGateTests: XCTestCase {
         await store.fetchVoteIfNeeded(for: Self.guid)
 
         let result = await store.submitVote(billId: Self.guid, vote: .yea)
-        XCTAssertEqual(result, .notSaved, "kept on the device")
+        XCTAssertEqual(result, .unconfirmed, "kept on the device")
         let unlocked = unlocks(store, pending: .yea)
         XCTAssertTrue(BillVoteBarModel.fetchesStatsAfterWrite(result: result, stillUnlocked: unlocked))
         // The server answered RESULTS_LOCKED: the lock card asks to save the vote, with Try again.
@@ -487,7 +488,7 @@ final class ResultsGateTests: XCTestCase {
         let store = voteStore(votes)
         await store.fetchVoteIfNeeded(for: Self.guid)
         let kept = await store.submitVote(billId: Self.guid, vote: .yea)
-        XCTAssertEqual(kept, .notSaved)
+        XCTAssertEqual(kept, .unconfirmed)
         XCTAssertTrue(unlocks(store), "precondition: the kept vote shows")
 
         // RESULTS_LOCKED: the server holds no row, so the screen stops counting the kept vote as a row.

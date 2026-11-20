@@ -55,6 +55,8 @@ struct BillYourVoteSection: View {
     var showsRule = true
     /// The vote panel's rows that move here from xxxLarge up (`BillVoteBarModel.yourVoteRows`).
     var movedRows: BillVoteBarModel.YourVoteRows = .none
+    /// The refusal row's Try again, for a vote not saved yet: sends it again (UX-49). Nil draws none.
+    var onTryAgainVote: (() -> Void)? = nil
     /// When the shown vote was cast, for the full stamp's date.
     var votedAt: Date? = nil
     /// The full stamp's label for its first VoiceOver focus after a vote here.
@@ -149,7 +151,7 @@ struct BillYourVoteSection: View {
     @ViewBuilder
     private var movedRowsView: some View {
         if let refusal = movedRows.refusal {
-            VoteStrip(kind: .refusal(refusal), placement: .page, focus: focus)
+            VoteStrip(kind: .refusal(refusal), placement: .page, onTryAgain: onTryAgainVote, focus: focus)
                 .id(Self.refusalAnchorID)
         }
         if let caption = movedRows.caption {
