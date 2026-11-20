@@ -371,6 +371,11 @@ final class BillVoteBarModelTests: XCTestCase {
     func testTheCoachMarkCopy() {
         XCTAssertEqual(BillVoteBarModel.coachMarkText, "Choose Yea, Nay or Abstain. You can change it later.")
         XCTAssertEqual(BillVoteBarModel.coachMarkDismissTitle, "Not now")
+        // At the accessibility sizes the coach mark is a row of Your vote, and says who can see a vote (UX-44).
+        XCTAssertEqual(
+            BillVoteBarModel.accessibilityCoachMarkText,
+            "Tap Vote to choose Yea, Nay or Abstain. You can change it later. Your vote is never shown with your name. Others see only combined results."
+        )
     }
 
     // MARK: - Accessibility and identifiers
@@ -532,7 +537,7 @@ final class BillVoteBarModelTests: XCTestCase {
         )
         XCTAssertEqual(
             updated.yourVoteRows(in: .accessibility, refusal: nil, showsCoachMark: true),
-            BillVoteBarModel.YourVoteRows(caption: BillVoteBarModel.updatedCaption, coachMark: "Tap Vote to choose Yea, Nay or Abstain. You can change it later.")
+            BillVoteBarModel.YourVoteRows(caption: BillVoteBarModel.updatedCaption, coachMark: "Tap Vote to choose Yea, Nay or Abstain. You can change it later. \(BillYourVoteSection.privacyText)")
         )
         let notVoted = BillVoteBarModel(mode: .full, choice: nil)
         XCTAssertEqual(
@@ -541,7 +546,7 @@ final class BillVoteBarModelTests: XCTestCase {
         )
         XCTAssertEqual(
             notVoted.yourVoteRows(in: .accessibility, refusal: nil, showsCoachMark: true),
-            BillVoteBarModel.YourVoteRows(coachMark: "Tap Vote to choose Yea, Nay or Abstain. You can change it later.")
+            BillVoteBarModel.YourVoteRows(coachMark: "Tap Vote to choose Yea, Nay or Abstain. You can change it later. \(BillYourVoteSection.privacyText)")
         )
         let checking = BillVoteBarModel(mode: .full, choice: nil, isChecking: true)
         XCTAssertEqual(checking.yourVoteRows(in: .extraLarge, refusal: nil, showsCoachMark: false), .none)

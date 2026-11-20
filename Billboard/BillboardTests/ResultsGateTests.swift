@@ -110,9 +110,10 @@ final class ResultsGateTests: XCTestCase {
         await settleBillsCache(scope: scope)
     }
 
-    /// Sign-up and sign-in promise other users' votes only after the user votes (or abstains).
+    /// Sign-up and sign-in promise other users' votes only after the user votes (or abstains); sign-up promises
+    /// combined results, not each person's vote (UX-44).
     func testSignUpAndSignInSayResultsOpenAfterYouVote() {
-        XCTAssertEqual(CreateAccountView.valueBullets.last, "See how other users voted after you vote, and how your representatives voted")
+        XCTAssertEqual(CreateAccountView.valueBullets.last, "See combined results after you vote, and how your representatives voted")
         XCTAssertEqual(
             LoginView.valueLine,
             "Plain-English summaries of real bills. Vote Yea, Nay or Abstain, then see how others and your representatives voted."

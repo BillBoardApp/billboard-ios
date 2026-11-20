@@ -56,8 +56,9 @@ struct CreateAccountView: View {
     static let valueBullets = [
         "Plain-English summaries of bills in Congress, written with AI from the official text",
         "Vote Yea, Nay or Abstain on any bill",
-        // Other users' votes show only after the user votes (INT-11).
-        "See how other users voted after you vote, and how your representatives voted"
+        // Results open only after the user votes (INT-11), and show only combined counts, never one person's vote
+        // (UX-44).
+        "See combined results after you vote, and how your representatives voted"
     ]
 
     @State private var step: Step

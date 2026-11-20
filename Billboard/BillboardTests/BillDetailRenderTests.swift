@@ -527,6 +527,68 @@ final class BillDetailRenderTests: XCTestCase {
         XCTAssertEqual(BillYourVoteSection.Standing.checkFailed.text, VoteResultsFormatting.checkFailedText)
     }
 
+    /// Under "You haven't voted on this bill." a quiet line says who can see a vote (UX-44, words approved
+    /// 2026-11-19): reasons and an Abstain had privacy lines of their own and the vote itself none. It shows only
+    /// while not voted. At the accessibility sizes the coach mark, a row of Your vote above that line, ends with the
+    /// same words, so the line under it is left out while the coach mark shows: the words are never there twice.
+    func testYourVoteSaysWhoCanSeeAVote() {
+        XCTAssertEqual(BillYourVoteSection.privacyText, "Your vote is never shown with your name. Others see only combined results.")
+        XCTAssertEqual(
+            BillVoteBarModel.accessibilityCoachMarkText,
+            "Tap Vote to choose Yea, Nay or Abstain. You can change it later. Your vote is never shown with your name. Others see only combined results."
+        )
+
+        func strings(_ standing: BillYourVoteSection.Standing, coachMark: String? = nil, size: DynamicTypeSize = .large) -> [String] {
+            let section = BillYourVoteSection(
+                standing: standing,
+                isWatching: false,
+                showsReasonPicker: false,
+                selectedReasons: [],
+                reasonVoteType: nil,
+                reasonOrder: [],
+                onToggleReason: { _ in },
+                onSetWatch: { _ in },
+                movedRows: BillVoteBarModel.YourVoteRows(coachMark: coachMark)
+            )
+            return AccessibilityTreeText.strings(of: section.environment(\.dynamicTypeSize, size), size: CGSize(width: 375, height: 3000))
+        }
+        func privacyLines(_ strings: [String]) -> Int {
+            strings.filter { $0.contains(BillYourVoteSection.privacyText) }.count
+        }
+
+        let notVoted = strings(.notVoted)
+        assertInOrder(
+            [BillYourVoteSection.title, BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText, BillWatchCopy.rowTitle],
+            in: notVoted,
+            "under the not-voted line"
+        )
+        XCTAssertEqual(privacyLines(notVoted), 1, "\(notVoted)")
+        for standing in [BillYourVoteSection.Standing.checking, .checkFailed, .voted] {
+            let shown = strings(standing)
+            XCTAssertEqual(privacyLines(shown), 0, "\(standing): \(shown)")
+        }
+
+        // xxxLarge: the coach mark row keeps the panel's words, and the line stays under the not-voted line.
+        let extraLarge = strings(.notVoted, coachMark: BillVoteBarModel.coachMarkText, size: .xxxLarge)
+        assertInOrder(
+            [BillVoteBarModel.coachMarkText, BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText],
+            in: extraLarge,
+            "xxxLarge"
+        )
+        XCTAssertEqual(privacyLines(extraLarge), 1, "xxxLarge: \(extraLarge)")
+
+        // The accessibility sizes: the coach mark says it, once; after Not now the line is back.
+        let accessibility = strings(.notVoted, coachMark: BillVoteBarModel.accessibilityCoachMarkText, size: .accessibility3)
+        assertInOrder(
+            [BillVoteBarModel.accessibilityCoachMarkText, BillVoteBarModel.coachMarkDismissTitle, BillYourVoteSection.notVotedText, BillWatchCopy.rowTitle],
+            in: accessibility,
+            "AX3"
+        )
+        XCTAssertEqual(privacyLines(accessibility), 1, "AX3: \(accessibility)")
+        let dismissed = strings(.notVoted, size: .accessibility3)
+        assertInOrder([BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText], in: dismissed, "AX3 after Not now")
+    }
+
     /// The reasons picker (spec 3.13.1): "Why Yea? (optional)" as a heading, the counter read as "1 of 3
     /// chosen", the hint, and each reason a selectable tag with its id; once three are chosen the others
     /// cannot be chosen.
@@ -1890,7 +1952,7 @@ final class BillDetailRenderTests: XCTestCase {
             assertInOrder([
                 "House bill 1234. New.", "Clean Energy Reporting Act", "Official title:", "In the news", "Last updated",
                 BillSoWhatSection.title, BillBreakdownSection.title, "Who:",
-                BillYourVoteSection.title, BillYourVoteSection.notVotedText, BillWatchCopy.rowTitle,
+                BillYourVoteSection.title, BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText, BillWatchCopy.rowTitle,
                 Self.sealedNotVoted, BillVoteReasonsSection.title, VoteResultsFormatting.reasonsSealedText,
                 BillOfficialVotesSection.title, "House: 231 Yea, 196 Nay",
                 BillCommitteesSection.title, BillActionsSection.title, BillLinkSection.title, BillLinkSection.linkTitle
@@ -1909,7 +1971,10 @@ final class BillDetailRenderTests: XCTestCase {
                 BillOfficialVotesSection.title, BillCommitteesSection.title
             ], in: after, "after the vote")
             XCTAssertEqual(host.label(ofIdentifier: BillDetail.doneIdentifier), BillDetail.doneTitle)
-            for gone in [BillYourVoteSection.notVotedText, Self.sealedNotVoted, VoteResultsFormatting.sealedLabel, "Vote saved", "Watch for changes", "Not voted yet"] {
+            for gone in [
+                BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText, Self.sealedNotVoted, VoteResultsFormatting.sealedLabel,
+                "Vote saved", "Watch for changes", "Not voted yet"
+            ] {
                 XCTAssertNil(position(of: gone, in: after), "\(gone) after the vote: \(after)")
             }
         }

@@ -222,8 +222,10 @@ extension BillVoteBarModel {
     static let cancelTitle = "Cancel"
     /// The second line under the current vote's word while changing.
     static let currentVoteLine = "Your vote"
-    /// The coach mark at the accessibility sizes, where the panel holds one Vote button (spec 3.10.1).
-    static let accessibilityCoachMarkText = "Tap Vote to choose Yea, Nay or Abstain. You can change it later."
+    /// The coach mark at the accessibility sizes, where the panel holds one Vote button (spec 3.10.1), then who can
+    /// see a vote (UX-44). It is a row of Your vote there, which then leaves out its own line with those words.
+    static let accessibilityCoachMarkText = "Tap Vote to choose Yea, Nay or Abstain. You can change it later. "
+        + BillYourVoteSection.privacyText
     /// The one button at the accessibility sizes while the vote is checked.
     static let checkingTitle = "Checking…"
     static let compactHint = "Choose Yea, Nay or Abstain"
