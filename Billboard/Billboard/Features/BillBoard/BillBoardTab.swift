@@ -245,8 +245,8 @@ struct BillBoardTab: View {
     }
 
     /// Swiping a card left skips it (spec D 2.1.1): it is hidden on this device and never voted on. A
-    /// companion group's card (APPF-23) hides every member; a Passed or Failed card's unwatch waits for
-    /// the Undo window to close. The toast offers Undo for 4 seconds (10 with VoiceOver).
+    /// companion group's card (APPF-23) hides every member; a Passed or Failed card keeps its watch, as
+    /// every card does (UX-47). The toast offers Undo for 4 seconds (10 with VoiceOver).
     private func handleQueueSwipe(_ item: BillBoardItem) {
         billsStore.skipWithUndo(
             [item.skipTarget],

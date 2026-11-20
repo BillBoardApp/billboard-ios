@@ -29,8 +29,9 @@ final class NotificationSettingsStore: ObservableObject {
     }
 
     /// The settings as this device last saved them (UX-50): the master switch from its own key, and the five types
-    /// from the snapshot `persistLocalSettings` keeps. Every switch is on when nothing is saved yet.
-    private static func savedSettings(defaults: UserDefaults) -> DeviceNotificationSettings {
+    /// from the snapshot `persistLocalSettings` keeps. Every switch is on when nothing is saved yet. The bill page's
+    /// Watch row reads them too (UX-47).
+    static func savedSettings(defaults: UserDefaults) -> DeviceNotificationSettings {
         var settings = DeviceNotificationSettings.allEnabled
         if let saved = PushPresentationSettings.load(defaults: defaults) {
             settings.notifyNew = saved.notifyNew

@@ -10,8 +10,9 @@ extension BillsStore {
         applyRevoteFlagIfPresent(billID: billID)
     }
 
-    /// Remove a bill from the watchlist (e.g., after a passed bill is viewed/dismissed). For a bill in
-    /// a companion group (APPF-23) the watch is removed from every member.
+    /// Removes a bill's watch. Only the Watch control does this (`BillWatchPlan`): a vote, a Skip on Bills and a
+    /// Clear on Updates leave the watch alone (UX-47). For a bill in a companion group (APPF-23) the watch is
+    /// removed from every member.
     ///
     /// - Returns: The profile's saves (`UserStore.removeWatch(guid:)`), one per Watch row removed, for the Watch
     ///   control to say a failure (UX-48).
@@ -547,19 +548,21 @@ extension BillsStore {
 
 // MARK: - Skip and Clear (spec D 2.1.1-2.1.3)
 
-/// What one skip on Bills, or one Clear on Updates, hides. A skip is never a vote.
+/// What one skip on Bills, or one Clear on Updates, hides. A skip is never a vote, and never ends a
+/// watch: only the Watch control does (UX-47).
 enum SkipTarget: Equatable {
     /// A new or updated bill's card: every bill the card stands for is dismissed.
     case openBill(UUID)
-    /// A Passed or Failed bill (a Bills card or an Updates row): dismissed now, and its watch is
-    /// removed when the action commits (`commitSkip(_:)`), so Undo never has to re-add a watch.
+    /// A Passed or Failed bill (a Bills card or an Updates row): dismissed as an open bill's card is. Its
+    /// watch stays (UX-47): Passed is often one chamber, and a watch is what brings the next action and
+    /// Became law.
     case closedBill(UUID)
     /// An Action in Congress alert: marked read and removed from `BillAlertsStore`.
     case alert(UUID)
 }
 
 /// What a skip or Clear changed on this device, so `restoreSkip(_:readState:alertsStore:)` can put
-/// back exactly that and `commitSkip(_:)` can run the deferred unwatch. Holds no vote: none is written.
+/// back exactly that. Holds no vote and no watch: neither is changed.
 struct SkipReceipt: Equatable {
     /// Bills this action dismissed that were not dismissed before (every companion member).
     var dismissedBillIDs: [UUID] = []
@@ -567,32 +570,23 @@ struct SkipReceipt: Equatable {
     var readAlertIDs: [UUID] = []
     /// Alerts this action removed, with their positions in `BillAlertsStore`.
     var removedAlerts: [RemovedBillAlert] = []
-    /// Bills whose watch is removed when the action commits (Passed or Failed bills).
-    var pendingUnwatchBillIDs: [UUID] = []
 
     /// One receipt for a batch (Clear all registers one undo record).
     mutating func append(_ other: SkipReceipt) {
         dismissedBillIDs += other.dismissedBillIDs.filter { !dismissedBillIDs.contains($0) }
         readAlertIDs += other.readAlertIDs.filter { !readAlertIDs.contains($0) }
         removedAlerts += other.removedAlerts
-        pendingUnwatchBillIDs += other.pendingUnwatchBillIDs.filter { !pendingUnwatchBillIDs.contains($0) }
     }
 }
 
 extension BillsStore {
     /// Skips (Bills) or clears (Updates) `target` on this device and returns what changed. It never
-    /// calls `vote(...)`, the vote store or the preferences service; a Passed or Failed bill's unwatch
-    /// waits for `commitSkip(_:)`.
+    /// calls `vote(...)`, the vote store or the preferences service, and never ends a watch (UX-47).
     @discardableResult
     func skip(_ target: SkipTarget, readState: AppReadState, alertsStore: BillAlertsStore? = nil) -> SkipReceipt {
         switch target {
-        case .openBill(let billID):
+        case .openBill(let billID), .closedBill(let billID):
             return SkipReceipt(dismissedBillIDs: readState.dismissAllBills(companionMemberBillIDs(forBillID: billID)))
-        case .closedBill(let billID):
-            return SkipReceipt(
-                dismissedBillIDs: readState.dismissAllBills(companionMemberBillIDs(forBillID: billID)),
-                pendingUnwatchBillIDs: [billID]
-            )
         case .alert(let alertID):
             var receipt = SkipReceipt()
             if readState.markBillAlertRead(alertID) {
@@ -606,7 +600,7 @@ extension BillsStore {
     }
 
     /// Updates' Clear on a Passed or Failed row (spec D 2.1.3): every companion member is dismissed on
-    /// this device, no vote is written (R1 wrote Abstain here), and the unwatch waits for the commit.
+    /// this device, no vote is written (R1 wrote Abstain here), and the watch stays (UX-47).
     @discardableResult
     func clearFromUpdates(billID: UUID, readState: AppReadState) -> SkipReceipt {
         skip(.closedBill(billID), readState: readState)
@@ -630,14 +624,6 @@ extension BillsStore {
         alertsStore?.restore(receipt.removedAlerts)
     }
 
-    /// Commit: runs the deferred side effects, which are the unwatches of Passed or Failed bills
-    /// (one DELETE /preferences each, through `unwatch(billID:)`).
-    func commitSkip(_ receipt: SkipReceipt) {
-        for billID in receipt.pendingUnwatchBillIDs {
-            unwatch(billID: billID)
-        }
-    }
-
     /// Skips or clears `targets` as one action and registers it with the undo center (4 s toast; only
     /// the latest action is undoable, and a new one commits the previous). `undoCenter` nil means
     /// `UndoCenter.shared`.
@@ -649,8 +635,7 @@ extension BillsStore {
         alertsStore: BillAlertsStore? = nil,
         undoCenter: UndoCenter? = nil
     ) -> SkipReceipt {
-        // Commit the previous action before this one changes anything, so its commit never sees this
-        // action's dismissals.
+        // End the previous action's Undo before this one changes anything.
         let center = undoCenter ?? .shared
         center.commitPending()
         var receipt = SkipReceipt()
@@ -661,7 +646,8 @@ extension BillsStore {
         return receipt
     }
 
-    /// Registers `receipt` as the undoable action: Undo calls `restoreSkip`, commit calls `commitSkip`.
+    /// Registers `receipt` as the undoable action: Undo calls `restoreSkip`. Nothing waits for the
+    /// window to close: the change is made, and a watch is never ended (UX-47).
     func registerUndo(
         for receipt: SkipReceipt,
         message: SkipUndoMessage,
@@ -675,9 +661,6 @@ extension BillsStore {
             undo: { [weak self, weak readState, weak alertsStore] in
                 guard let self, let readState else { return }
                 self.restoreSkip(receipt, readState: readState, alertsStore: alertsStore)
-            },
-            commit: { [weak self] in
-                self?.commitSkip(receipt)
             }
         ))
     }

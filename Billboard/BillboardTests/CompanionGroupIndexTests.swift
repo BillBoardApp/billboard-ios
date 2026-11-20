@@ -385,7 +385,6 @@ final class CompanionGroupIndexTests: XCTestCase {
         XCTAssertEqual(voteStore.vote(for: Self.house), .unknown)
         XCTAssertEqual(readState.dismissedBillIDs, [UUID.deterministic(from: Self.house), UUID.deterministic(from: Self.senate)])
         XCTAssertEqual(Set(receipt.dismissedBillIDs), readState.dismissedBillIDs)
-        XCTAssertEqual(receipt.pendingUnwatchBillIDs, [])
         XCTAssertFalse(store.isVoted(billID: UUID.deterministic(from: Self.house)))
         _ = scope
     }
@@ -426,7 +425,7 @@ final class CompanionGroupIndexTests: XCTestCase {
         _ = scope
     }
 
-    // MARK: - Updates: Clear (spec D 2.1.3: Clear never votes; the unwatch waits for the commit)
+    // MARK: - Updates: Clear (spec D 2.1.3: Clear never votes, and never ends a watch, UX-47)
 
     @MainActor
     func testClearingAPassedMemberFromUpdatesKeepsTheVoteOnTheOtherMember() async {
@@ -439,18 +438,14 @@ final class CompanionGroupIndexTests: XCTestCase {
         _ = await store.vote(billID: UUID.deterministic(from: Self.house), vote: .yea, watch: true)?.value
         let readState = AppReadState(scope: .user("companion-tests"), store: InMemoryReadStateStore())
 
-        let receipt = store.clearFromUpdates(billID: UUID.deterministic(from: Self.senate), readState: readState)
+        store.clearFromUpdates(billID: UUID.deterministic(from: Self.senate), readState: readState)
 
         XCTAssertEqual(votes.setFeedbackCalls, [.init(billId: Self.house, feedback: .yea, reasons: [])], "no Abstain")
         XCTAssertEqual(voteStore.vote(for: Self.house), .voted(.yea))
         XCTAssertEqual(store.bill(forGUID: Self.house)?.userVote, .yea)
         XCTAssertTrue(store.isVoted(billID: UUID.deterministic(from: Self.house)))
         XCTAssertEqual(readState.dismissedBillIDs, [UUID.deterministic(from: Self.senate), UUID.deterministic(from: Self.house)])
-        XCTAssertTrue(store.isWatched(billID: UUID.deterministic(from: Self.house)), "the unwatch waits for the Undo window")
-
-        store.commitSkip(receipt)
-
-        XCTAssertFalse(store.isWatched(billID: UUID.deterministic(from: Self.house)), "the commit unwatches the group")
+        XCTAssertTrue(store.isWatched(billID: UUID.deterministic(from: Self.house)), "the group keeps its watch (UX-47)")
         XCTAssertEqual(votes.setFeedbackCalls.count, 1)
         await settle(scope: scope)
     }
@@ -465,7 +460,7 @@ final class CompanionGroupIndexTests: XCTestCase {
         await voteStore.setVote(billId: Self.senate, vote: .nay)
         let readState = AppReadState(scope: .user("companion-tests"), store: InMemoryReadStateStore())
 
-        store.commitSkip(store.clearFromUpdates(billID: UUID.deterministic(from: Self.house), readState: readState))
+        store.clearFromUpdates(billID: UUID.deterministic(from: Self.house), readState: readState)
         await Task.yield()
 
         XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.nay], "no Abstain on either member")
@@ -485,35 +480,30 @@ final class CompanionGroupIndexTests: XCTestCase {
         let readState = AppReadState(scope: .user("companion-tests"), store: InMemoryReadStateStore())
 
         let receipt = store.clearFromUpdates(billID: UUID.deterministic(from: Self.senate), readState: readState)
-        store.commitSkip(receipt)
         await Task.yield()
 
         XCTAssertEqual(votes.setFeedbackCalls, [])
         XCTAssertEqual(voteStore.vote(for: Self.house), .unknown)
         XCTAssertEqual(Set(readState.dismissedBillIDs), [UUID.deterministic(from: Self.house), UUID.deterministic(from: Self.senate)])
-        XCTAssertEqual(receipt.pendingUnwatchBillIDs, [UUID.deterministic(from: Self.senate)])
+        XCTAssertEqual(Set(receipt.dismissedBillIDs), readState.dismissedBillIDs)
         _ = scope
     }
 
     @MainActor
-    func testClearingAnUngroupedBillFromUpdatesWritesNoVoteAndUnwatchesOnCommit() async {
+    func testClearingAnUngroupedBillFromUpdatesWritesNoVoteAndKeepsTheWatch() async {
         let votes = FakeBillVotesService()
         var passed = bill("BILLS-119hr1", status: .passed)
         passed.userWatched = true
         let (store, _, scope) = await makeCompanionStore(bills: [passed], groups: [], votes: votes)
         let readState = AppReadState(scope: .user("companion-tests"), store: InMemoryReadStateStore())
 
-        let receipt = store.clearFromUpdates(billID: passed.id, readState: readState)
-
-        XCTAssertEqual(readState.dismissedBillIDs, [passed.id])
-        XCTAssertTrue(store.isWatched(billID: passed.id), "watched until the commit")
-
-        store.commitSkip(receipt)
+        store.clearFromUpdates(billID: passed.id, readState: readState)
         await Task.yield()
 
+        XCTAssertEqual(readState.dismissedBillIDs, [passed.id])
         XCTAssertEqual(votes.setFeedbackCalls, [], "no Abstain")
-        XCTAssertFalse(store.isWatched(billID: passed.id))
-        await settle(scope: scope)
+        XCTAssertTrue(store.isWatched(billID: passed.id), "only the Watch control ends a watch (UX-47)")
+        _ = scope
     }
 
     @MainActor
@@ -599,7 +589,7 @@ final class CompanionGroupIndexTests: XCTestCase {
             refreshed.append(feed(dismissedBillIDs: ids))
         }
 
-        store.commitSkip(store.clearFromUpdates(billID: house.id, readState: readState))
+        store.clearFromUpdates(billID: house.id, readState: readState)
 
         XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.abstain], "only the earlier Abstain; the Clear wrote nothing")
         XCTAssertEqual(refreshed.count, 1, "nothing else publishes")

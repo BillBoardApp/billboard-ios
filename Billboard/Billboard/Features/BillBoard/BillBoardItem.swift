@@ -44,7 +44,8 @@ struct BillBoardItem: Identifiable, Sendable {
 // MARK: - Skip (spec D 2.1.1)
 
 extension BillBoardItem {
-    /// What swiping the card left (or its Skip action) hides. Never a vote.
+    /// What swiping the card left (or its Skip action) hides. Never a vote, and never the end of a watch
+    /// (UX-47).
     var skipTarget: SkipTarget {
         switch type {
         case .bill, .updated:
