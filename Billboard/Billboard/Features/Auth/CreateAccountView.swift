@@ -57,8 +57,8 @@ struct CreateAccountView: View {
         "Plain-English summaries of bills in Congress, written with AI from the official text",
         "Vote Yea, Nay or Abstain on any bill",
         // Results open only after the user votes (INT-11), and show only combined counts, never one person's vote
-        // (UX-44).
-        "See combined results after you vote, and how your representatives voted"
+        // (UX-44). The words approved on 2026-11-19, with their full stop.
+        "See combined results after you vote, and how your representatives voted."
     ]
 
     @State private var step: Step
