@@ -114,6 +114,47 @@ final class FormErrorAnnouncementTests: XCTestCase {
         XCTAssertEqual(spoken.lines, [AuthErrorMessages.wrongCredentials])
     }
 
+    /// Under a pushed screen, Sign in's line still follows the shared sign-in state: Create account's own sign-in into
+    /// the new account toggles it, and that screen says its own error. The hidden line stays quiet, and is not said
+    /// again when Sign in shows again.
+    func testSignInStaysQuietUnderAPushedScreen() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let spoken = SpokenLines()
+        let auth = AuthManager(status: .error(AuthErrorMessages.wrongCredentials))
+        let host = AccessibilityTreeText.Host(
+            NavigationStack { LoginView() }
+                .environmentObject(auth)
+                .environment(\.announceToVoiceOver, spoken.announce),
+            size: CGSize(width: 390, height: 844),
+            settle: 0.3,
+            scene: scene
+        )
+        defer { host.close() }
+        let navigation = try XCTUnwrap(host.navigationController, "the stack's navigation controller")
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.wrongCredentials])
+
+        XCTAssertTrue(host.activate("Forgot password?"), host.text())
+        XCTAssertTrue(host.run(untilSettled: { navigation.viewControllers.count == 2 }), "Forgot password pushed")
+        // A sign-in started from the pushed screen ends with the same error.
+        auth.isBusy = true
+        host.run(0.2)
+        auth.isBusy = false
+        host.run(0.3)
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.wrongCredentials], "the hidden line says nothing")
+
+        navigation.popViewController(animated: false)
+        XCTAssertTrue(host.run(untilSettled: { navigation.viewControllers.count == 1 }), "back on Sign in")
+        host.run(0.3)
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.wrongCredentials], "nor once Sign in shows again")
+
+        // Sign in's own next try is said again.
+        auth.isBusy = true
+        host.run(0.1)
+        auth.isBusy = false
+        host.run(0.1)
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.wrongCredentials, AuthErrorMessages.wrongCredentials])
+    }
+
     /// Create account says its error, not the field's "Passwords don't match.", which shows too.
     func testCreateAccountSaysItsErrorButNotTheFieldHint() {
         let spoken = SpokenLines()
