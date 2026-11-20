@@ -582,6 +582,72 @@ final class VoteRefusalRollbackTests: XCTestCase {
         XCTAssertEqual(BillDetail.refusalFocusDelay, 0.25, accuracy: 0.001, "after the 0.2 s cross-fade back")
     }
 
+    /// A companion group whose vote row is held under a member's legacy text-version guid: votes and reasons from the
+    /// other member's page go to that guid, and the vote store files their errors there. The page still finds them: a
+    /// failed reasons update shows in the banner, and a refused change's strip has the daily limit's words, not the
+    /// fallback.
+    func testAGroupPageFindsAnErrorFiledUnderTheLegacyGuidItVotedOn() {
+        let house = "BILLS-119hr900"
+        let legacy = "BILLS-119s456is"
+        let group = BillCompanionGroup(primaryGuid: house, memberGuids: [house, "BILLS-119s456"], relationship: "identical")
+        let houseBill = Bill(
+            id: UUID.deterministic(from: house),
+            title: "Bill \(house)",
+            category: "Other",
+            soWhat: "",
+            storedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60 * 60)),
+            link: "https://www.govinfo.gov/app/details/BILLS-119hr900ih",
+            billStatus: .new,
+            guid: house,
+            userVoted: false,
+            isPriority: true
+        )
+        let votes = FakeBillVotesService()
+        votes.setFeedbackError = backendError("VOTE_DAILY_LIMIT")
+        let scope = "legacy-guid-page-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let service = FakeBillsService()
+        service.cachedGroups = [group]
+        service.cachedManifest = []
+        let store = BillsStore(
+            bills: [houseBill, companionTestBill(legacy, userVote: .nay)],
+            cacheScope: scope,
+            service: service,
+            preferencesService: FakePreferencesService()
+        )
+        let voteStore = BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil)), service: votes)
+        store.connect(voteStore: voteStore)
+        // The groups come from the cache; the hosted page needs the main run loop, which an async test holds.
+        Task { await store.restoreCachedStateIfNeeded() }
+        let deadline = Date().addingTimeInterval(5)
+        while store.companionVote(forBillID: houseBill.id) == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(store.companionVote(forBillID: houseBill.id)?.targetGuid, legacy, "precondition: the row sits on the legacy guid")
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(houseBill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            votes.setFeedbackOutcomes = [URLError(.timedOut)]
+            Task { await voteStore.updateReasons(billId: legacy, vote: .nay, reasons: [.education]) }
+            XCTAssertTrue(host.run(until: { host.strings().contains(BillVoteStore.reasonsNotSavedMessage) }), "in the banner: \(host.text())")
+            voteStore.lastError = nil
+            host.run(0.3)
+
+            XCTAssertTrue(host.activate("Change your vote", settle: 0.6), host.text())
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.billId), [legacy, legacy], "the change went to the row's guid")
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) != nil }), host.text())
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: \(AuthErrorMessages.voteDailyLimit)")
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
     /// The strip itself (in the panel and as a row of Your vote): the refusal's own text, read "Error: …".
     func testTheRefusalStripCarriesTheRefusalsText() {
         for placement in [VoteStrip.Placement.panel, .page] {
