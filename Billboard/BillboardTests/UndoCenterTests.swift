@@ -4,10 +4,10 @@ import UIKit
 import XCTest
 @testable import Billboard
 
-/// `UndoCenter` (spec D 2.1.2): only the latest action is undoable; it commits once on the
-/// earliest of its timer (4 s, or 10 s while VoiceOver or Switch Control runs, Civic Record spec 3.19),
-/// a newer action, the app entering the background or an explicit `commitPending()`; `undo()` restores
-/// it and its commit never runs.
+/// `UndoCenter` (spec D 2.1.2): only the latest action is undoable; its window closes (the change
+/// stands, and Undo goes) on the earliest of its timer (4 s, or 10 s while VoiceOver or Switch Control
+/// runs, Civic Record spec 3.19), a newer action, the app entering the background or an explicit
+/// `commitPending()`; `undo()` restores it, once.
 @MainActor
 final class UndoCenterTests: XCTestCase {
     /// A scheduler the test fires by hand.
@@ -70,8 +70,7 @@ final class UndoCenterTests: XCTestCase {
         func action(_ name: String, message: String? = nil) -> UndoAction {
             UndoAction(
                 message: message ?? "Skipped \(name)",
-                undo: { [unowned self] in self.events.append("undo \(name)") },
-                commit: { [unowned self] in self.events.append("commit \(name)") }
+                undo: { [unowned self] in self.events.append("undo \(name)") }
             )
         }
 
@@ -143,66 +142,72 @@ final class UndoCenterTests: XCTestCase {
 
     // MARK: - Commit
 
-    func testTimerExpiryCommitsOnce() {
+    func testTimerExpiryEndsTheWindow() {
         let h = Harness()
         h.center.register(h.action("A"))
 
         h.scheduler.fire(0)
-        XCTAssertEqual(h.events, ["commit A"])
         XCTAssertNil(h.center.toast)
         XCTAssertFalse(h.center.hasPendingAction)
 
         h.scheduler.fireIgnoringCancellation(0)
-        XCTAssertEqual(h.events, ["commit A"], "a late timer never commits twice")
+        h.center.undo()
+        XCTAssertEqual(h.events, [], "the change stands: nothing is left to undo")
     }
 
-    func testNewActionCommitsThePreviousOne() {
+    func testNewActionEndsThePreviousOnesWindow() {
         let h = Harness()
         h.center.register(h.action("A"))
         h.center.register(h.action("B"))
 
-        XCTAssertEqual(h.events, ["commit A"])
         XCTAssertEqual(h.center.toast?.message, "Skipped B")
         XCTAssertTrue(h.scheduler.entries[0].isCancelled, "the first timer is cancelled")
 
         h.center.undo()
-        XCTAssertEqual(h.events, ["commit A", "undo B"], "only the latest action is undoable")
+        h.center.undo()
+        XCTAssertEqual(h.events, ["undo B"], "only the latest action is undoable")
     }
 
-    func testStaleTimerDoesNotCommitANewerAction() {
+    func testStaleTimerDoesNotEndANewerActionsWindow() {
         let h = Harness()
         h.center.register(h.action("A"))
         h.center.register(h.action("B"))
 
         h.scheduler.fireIgnoringCancellation(0)
-        XCTAssertEqual(h.events, ["commit A"], "A's timer leaves B pending")
-        XCTAssertEqual(h.center.toast?.message, "Skipped B")
+        XCTAssertEqual(h.center.toast?.message, "Skipped B", "A's timer leaves B pending")
+        XCTAssertTrue(h.center.hasPendingAction)
 
         h.scheduler.fire(1)
-        XCTAssertEqual(h.events, ["commit A", "commit B"])
+        XCTAssertNil(h.center.toast)
+        XCTAssertFalse(h.center.hasPendingAction)
+        XCTAssertEqual(h.events, [])
     }
 
-    func testEnteringBackgroundCommits() {
+    func testEnteringBackgroundEndsTheWindow() {
         let h = Harness()
         h.center.register(h.action("A"))
 
         h.postBackground()
 
-        XCTAssertEqual(h.events, ["commit A"])
         XCTAssertNil(h.center.toast)
+        XCTAssertFalse(h.center.hasPendingAction)
+        h.center.undo()
+        XCTAssertEqual(h.events, [])
     }
 
-    func testCommitPendingCommitsNowAndCancelsTheTimer() {
+    func testCommitPendingEndsTheWindowNowAndCancelsTheTimer() {
         let h = Harness()
         h.center.register(h.action("A"))
 
         h.center.commitPending()
-        XCTAssertEqual(h.events, ["commit A"])
+        XCTAssertNil(h.center.toast)
+        XCTAssertFalse(h.center.hasPendingAction)
         XCTAssertTrue(h.scheduler.entries[0].isCancelled)
 
         h.scheduler.fire(0)
         h.center.commitPending()
-        XCTAssertEqual(h.events, ["commit A"])
+        h.center.undo()
+        XCTAssertEqual(h.events, [])
     }
 
     func testNothingPendingIsANoOp() {
@@ -217,7 +222,7 @@ final class UndoCenterTests: XCTestCase {
 
     // MARK: - Undo
 
-    func testUndoRestoresAndTheCommitNeverRuns() {
+    func testUndoRestoresOnce() {
         let h = Harness()
         h.center.register(h.action("A"))
 
@@ -240,12 +245,12 @@ final class UndoCenterTests: XCTestCase {
         h.center.register(h.action("B"))
 
         h.center.undo(toastID: firstToastID)
-        XCTAssertEqual(h.events, ["commit A"], "B is neither undone nor committed")
+        XCTAssertEqual(h.events, [], "B is not undone")
         XCTAssertEqual(h.center.toast?.message, "Skipped B")
 
         let secondToastID = try XCTUnwrap(h.center.toast?.id)
         h.center.undo(toastID: secondToastID)
-        XCTAssertEqual(h.events, ["commit A", "undo B"])
+        XCTAssertEqual(h.events, ["undo B"])
     }
 
     /// Undo keeps its light haptic (Civic Record spec 3.19, 5.2): the toast host plays it whenever
@@ -278,31 +283,10 @@ final class UndoCenterTests: XCTestCase {
         XCTAssertEqual(h.center.undoCount, 1, "a toast that has gone undoes nothing and plays nothing")
         h.center.undo(toastID: try XCTUnwrap(h.center.toast?.id))
         XCTAssertEqual(h.center.undoCount, 2)
-        XCTAssertEqual(h.events, ["undo A", "commit B", "commit C", "commit D", "undo E"])
+        XCTAssertEqual(h.events, ["undo A", "undo E"])
     }
 
     // MARK: - Re-entrancy
-
-    func testActionRegisteredByACommitIsCommittedBeforeTheNewOne() {
-        let h = Harness()
-        let center = h.center!
-        center.register(UndoAction(
-            message: "Skipped A",
-            undo: { h.events.append("undo A") },
-            commit: {
-                h.events.append("commit A")
-                center.register(UndoAction(
-                    message: "Skipped C",
-                    undo: { h.events.append("undo C") },
-                    commit: { h.events.append("commit C") }
-                ))
-            }
-        ))
-        center.register(h.action("B"))
-
-        XCTAssertEqual(h.events, ["commit A", "commit C"], "nothing is left neither committed nor undone")
-        XCTAssertEqual(center.toast?.message, "Skipped B")
-    }
 
     func testUndoClosureMayRegisterANewAction() {
         let h = Harness()
@@ -311,15 +295,16 @@ final class UndoCenterTests: XCTestCase {
             message: "Skipped A",
             undo: {
                 h.events.append("undo A")
-                center.register(UndoAction(message: "Restored A", undo: {}, commit: { h.events.append("commit restore") }))
-            },
-            commit: { h.events.append("commit A") }
+                center.register(UndoAction(message: "Restored A", undo: { h.events.append("undo restore") }))
+            }
         ))
 
         center.undo()
         XCTAssertEqual(center.toast?.message, "Restored A")
         center.commitPending()
-        XCTAssertEqual(h.events, ["undo A", "commit restore"])
+        XCTAssertNil(center.toast)
+        center.undo()
+        XCTAssertEqual(h.events, ["undo A"], "the restore stands")
     }
 
     // MARK: - Where the toast goes
@@ -335,10 +320,11 @@ final class UndoCenterTests: XCTestCase {
         BillDetail.endUndoWindow(center: center)
         XCTAssertNil(center.toast)
         XCTAssertFalse(center.hasPendingAction)
-        XCTAssertEqual(h.events, ["commit B"], "the skip stands and its deferred side effects run")
+        center.undo()
+        XCTAssertEqual(h.events, [], "the skip stands")
 
         BillDetail.endUndoWindow(center: center)
-        XCTAssertEqual(h.events, ["commit B"], "nothing pending is a no-op")
+        XCTAssertNil(center.toast, "nothing pending is a no-op")
     }
 
     /// Spec D 2.1.2: Undo gets focus priority while VoiceOver runs. The tab shell's host moves focus
@@ -384,8 +370,7 @@ final class UndoCenterTests: XCTestCase {
         await fulfillment(of: [fired], timeout: 0.3)
     }
 
-    func testRealTimerCommitsAfterTheWindow() async {
-        let committed = expectation(description: "committed")
+    func testRealTimerEndsTheWindow() async {
         let center = UndoCenter(
             scheduler: ShortScheduler(),
             notificationCenter: NotificationCenter(),
@@ -393,9 +378,12 @@ final class UndoCenterTests: XCTestCase {
             isSwitchControlRunning: { false },
             announce: { _ in }
         )
-        center.register(UndoAction(message: "Skipped A", undo: {}, commit: { committed.fulfill() }))
+        center.register(UndoAction(message: "Skipped A", undo: {}))
         XCTAssertNotNil(center.toast)
-        await fulfillment(of: [committed], timeout: 2)
+        for _ in 0..<200 where center.hasPendingAction {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(center.hasPendingAction)
         XCTAssertNil(center.toast)
     }
 
