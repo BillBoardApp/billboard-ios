@@ -372,8 +372,11 @@ struct CongressMemberProfileLoaderView: View {
     @State private var errorMessage: String?
     @State private var civicProfileMode: CongressMemberCivicProfileCardMode = .unavailable
     /// "Couldn't unfollow this member.": the latest Follow tap's save failed and the follows were put back. It
-    /// stays until the next tap (UX-48).
+    /// stays under the front matter until the next tap (UX-48).
     @State private var followError: String?
+    /// The same words in the top banner, under the toolbar's Follow, which shows and says them ("Error: …") in every
+    /// state of the page: the front matter is off screen once the page is scrolled.
+    @State private var followBannerError: String?
     /// The latest Follow tap, so an earlier one's failure is not shown after it.
     @State private var latestFollowTap = UUID()
 
@@ -385,12 +388,15 @@ struct CongressMemberProfileLoaderView: View {
     private func toggleFollow() {
         let following = !isSubscribed
         followError = nil
+        followBannerError = nil
         let tap = UUID()
         latestFollowTap = tap
         let save = userStore.toggleMemberSubscription(manifestId: manifest.id)
         Task {
             guard await !save.value, latestFollowTap == tap else { return }
-            followError = CongressFollowToolbarButton.saveFailedText(isFollowing: following)
+            let failure = CongressFollowToolbarButton.saveFailedText(isFollowing: following)
+            followError = failure
+            followBannerError = failure
         }
     }
 
@@ -413,8 +419,11 @@ struct CongressMemberProfileLoaderView: View {
                     .navigationTitle(manifest.name)
             }
         }
-        // A failed Follow is said here, in every state of the page; the loaded page also shows it (UX-48).
-        .announcesToVoiceOver(followError)
+        // A failed Follow shows and is said under the toolbar's Follow, in every state of the page; the loaded page
+        // also keeps it under the front matter (UX-48).
+        .overlay(alignment: .top) {
+            BBErrorBanner(message: $followBannerError)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .glassNavigationBar()
         .toolbar {
@@ -636,7 +645,7 @@ struct CongressMemberPageContent: View {
     let member: CongressMember
     let civicProfileMode: CongressMemberCivicProfileCardMode
     /// "Couldn't follow this member." under the front matter, after a Follow whose save failed (UX-48). The
-    /// loader says it to VoiceOver, so it is said while the page is loading too.
+    /// loader's top banner says it to VoiceOver, so it is said while the page is loading too.
     var followError: String? = nil
     /// Told where the front matter ends, in the page's coordinates, for the bar's title.
     var onNameBottomChange: ((CGFloat) -> Void)? = nil

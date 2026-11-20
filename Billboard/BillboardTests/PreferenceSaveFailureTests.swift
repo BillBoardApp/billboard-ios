@@ -113,6 +113,31 @@ final class PreferenceSaveFailureTests: XCTestCase {
         }
     }
 
+    /// The toolbar's Watch: the Watch row is usually off screen, so the failure also shows in the top banner, under the
+    /// button, which says it ("Error: …"). The row's line shows too and stays quiet, so it is said once.
+    func testTheBillPageShowsAFailedToolbarStopInTheBanner() {
+        let page = billPage(failing: true)
+        let spoken = SpokenLines()
+        APIClient.$current.withValue(Self.offlineClient()) {
+            let host = AccessibilityTreeText.Host(page.view.environment(\.announceToVoiceOver, spoken.announce), size: CGSize(width: 390, height: 5000), settle: 0.5)
+            defer { host.close() }
+            let watching = host.value(ofIdentifier: BillWatchCopy.rowIdentifier)
+            XCTAssertFalse(host.strings().contains("Couldn't stop watching this bill."), "no error before the tap")
+
+            XCTAssertTrue(host.activate(identifier: BillWatchCopy.toolbarIdentifier), "the toolbar's Watch: \(host.text())")
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillWatchCopy.errorIdentifier) != nil }), host.text())
+
+            XCTAssertEqual(host.label(ofIdentifier: BillWatchCopy.errorIdentifier), "Couldn't stop watching this bill.")
+            let banner = host.elements().filter { $0.label == "Couldn't stop watching this bill." && $0.identifier != BillWatchCopy.errorIdentifier }
+            XCTAssertEqual(banner.count, 1, "and the banner: \(host.text())")
+            XCTAssertEqual(page.preferences.deleteCalls.count, 1, "the stop was sent")
+            XCTAssertEqual(page.user.profile.watchedBillGUIDs, [Self.guid], "the watch is back")
+            XCTAssertEqual(host.value(ofIdentifier: BillWatchCopy.rowIdentifier), watching, "the toggle shows it")
+            host.run(0.3)
+            XCTAssertEqual(spoken.lines, [], "the banner says it; the row's line stays quiet")
+        }
+    }
+
     func testTheBillPageSaysNothingMoreWhenTheStopSaves() throws {
         let page = billPage(failing: false)
         let spoken = SpokenLines()
@@ -177,9 +202,10 @@ final class PreferenceSaveFailureTests: XCTestCase {
         XCTAssertEqual(spoken.lines, [text])
     }
 
-    /// The member page says a failed Follow in every state (here, before the member has loaded); once the page shows,
-    /// the line is under the front matter and is not said again.
-    func testTheMemberPageSaysAFailedFollow() throws {
+    /// The member page shows a failed Follow in the top banner, under the toolbar's Follow, in every state (here,
+    /// before the member has loaded); the banner says it ("Error: …"), so nothing else does. Once the page shows, the
+    /// line is also under the front matter, and is not said again.
+    func testTheMemberPageShowsAFailedFollowUnderTheToolbar() throws {
         let preferences = FakePreferencesService()
         preferences.putError = Self.offline
         let user = UserStore(preferencesService: preferences, congressService: FakeCongressService())
@@ -197,14 +223,14 @@ final class PreferenceSaveFailureTests: XCTestCase {
             XCTAssertTrue(host.run(until: { host.strings().contains { $0.contains(CongressMemberLoadErrorView.title) } }), host.text())
 
             XCTAssertTrue(host.activate(CongressFollowToolbarButton.accessibilityLabel(isFollowing: false)), host.text())
-            XCTAssertTrue(host.run(until: { !spoken.lines.isEmpty }), host.text())
-            XCTAssertEqual(spoken.lines, ["Couldn't follow this member."])
+            XCTAssertTrue(host.run(until: { host.strings().contains("Couldn't follow this member.") }), "in the banner: \(host.text())")
             XCTAssertEqual(user.profile.subscribedMemberIDs, [], "put back")
 
             XCTAssertTrue(host.activate(MemberBasicProfileButton.title), host.text())
             XCTAssertTrue(host.run(until: { host.label(ofIdentifier: CongressFollowToolbarButton.errorIdentifier) != nil }), host.text())
             XCTAssertEqual(host.label(ofIdentifier: CongressFollowToolbarButton.errorIdentifier), "Couldn't follow this member.")
-            XCTAssertEqual(spoken.lines, ["Couldn't follow this member."], "said once")
+            host.run(0.5)
+            XCTAssertEqual(spoken.lines, [], "the banner says it, once; the line under the front matter stays quiet")
         }
     }
 
