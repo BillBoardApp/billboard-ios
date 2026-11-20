@@ -1,12 +1,13 @@
 import SwiftUI
 
 /// Your vote (Civic Record spec 3.13, 4.35): a ruled section between the bill's text and its Results. It
-/// opens with "You haven't voted on this bill." until a vote is held ("Checking your vote…" while the vote
-/// is read, "Couldn't check your vote on this bill." when that read failed), then the companion notes, the
-/// Watch row and, after a vote made here, the optional reasons picker (its small form after an Abstain). The
-/// vote itself is not repeated here at the default sizes: the vote panel (`BillVoteBar`) shows it, on every bill
-/// page, a decided bill's too (Civic Record project decision 1). R2's "Vote saved" label, the vote badge and the
-/// "Watch for changes" nudge are gone (project decision 9): the Watch row is in this section. No teal anywhere in it.
+/// opens with "You haven't voted on this bill." and, under it, who can see a vote (UX-44) until a vote is held
+/// ("Checking your vote…" while the vote is read, "Couldn't check your vote on this bill." when that read
+/// failed), then the companion notes, the Watch row and, after a vote made here, the optional reasons picker
+/// (its small form after an Abstain). The vote itself is not repeated here at the default sizes: the vote panel
+/// (`BillVoteBar`) shows it, on every bill page, a decided bill's too (Civic Record project decision 1). R2's
+/// "Vote saved" label, the vote badge and the "Watch for changes" nudge are gone (project decision 9): the Watch
+/// row is in this section. No teal anywhere in it.
 ///
 /// From xxxLarge up the panel's strips come here, first, in the panel's order (`movedRows`, spec 3.10, 3.13):
 /// the refused vote's reason, the `.updatedOnly` caption, the coach mark; at the accessibility sizes the full
@@ -66,6 +67,10 @@ struct BillYourVoteSection: View {
 
     static let title = "Your vote"
     static let notVotedText = "You haven't voted on this bill."
+    /// The quiet line under "You haven't voted on this bill.": who can see a Yea, Nay or Abstain (UX-44, words
+    /// approved 2026-11-19). Reasons and an Abstain had privacy lines of their own and the vote itself had none,
+    /// which suggested it was not private. It names no minimum count.
+    static let privacyText = "Your vote is never shown with your name. Others see only combined results."
     static let checkingText = "Checking your vote…"
     /// The section's scroll anchor: after a vote made on the page, its title goes to the top (spec 3.13).
     static let anchorID = "bill.yourVote"
@@ -82,6 +87,14 @@ struct BillYourVoteSection: View {
                 if let line = standing.text {
                     Text(line)
                         .textRole(.body)
+                        .foregroundStyle(BillboardColors.secondaryText)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if showsPrivacyLine {
+                    Text(Self.privacyText)
+                        .textRole(.caption)
                         .foregroundStyle(BillboardColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -121,6 +134,13 @@ struct BillYourVoteSection: View {
                 }
             }
         }
+    }
+
+    /// The privacy line shows under "You haven't voted on this bill.", except while the coach mark above it already
+    /// ends with the same words (at the accessibility sizes, `BillVoteBarModel.accessibilityCoachMarkText`), so the
+    /// section never says them twice.
+    private var showsPrivacyLine: Bool {
+        standing == .notVoted && movedRows.coachMark?.hasSuffix(Self.privacyText) != true
     }
 
     /// The panel's rows, as slips of their own, then the full stamp.
