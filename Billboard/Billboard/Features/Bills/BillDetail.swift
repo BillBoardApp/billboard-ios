@@ -237,12 +237,6 @@ struct BillDetail: View {
         TabCapsuleLayout.bottomMargin(safeAreaBottom: safeAreaBottom) - safeAreaBottom
     }
 
-    /// Posts `text` for VoiceOver as a queued announcement, so it waits for the current speech (spec 3.10.3).
-    static func postQueuedAnnouncement(_ text: String) {
-        let announcement = NSAttributedString(string: text, attributes: [.accessibilitySpeechQueueAnnouncement: true])
-        UIAccessibility.post(notification: .announcement, argument: announcement)
-    }
-
     /// Opening a bill ends the undo window (spec D 2.1.2): every bill page pins the vote panel at the
     /// bottom edge where the undo toast sits (the tab capsule leaves the bill page), so the toast would
     /// cover Yea, Nay and Abstain, and a tap on Abstain would land on Undo. The pending skip or Clear
@@ -499,7 +493,7 @@ private struct BillDetailContent: View {
             voteFocus = focus
         }
         if let announcement = plan.announcement {
-            BillDetail.postQueuedAnnouncement(announcement)
+            VoiceOverAnnouncement.postQueued(announcement)
         }
     }
 

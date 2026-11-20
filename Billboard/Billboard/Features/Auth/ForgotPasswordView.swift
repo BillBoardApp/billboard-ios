@@ -36,13 +36,15 @@ struct ForgotPasswordView: View {
         email: String = "",
         code: String = "",
         newPassword: String = "",
-        confirmNewPassword: String = ""
+        confirmNewPassword: String = "",
+        errorMessage: String? = nil
     ) {
         _step = State(initialValue: step)
         _email = State(initialValue: email)
         _confirmationCode = State(initialValue: code)
         _newPassword = State(initialValue: newPassword)
         _confirmNewPassword = State(initialValue: confirmNewPassword)
+        _errorMessage = State(initialValue: errorMessage)
     }
 
     private var sendCodeButton: FormButtonState {
@@ -170,7 +172,7 @@ struct ForgotPasswordView: View {
                 }
 
                 if let errorMessage {
-                    RecordErrorText(errorMessage)
+                    RecordErrorText(errorMessage, announces: true)
                 }
             }
             // The 20 pt gutter of the screens before the tabs (spec 4.10).

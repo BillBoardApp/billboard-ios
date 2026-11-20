@@ -170,9 +170,11 @@ struct TopicPickerView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(context: Context, onDone: @escaping () -> Void) {
+    /// `errorMessage` starts the picker with that line at its foot (tests); the app opens it without one.
+    init(context: Context, errorMessage: String? = nil, onDone: @escaping () -> Void) {
         self.context = context
         self.onDone = onDone
+        _errorMessage = State(initialValue: errorMessage)
     }
 
     private var isFirstVote: Bool {
@@ -218,7 +220,7 @@ struct TopicPickerView: View {
                 lifeAreasSection(currentModel)
 
                 if let errorMessage {
-                    RecordErrorText(errorMessage)
+                    RecordErrorText(errorMessage, announces: true)
                         .accessibilityIdentifier("topicPicker.error")
                 }
             }

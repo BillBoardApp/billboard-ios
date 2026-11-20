@@ -38,9 +38,11 @@ final class AuthManager: ObservableObject {
     /// The first-launch attestation started when the auth state was first known (C3 3.10). Tests await it.
     private(set) var appAttestPrepareTask: Task<Void, Never>?
 
-    init(appAttest: (any AppAttestManaging)? = nil, updateSignal: AppUpdateRequiredSignal? = nil) {
+    /// `status` starts the manager there (tests, for a sign-in error); the app starts it loading.
+    init(appAttest: (any AppAttestManaging)? = nil, updateSignal: AppUpdateRequiredSignal? = nil, status: Status = .loading) {
         appAttestOverride = appAttest
         self.updateSignal = updateSignal ?? .shared
+        self.status = status
     }
 
     private var appAttest: any AppAttestManaging {

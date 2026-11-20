@@ -177,13 +177,19 @@ struct RecordMenuField<Value: Hashable>: View {
 
 /// An error under a field or a form (spec 3.17, 2.10): `exclamationmark.circle` and the words, both in
 /// `danger`, in the `caption` role. Never gold, never a triangle. One VoiceOver element: the words.
+///
+/// `announces` says a form's error to VoiceOver when it appears and whenever it changes (UX-45,
+/// `announcesToVoiceOver(_:)`). A field's hint leaves it off. A line that stays up while the form tries again
+/// (sign-in's) turns it off until the attempt ends, so the same error coming back is said again.
 struct RecordErrorText: View {
     let message: String
     var role: TextRole = .caption
+    var announces = false
 
-    init(_ message: String, role: TextRole = .caption) {
+    init(_ message: String, role: TextRole = .caption, announces: Bool = false) {
         self.message = message
         self.role = role
+        self.announces = announces
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -201,6 +207,7 @@ struct RecordErrorText: View {
         .foregroundStyle(BillboardColors.danger)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+        .announcesToVoiceOver(announces ? message : nil)
     }
 }
 
