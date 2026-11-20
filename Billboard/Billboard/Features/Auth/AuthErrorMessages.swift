@@ -67,9 +67,9 @@ enum AuthErrorMessages {
     /// `VOTE_DAILY_LIMIT` on a reasons update: the vote was saved earlier, the reasons were not.
     static let reasonsDailyLimit = "You've reached today's limit of 200 votes, so your reasons weren't saved. You can add them after midnight UTC."
     /// Any other failed vote write: the vote stays on screen, and bill detail's refusal strip says this with Try
-    /// again, which sends it again (UX-49). Also `APP_ATTEST_UNAVAILABLE`, whose refused vote rolls back
-    /// (`BillVoteStore.voteFailure(for:)`, APPF-27). It asks for nothing the vote panel ignores: tapping the shown
-    /// vote again sends nothing.
+    /// again, which sends it again (UX-49). It asks for nothing the vote panel ignores: tapping the shown vote again
+    /// sends nothing. Only for a vote kept on screen: `APP_ATTEST_UNAVAILABLE`'s vote rolls back, and gets the
+    /// strip's own "This vote wasn't saved. Try again." (`BillVoteStore.voteFailure(for:)`).
     static let voteNotSaved = "Not saved yet. Check your connection."
     /// `POST /district-verification` 429 `VERIFICATION_RATE_LIMITED` (INT-03).
     static let verificationRateLimited = "You can verify a new address 3 times in 30 days. Try again later, or choose your district instead."

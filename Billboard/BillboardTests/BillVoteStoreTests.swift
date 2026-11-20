@@ -393,7 +393,8 @@ final class BillVoteStoreTests: XCTestCase {
             ("APP_ATTEST_UNKNOWN_KEY", "We couldn't confirm this is the Billboard app on your iPhone. Update the app and try again."),
             ("DEVICE_ACCOUNT_LIMIT", "This iPhone has reached the limit of 3 Billboard accounts."),
             ("APP_UPDATE_REQUIRED", "This version of Billboard can't vote or create accounts any more. Update to continue."),
-            ("APP_ATTEST_UNAVAILABLE", "Not saved yet. Check your connection."),
+            // Rolled back, with the buttons back: not "Not saved yet", which is for a vote kept on screen (UX-49).
+            ("APP_ATTEST_UNAVAILABLE", "This vote wasn't saved. Try again."),
             ("ADULT_REQUIRED", "Confirm your age before doing that."),
             ("ACCOUNT_INELIGIBLE", "This account isn't eligible to do that."),
             ("ACCOUNT_DELETION_IN_PROGRESS", "This account is being deleted.")

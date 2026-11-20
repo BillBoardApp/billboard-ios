@@ -238,7 +238,8 @@ extension BillVoteBarModel {
     /// line's own words are queued instead (UX-34), so VoiceOver never says "Results are open." over a sheet that
     /// says when they open.
     static let resultsOpenAnnouncement = "Results are open."
-    /// Shown in the refusal strip when the vote store gave no text (it always does today).
+    /// Shown in the refusal strip when the vote store gave no text, and the vote store's text for
+    /// `APP_ATTEST_UNAVAILABLE`, whose vote rolls back with the buttons back to vote again (UX-49).
     static let refusalFallbackText = "This vote wasn't saved. Try again."
 
     static let summaryIdentifier = "bill.vote.summary"

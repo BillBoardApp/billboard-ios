@@ -441,8 +441,10 @@ final class BillVoteStore: ObservableObject {
     /// `APP_UPDATE_REQUIRED`, `DEVICE_ACCOUNT_LIMIT` and the account codes. A failure without a code
     /// (offline, a timeout, a status without a body) or with a code the app does not know may have been
     /// stored, so it keeps the optimistic vote. Known codes get their copy
-    /// (`AuthErrorMessages.message(forBackendCode:)`); `APP_ATTEST_UNAVAILABLE` and every other failure get
-    /// `voteNotSaved`.
+    /// (`AuthErrorMessages.message(forBackendCode:)`); every other failure gets `voteNotSaved`, which bill detail
+    /// shows over the vote it keeps. `APP_ATTEST_UNAVAILABLE` gets the refusal strip's "This vote wasn't saved. Try
+    /// again." (`BillVoteBarModel.refusalFallbackText`): its vote is gone and the buttons are back, so a new tap
+    /// sends it, and nothing is waiting to be saved (UX-49).
     static func voteFailure(for error: Error) -> (message: String, rollsBack: Bool) {
         guard let code = APIErrorResponse.errorCode(from: error) else {
             return (AuthErrorMessages.voteNotSaved, false)
@@ -451,7 +453,7 @@ final class BillVoteStore: ObservableObject {
         case AuthErrorMessages.BackendCode.voteDailyLimit:
             return (AuthErrorMessages.voteDailyLimit, true)
         case AppAttestServerCode.unavailable.rawValue:
-            return (AuthErrorMessages.voteNotSaved, true)
+            return (BillVoteBarModel.refusalFallbackText, true)
         default:
             guard let copy = AuthErrorMessages.message(forBackendCode: code) else {
                 return (AuthErrorMessages.voteNotSaved, false)
