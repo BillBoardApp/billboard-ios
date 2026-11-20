@@ -21,7 +21,7 @@ struct NotificationsView: View {
     @EnvironmentObject private var civicScoreStore: CivicScoreStore
     @EnvironmentObject private var voteStore: BillVoteStore
     @EnvironmentObject private var weeklyDigestStore: WeeklyDigestStore
-    @AppStorage("BillBoard.pushPermission.prompted.v1") private var hasPromptedForPushPermission = false
+    @AppStorage(AppNotificationStorage.pushPermissionPromptedKey) private var hasPromptedForPushPermission = false
     @AppStorage("BillBoard.pushPermission.primerDismissed.v1") private var hasDismissedPushPermissionPrimer = false
     @AppStorage(AppNotificationStorage.notificationsEnabledKey) private var notificationsEnabled = true
     @State private var updatesFeed = UpdatesFeedSnapshot.empty
@@ -343,8 +343,8 @@ struct NotificationsView: View {
         .accessibilityIdentifier("updates.screen")
     }
 
-    /// Clears one Passed or Failed row (spec D 2.1.3): every companion member is hidden on this device
-    /// and no vote is written; the watch is removed when the Undo window closes.
+    /// Clears one Passed or Failed row (spec D 2.1.3): every companion member is hidden on this device,
+    /// no vote is written, and the watch stays: only the Watch control changes it (UX-47).
     private func clearBill(_ bill: Bill) {
         billsStore.skipWithUndo(
             [.closedBill(bill.id)],
@@ -354,7 +354,7 @@ struct NotificationsView: View {
         )
     }
 
-    /// Clear all on Passed or Failed bills: one action, one Undo.
+    /// Clear all on Passed or Failed bills: one action, one Undo. Every watch stays (UX-47).
     private func clearBills(_ bills: [Bill]) {
         guard !bills.isEmpty else { return }
         billsStore.skipWithUndo(

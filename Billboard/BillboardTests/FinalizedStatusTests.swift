@@ -133,7 +133,6 @@ final class FinalizedStatusTests: XCTestCase {
         }
 
         XCTAssertEqual(Set(receipt.dismissedBillIDs), [law.id, passed.id])
-        XCTAssertEqual(Set(receipt.pendingUnwatchBillIDs), [law.id, passed.id], "the law's watch goes when Clear commits")
         XCTAssertEqual(feed(store.bills, dismissed: readState.dismissedBillIDs).passedBills.map(\.guid), [])
         await settleBillsCache(scope: scope)
     }

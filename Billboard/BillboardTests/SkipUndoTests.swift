@@ -5,9 +5,9 @@ import XCTest
 @testable import Billboard
 
 /// Skip on Bills and Clear on Updates (spec D 2.1.1-2.1.3): a skip or Clear never writes a vote or a
-/// preference; Undo puts back exactly what it changed (dismissals, read flags, removed alerts); the
-/// commit runs the deferred unwatch once, on the timer, a newer action, or the app going to the
-/// background.
+/// preference, and never ends a watch, a Passed or Failed bill's included (UX-47); Undo puts back exactly
+/// what it changed (dismissals, read flags, removed alerts); the window closes on the timer, a newer
+/// action, or the app going to the background.
 @MainActor
 final class SkipUndoTests: XCTestCase {
     private static let house = "BILLS-119hr900"
@@ -217,13 +217,16 @@ final class SkipUndoTests: XCTestCase {
         XCTAssertTrue(harness.readState.readBillAlertIDs.contains(action.id))
         XCTAssertEqual(harness.alerts.alerts, [])
         XCTAssertTrue(harness.store.isWatched(billID: updated.id), "skipping an updated bill keeps its watch")
-        XCTAssertFalse(harness.store.isWatched(billID: passed.id), "a passed bill is unwatched once the skip commits")
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "so does a passed bill's, once the skip commits (UX-47)")
     }
 
-    func testClearOnUpdatesWritesNoVoteAndNoPreference() async {
-        let passed = bill("BILLS-119hr3", status: .passed)
-        let failed = bill("BILLS-119s9", status: .failed)
-        let harness = await makeHarness(bills: [passed, failed, bill(Self.house), bill(Self.senate, status: .passed)], groups: [Self.group])
+    func testClearOnUpdatesWritesNoVoteAndNoPreferenceAndKeepsEveryWatch() async {
+        let passed = bill("BILLS-119hr3", status: .passed, watched: true)
+        let failed = bill("BILLS-119s9", status: .failed, watched: true)
+        let harness = await makeHarness(
+            bills: [passed, failed, bill(Self.house, watched: true), bill(Self.senate, status: .passed, watched: true)],
+            groups: [Self.group]
+        )
 
         harness.skipWithUndo([.closedBill(passed.id)], message: .cleared(numbers: ["H.R. 3"]))
         harness.skipWithUndo([.closedBill(failed.id), .closedBill(UUID.deterministic(from: Self.senate))], message: .clearedBills(count: 2))
@@ -232,7 +235,12 @@ final class SkipUndoTests: XCTestCase {
 
         XCTAssertEqual(harness.votes.setFeedbackCalls, [])
         XCTAssertEqual(harness.preferences.putCalls.count, 0)
+        XCTAssertEqual(harness.preferences.deleteCalls.count, 0)
         XCTAssertEqual(harness.voteStore.vote(for: Self.house), .unknown, "no Abstain on the group's vote target")
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "Clear keeps the watch (UX-47)")
+        XCTAssertTrue(harness.store.isWatched(billID: failed.id), "Clear all keeps it too")
+        XCTAssertTrue(harness.store.bill(forGUID: Self.house)?.userWatched == true, "both members of a group stay watched")
+        XCTAssertTrue(harness.store.bill(forGUID: Self.senate)?.userWatched == true)
     }
 
     // MARK: - Undo restores exactly (2.1.2 proof)
@@ -322,28 +330,24 @@ final class SkipUndoTests: XCTestCase {
 
     // MARK: - Commit (2.1.2 proof)
 
-    func testThePassedUnwatchWaitsForTheTimerAndRunsOnce() async {
+    func testAPassedSkipKeepsTheWatchWhenTheTimerEnds() async {
         let passed = bill("BILLS-119hr3", status: .passed, watched: true)
         let harness = await makeHarness(bills: [passed])
 
         harness.skipWithUndo([.closedBill(passed.id)])
-        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "still watched inside the Undo window")
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "watched inside the Undo window")
         XCTAssertNotNil(harness.center.toast)
 
         harness.scheduler.fireLatest()
+        await harness.drain()
 
-        XCTAssertFalse(harness.store.isWatched(billID: passed.id))
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "and after it: only the Watch control ends a watch (UX-47)")
+        XCTAssertEqual(harness.preferences.deleteCalls.count, 0)
         XCTAssertNil(harness.center.toast)
         XCTAssertTrue(harness.readState.dismissedBillIDs.contains(passed.id))
 
-        // Re-watched later (from bill detail, say): nothing commits the old skip again.
-        harness.store.vote(billID: passed.id, vote: .yea, watch: true)
-        harness.center.commitPending()
         harness.center.undo()
-        harness.scheduler.fireLatest()
-        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "the skip committed once")
         XCTAssertTrue(harness.readState.dismissedBillIDs.contains(passed.id), "undo after the commit does nothing")
-        await settleBillsCache(scope: harness.billsScope)
     }
 
     func testUndoOfAPassedSkipKeepsTheWatchForGood() async {
@@ -367,14 +371,13 @@ final class SkipUndoTests: XCTestCase {
         harness.skipWithUndo([.closedBill(passed.id)], message: .skipped(numbers: ["H.R. 3"]))
         harness.skipWithUndo([.openBill(newBill.id)], message: .skipped(numbers: ["H.R. 1"]))
 
-        XCTAssertFalse(harness.store.isWatched(billID: passed.id), "the first skip committed")
         XCTAssertEqual(harness.center.toast?.message, "Skipped H.R. 1")
 
         harness.center.undo()
 
         XCTAssertFalse(harness.readState.dismissedBillIDs.contains(newBill.id))
-        XCTAssertTrue(harness.readState.dismissedBillIDs.contains(passed.id), "the first skip stays")
-        await settleBillsCache(scope: harness.billsScope)
+        XCTAssertTrue(harness.readState.dismissedBillIDs.contains(passed.id), "the first skip committed and stays")
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "with its watch (UX-47)")
     }
 
     func testTheAppGoingToTheBackgroundCommits() async {
@@ -384,11 +387,10 @@ final class SkipUndoTests: XCTestCase {
         harness.skipWithUndo([.closedBill(passed.id)])
         harness.notificationCenter.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
 
-        XCTAssertFalse(harness.store.isWatched(billID: passed.id))
         XCTAssertNil(harness.center.toast)
         harness.center.undo()
         XCTAssertTrue(harness.readState.dismissedBillIDs.contains(passed.id), "nothing left to undo")
-        await settleBillsCache(scope: harness.billsScope)
+        XCTAssertTrue(harness.store.isWatched(billID: passed.id), "the watch stays (UX-47)")
     }
 
     func testClearAllIsOneUndoableAction() async {
@@ -399,7 +401,6 @@ final class SkipUndoTests: XCTestCase {
         let receipt = harness.skipWithUndo([.closedBill(first.id), .closedBill(second.id)], message: .clearedBills(count: 2))
 
         XCTAssertEqual(receipt.dismissedBillIDs, [first.id, second.id])
-        XCTAssertEqual(receipt.pendingUnwatchBillIDs, [first.id, second.id])
         XCTAssertEqual(harness.center.toast?.message, "Cleared 2 bills")
         XCTAssertEqual(harness.scheduler.entries.count, 1, "one undo record for the batch")
 

@@ -46,6 +46,9 @@ struct BillYourVoteSection: View {
     let reasonOrder: [VoteReason]
     let onToggleReason: (VoteReason) -> Void
     let onSetWatch: (Bool) -> Void
+    /// The Watch row's caption: its promise, or why the watch can't notify on this device (UX-47,
+    /// `BillWatchCopy.rowSubtitle(blockedBy:)`).
+    var watchCaption: String = BillWatchCopy.rowSubtitle
     /// Under the Watch row after a toggle's save failed and the watch was put back (UX-48).
     var watchError: String? = nil
     /// For a companion group (APPF-23): "These bills have identical text. Your vote counts once for both."
@@ -173,7 +176,8 @@ struct BillYourVoteSection: View {
 
     /// "Watch this bill — Get notified when Congress acts on it.", on the `controlOn` toggle, and under it a failed
     /// save's error, said to VoiceOver when it appears (UX-48). The page builds every section, so it is said even
-    /// when the toolbar's Watch made the change.
+    /// when the toolbar's Watch made the change. When the watch can't notify on this device, the caption says why
+    /// instead of making its promise (UX-47).
     private var watchRow: some View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
             Toggle(isOn: Binding(get: { isWatching }, set: { onSetWatch($0) })) {
@@ -181,7 +185,7 @@ struct BillYourVoteSection: View {
                     Text(BillWatchCopy.rowTitle)
                         .textRole(.body)
                         .foregroundStyle(BillboardColors.primaryText)
-                    Text(BillWatchCopy.rowSubtitle)
+                    Text(watchCaption)
                         .textRole(.caption)
                         .foregroundStyle(BillboardColors.dimText)
                         .fixedSize(horizontal: false, vertical: true)

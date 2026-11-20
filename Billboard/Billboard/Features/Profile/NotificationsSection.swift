@@ -266,7 +266,7 @@ struct NotificationsSection: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var userStore: UserStore
     @EnvironmentObject private var weeklyDigestStore: WeeklyDigestStore
-    @AppStorage("BillBoard.pushPermission.prompted.v1") private var hasPromptedForPushPermission = false
+    @AppStorage(AppNotificationStorage.pushPermissionPromptedKey) private var hasPromptedForPushPermission = false
     @State private var permission: UNAuthorizationStatus?
 
     private var model: NotificationsSectionModel {

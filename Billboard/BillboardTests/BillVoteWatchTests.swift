@@ -107,6 +107,54 @@ final class BillVoteWatchTests: XCTestCase {
         await settleBillsCache(scope: stores.scope)
     }
 
+    // MARK: - Skip and Clear (UX-47)
+
+    /// Skip on a decided card on Bills, and Clear and Clear all on Updates, hide a Passed or Failed bill on this
+    /// device and leave its watch alone, on both members of a companion group: only the Watch control ends a watch.
+    /// Before, the watch went once the Undo window closed, and with it the bill's next actions in Congress.
+    func testSkipAndClearNeverEndAWatch() async {
+        let group = BillCompanionGroup(primaryGuid: Self.house, memberGuids: [Self.house, Self.senate], relationship: "identical")
+        var house = companionTestBill(Self.house)
+        house.billStatus = .passed
+        house.userWatched = true
+        var senate = companionTestBill(Self.senate)
+        senate.userWatched = true
+        var failed = companionTestBill(Self.watchedGuid)
+        failed.billStatus = .failed
+        failed.userWatched = true
+        let watchedGuids = [Self.house, Self.senate, Self.watchedGuid]
+        let stores = await makeStores(bills: [house, senate, failed], groups: [group], watchedGuids: watchedGuids)
+        let readState = AppReadState(scope: .user("vote-bar-tests"), store: InMemoryReadStateStore())
+        let center = UndoCenter(
+            notificationCenter: NotificationCenter(),
+            isVoiceOverRunning: { false },
+            isSwitchControlRunning: { false },
+            announce: { _ in }
+        )
+        let deletesBefore = stores.userPreferences.deleteCalls.count
+
+        // Each action commits the one before it; the last is committed by hand, as the 4 s timer would.
+        let card = BillBoardItem(id: house.id, bill: house, date: Date(), type: .passed, companionGroup: group)
+        stores.bills.skipWithUndo([card.skipTarget], message: card.skipUndoMessage, readState: readState, undoCenter: center)
+        stores.bills.skipWithUndo([.closedBill(failed.id)], message: .cleared(numbers: ["H.R. 901"]), readState: readState, undoCenter: center)
+        stores.bills.skipWithUndo(
+            [.closedBill(house.id), .closedBill(failed.id)],
+            message: .clearedBills(count: 2),
+            readState: readState,
+            undoCenter: center
+        )
+        center.commitPending()
+        await settle()
+
+        XCTAssertTrue(readState.dismissedBillIDs.isSuperset(of: [house.id, senate.id, failed.id]), "hidden on this device")
+        XCTAssertEqual(stores.userPreferences.deleteCalls.count, deletesBefore, "no Watch row was removed")
+        XCTAssertEqual(Set(stores.user.profile.watchedBillGUIDs), Set(watchedGuids))
+        XCTAssertTrue(stores.bills.bill(forGUID: Self.house)?.userWatched == true)
+        XCTAssertTrue(stores.bills.bill(forGUID: Self.senate)?.userWatched == true, "and its companion")
+        XCTAssertTrue(stores.bills.isWatched(billID: failed.id))
+        XCTAssertEqual(stores.votes.setFeedbackCalls, [], "and no vote")
+    }
+
     // MARK: - A failed save (UX-48)
 
     /// The stop's save fails: the watch is put back, and the toggle is told, so it can say so.

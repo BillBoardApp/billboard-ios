@@ -99,8 +99,8 @@ final class ResultsGateTests: XCTestCase {
         let (store, voteStore, scope) = await makeCompanionStore(bills: [bill, passed], groups: [], votes: votes)
         let readState = AppReadState(scope: .user("results-gate-tests"), store: InMemoryReadStateStore())
 
-        store.commitSkip(store.skip(.openBill(bill.id), readState: readState))
-        store.commitSkip(store.clearFromUpdates(billID: passed.id, readState: readState))
+        store.skip(.openBill(bill.id), readState: readState)
+        store.clearFromUpdates(billID: passed.id, readState: readState)
         _ = store.dismiss(billID: bill.id, readState: readState)
         await Task.yield()
 

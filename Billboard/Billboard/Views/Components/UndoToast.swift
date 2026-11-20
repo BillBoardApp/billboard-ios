@@ -7,8 +7,9 @@ import UIKit
 /// One undoable change, such as a skip on Bills or a Clear on Updates (spec D 2.1.2).
 ///
 /// The caller applies the local change before registering. `undo` restores exactly what the
-/// change removed. `commit` runs deferred side effects only (for example the unwatch of a passed
-/// bill) and runs at most once; neither closure runs if the other already ran.
+/// change removed. `commit` runs deferred side effects only, if the action has any, and runs at most
+/// once; neither closure runs if the other already ran. A skip or Clear has none: it never ends a
+/// watch (UX-47).
 struct UndoAction {
     /// Toast text, such as "Skipped H.R. 1234" or "Cleared 3 bills".
     let message: String

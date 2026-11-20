@@ -38,6 +38,9 @@ enum ProductTutorialStorage {
 
 enum AppNotificationStorage {
     static let notificationsEnabledKey = "BillBoard.notifications.enabled.local.v1"
+    /// Set once the app has shown iOS's notification prompt (Profile, the Updates card or Watch), which it shows
+    /// only once.
+    static let pushPermissionPromptedKey = "BillBoard.pushPermission.prompted.v1"
 }
 
 enum AccountComplianceStorage {

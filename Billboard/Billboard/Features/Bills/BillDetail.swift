@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UserNotifications
 
 struct BillDetail: View {
     /// Which vote bar the screen pins (spec D 2.1.4). Every bill page pins one, wherever it was opened
@@ -297,6 +298,7 @@ private struct BillDetailContent: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.watchNotificationAccess) private var watchNotificationAccess
     /// Set by the tour's "Open this bill" until a vote is saved or the user taps Not now (spec D 2.5.5).
     @AppStorage(FirstRunStorage.voteCoachMarkPendingKey) private var voteCoachMarkPending = false
 
@@ -314,6 +316,11 @@ private struct BillDetailContent: View {
     @State private var watchSaveError: String?
     /// The latest toggle, so an earlier one's failure is not shown after it.
     @State private var latestWatchToggle = UUID()
+    /// What the Watch row's caption reads (UX-47): iOS permission (nil until read), the switches this device last
+    /// saved, and whether the app has shown iOS's prompt. `refreshWatchNotifications()` reads them.
+    @State private var notificationPermission: UNAuthorizationStatus?
+    @State private var savedNotificationSettings = DeviceNotificationSettings.allEnabled
+    @State private var hasAskedNotificationPermission = false
     /// Counts the votes that scroll Your vote to the top (spec 3.13): see `BillDetail.scrollsToYourVote`.
     @State private var yourVoteScrollCount = 0
     /// Where the bill's title ends, in the page's content: the bar shows "Bill" once it has scrolled under
@@ -557,6 +564,42 @@ private struct BillDetailContent: View {
 
     private var canWatch: Bool {
         billGuid != nil
+    }
+
+    /// Why the watch can't notify on this device, which the Watch row's caption says (UX-47); nil when it can.
+    private var watchNotificationBlock: BillWatchNotificationBlock? {
+        BillWatchNotificationBlock.make(
+            permission: notificationPermission,
+            settings: savedNotificationSettings,
+            isWatching: currentWatchValue,
+            hasAskedPermission: hasAskedNotificationPermission
+        )
+    }
+
+    /// Reads what the Watch row's caption depends on (UX-47): when the page shows, and when the app comes back,
+    /// which picks up the answer to iOS's prompt or a change made in iOS Settings.
+    private func refreshWatchNotifications() async {
+        let permission = await watchNotificationAccess.permission()
+        let defaults = watchNotificationAccess.defaults
+        notificationPermission = permission
+        savedNotificationSettings = NotificationSettingsStore.savedSettings(defaults: defaults)
+        hasAskedNotificationPermission = defaults.bool(forKey: AppNotificationStorage.pushPermissionPromptedKey)
+    }
+
+    /// Turning Watch on shows iOS's notification prompt when the app has never asked (UX-47), once, as Profile and
+    /// the Updates card do. The watch is kept whatever the answer; the Watch row says when it can't notify.
+    private func askNotificationPermissionIfNeverAsked() {
+        Task {
+            let permission = await watchNotificationAccess.permission()
+            let defaults = watchNotificationAccess.defaults
+            notificationPermission = permission
+            // The flag is read after the permission, so a quick second tap does not ask again.
+            let hasAsked = defaults.bool(forKey: AppNotificationStorage.pushPermissionPromptedKey)
+            guard BillWatchNotificationBlock.asksPermission(permission: permission, hasAskedPermission: hasAsked) else { return }
+            defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+            hasAskedNotificationPermission = true
+            watchNotificationAccess.showPrompt()
+        }
     }
 
     /// Results unlock after a Yea, Nay or Abstain (spec D 2.1.4, INT-11): the bar's vote, a vote cast on
@@ -819,8 +862,9 @@ private struct BillDetailContent: View {
         topicPrompt.post(topicPrompt.trigger.pageEnded(ending))
     }
 
-    /// The Watch toolbar button and toggle (the only controls that change watch). The change shows and is said
-    /// at once; if its save fails, the stores put the watch back and the Watch row says so (UX-48).
+    /// The Watch toolbar button and toggle (the only controls that change watch: a vote, Skip and Clear never do,
+    /// UX-47). The change shows and is said at once; if its save fails, the stores put the watch back and the Watch
+    /// row says so (UX-48). Turning it on asks for notification permission if the app never has (UX-47).
     private func setWatch(_ watch: Bool) {
         guard watch != currentWatchValue else { return }
         let plan = BillWatchPlan.make(watch: watch, targetGuid: voteTargetGuid, memberGuids: watchGuids)
@@ -838,6 +882,9 @@ private struct BillDetailContent: View {
         }
         HapticFeedback.selection()
         AccessibilityNotification.Announcement(BillWatchCopy.announcement(isWatching: watch)).post()
+        if watch {
+            askNotificationPermissionIfNeverAsked()
+        }
         Task {
             guard await !save.value, latestWatchToggle == toggle else { return }
             watchOverride = nil
@@ -1133,6 +1180,7 @@ private struct BillDetailContent: View {
                     reasonOrder: pendingVote.map { VoteReasonOrder.order(for: $0.voteType, seed: reasonOrderSeed) } ?? [],
                     onToggleReason: toggleReason,
                     onSetWatch: setWatch,
+                    watchCaption: BillWatchCopy.rowSubtitle(blockedBy: watchNotificationBlock),
                     watchError: watchSaveError,
                     companionCaption: companionVoteCaption,
                     companionConflictNote: companionConflictNote,
@@ -1285,6 +1333,13 @@ private struct BillDetailContent: View {
             if watchOverride == watched {
                 watchOverride = nil
             }
+        }
+        .task {
+            await refreshWatchNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            // The answer to iOS's prompt, or a change made in iOS Settings (UX-47).
+            Task { await refreshWatchNotifications() }
         }
         .onAppear {
             isOnScreen = true
