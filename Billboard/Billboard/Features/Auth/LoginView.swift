@@ -23,9 +23,10 @@ struct LoginView: View {
         case password
     }
 
-    /// The value line under the banner (spec D 2.5.2).
+    /// The value line under the banner (spec D 2.5.2). It promises combined results, never one person's vote, as
+    /// sign-up does (UX-44; words approved 2026-11-21).
     static let headline = "See what Congress is voting on, and vote too."
-    static let valueLine = "Plain-English summaries of real bills. Vote Yea, Nay or Abstain, then see how others and your representatives voted."
+    static let valueLine = "Plain-English summaries of real bills. Vote Yea, Nay or Abstain, then see combined results and how your representatives voted."
 
     private var statusMessage: String? {
         if case .error(let message) = auth.status {
