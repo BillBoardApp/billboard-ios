@@ -15,6 +15,7 @@ struct PushDeepLinkRouter: ViewModifier {
     @ObservedObject var voteStore: BillVoteStore
 
     @Binding var billBoardPath: NavigationPath
+    @Binding var profilePath: NavigationPath
     /// See `TabsBar.isReadyForDeepLinkNavigation`.
     let isReadyForDeepLinks: Bool
     let onCacheRestoreReady: @MainActor () -> Void
@@ -70,6 +71,19 @@ struct PushDeepLinkRouter: ViewModifier {
                 hasDeferredDeepLink = true
                 consumeDeferredDeepLinksIfReady()
             }
+    }
+
+    /// Where a tapped district check push lands (REL-46): the Profile tab at its root, with the Where you vote editor
+    /// over it (`TabsBar` presents it on `.billboardRequestLocationEditor`), which offers to follow the
+    /// representatives found once the address is checked again.
+    static func openWhereYouVote(
+        appState: AppState,
+        profilePath: inout NavigationPath,
+        notificationCenter: NotificationCenter = .default
+    ) {
+        appState.selectedTab = TabsBar.Tab.profile.rawValue
+        profilePath = NavigationPath()
+        notificationCenter.post(name: .billboardRequestLocationEditor, object: nil)
     }
 
     private func handleBillDidChange(_ note: Notification) {
@@ -254,6 +268,22 @@ struct PushDeepLinkRouter: ViewModifier {
         }
     }
 
+    /// Re-surfaces bills for "updated" pushes only, and for a companion group (APPF-23) only when the pushed bill
+    /// holds the counted vote (`revoteGUIDs(forUpdatedPushGUID:)`): their votes are cleared, and the guids to ask
+    /// again for are returned. "new", "passed", "failed", and "alert" are informational — prior vote state is kept.
+    private func clearVotesForUpdatedPush(guids: [String], notificationType: String?) -> [String] {
+        guard notificationType?.lowercased() == "updated" else { return [] }
+        var revoteGuids: [String] = []
+        for guid in guids {
+            let cleared = billsStore.revoteGUIDs(forUpdatedPushGUID: guid)
+            guard !cleared.isEmpty else { continue }
+            revoteGuids.append(contentsOf: cleared)
+            billsStore.companionMemberBillIDs(forGUID: guid).forEach(readState.undismissBill)
+            cleared.forEach(voteStore.clearVote(for:))
+        }
+        return revoteGuids
+    }
+
     private func consumePendingDeepLinkIfAny() {
         guard let pending = PendingPushDeepLink.consume() else { return }
 
@@ -261,20 +291,7 @@ struct PushDeepLinkRouter: ViewModifier {
         case .digest(let billIds, let notificationType):
             let trimmedIds = billIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             guard !trimmedIds.isEmpty else { return }
-
-            // Re-surface bills for "updated" pushes only, and for a companion group (APPF-23) only
-            // when the pushed bill holds the counted vote (`revoteGUIDs(forUpdatedPushGUID:)`).
-            // "new", "passed", "failed", and "alert" are informational — preserve prior vote state.
-            var revoteGuids: [String] = []
-            if notificationType?.lowercased() == "updated" {
-                for guid in trimmedIds {
-                    let cleared = billsStore.revoteGUIDs(forUpdatedPushGUID: guid)
-                    guard !cleared.isEmpty else { continue }
-                    revoteGuids.append(contentsOf: cleared)
-                    billsStore.companionMemberBillIDs(forGUID: guid).forEach(readState.undismissBill)
-                    cleared.forEach(voteStore.clearVote(for:))
-                }
-            }
+            let revoteGuids = clearVotesForUpdatedPush(guids: trimmedIds, notificationType: notificationType)
 
             // One bill (or the members of one companion group, APPF-23): open it.
             if let target = billsStore.pushDeepLinkTarget(forGUIDs: trimmedIds) {
@@ -313,6 +330,9 @@ struct PushDeepLinkRouter: ViewModifier {
 
         case .weeklyDigest(_):
             appState.selectedTab = TabsBar.Tab.updates.rawValue
+
+        case .districtCheck:
+            Self.openWhereYouVote(appState: appState, profilePath: &profilePath)
 
         case .alert(let alert):
             // Build a BillAlert instance and navigate to bill detail (alerts are not shown as a standalone UI).

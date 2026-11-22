@@ -130,11 +130,7 @@ final class PushNotificationsAppDelegate: NSObject, UIApplicationDelegate, UNUse
         let legacyEventText = payload.legacyEvent.isEmpty ? "(none)" : payload.legacyEvent
         logger.info("Received push domain=\(domainText, privacy: .public) type=\(notifText, privacy: .public) billId=\(guidText, privacy: .public) updatedAt=\(updatedAtText, privacy: .public) legacyEvent=\(legacyEventText, privacy: .public) userTap=\(wasUserInteraction, privacy: .public)")
 
-        if payload.isWeeklyDigestRelevant {
-            if wasUserInteraction {
-                PendingPushDeepLink.save(.weeklyDigest(digestId: payload.normalizedDigestID))
-                NotificationCenter.default.post(name: .billboardDidSavePendingPushDeepLink, object: nil)
-            }
+        if handlePushWithoutBills(payload, wasUserInteraction: wasUserInteraction) {
             return
         }
 
@@ -211,6 +207,25 @@ final class PushNotificationsAppDelegate: NSObject, UIApplicationDelegate, UNUse
 
             NotificationCenter.default.post(name: .billboardBillAlertDidChange, object: nil, userInfo: info)
         }
+    }
+
+    /// The pushes that carry no bills: the Weekly Brief, and "Your district may have changed" (REL-46), which opens
+    /// Profile with Where you vote (`PushDeepLinkRouter.openWhereYouVote`). A tap waits like any other until
+    /// navigation is allowed. True when `payload` is one of them, so there are no bills to handle.
+    private func handlePushWithoutBills(_ payload: PushNotificationPayload, wasUserInteraction: Bool) -> Bool {
+        let pending: PendingPushDeepLink.Kind
+        if payload.isWeeklyDigestRelevant {
+            pending = .weeklyDigest(digestId: payload.normalizedDigestID)
+        } else if payload.isDistrictCheck {
+            pending = .districtCheck
+        } else {
+            return false
+        }
+        if wasUserInteraction {
+            PendingPushDeepLink.save(pending)
+            NotificationCenter.default.post(name: .billboardDidSavePendingPushDeepLink, object: nil)
+        }
+        return true
     }
 
     private func requestRemoteNotificationsIfNeeded(reason: String) {
@@ -308,6 +323,8 @@ enum PushPresentationSettings {
 
         // The weekly brief has its own setting, applied when it is scheduled.
         if payload.isWeeklyDigestRelevant { return true }
+        // The district check has no setting of its own: only the switches above (D13).
+        if payload.isDistrictCheck { return true }
         if payload.isBillAlertRelevant { return settings.notifyAlert }
 
         switch payload.notificationType {

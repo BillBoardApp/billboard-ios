@@ -654,6 +654,7 @@ struct TabsBar: View {
                 appState: appState,
                 voteStore: billVoteStore,
                 billBoardPath: $billBoardPath,
+                profilePath: $profilePath,
                 isReadyForDeepLinks: isReadyForDeepLinkNavigation,
                 onCacheRestoreReady: {
                     scheduleDeferredHomeQueueRefreshIfNeeded(reason: "startup_after_cache_restore")
