@@ -1,8 +1,15 @@
 import SwiftUI
+import UIKit
 
 /// App settings copy and choices (spec D 2.5.7). Pure, for tests.
 enum AppSettingsCopy {
     static let appearanceFooter = "System matches your iPhone's light or dark setting."
+    /// Under Appearance when the app can change its icon: with dark icons, iOS shows the navy look whichever is picked.
+    static let appearanceAndIconFooter = "System matches your iPhone's light or dark setting. When your iPhone shows dark icons, both app icons are navy."
+    static let appIconTitle = "App icon"
+    /// Under Appearance, and said to VoiceOver, when iOS refused the change and the picker was put back.
+    static let appIconFailedText = "Couldn't change the app icon."
+    static let appIconErrorIdentifier = "settings.appIcon.error"
     static let billTypesFooter = "Choose which kinds of bills appear on the Bills tab and in notifications. Keep at least one."
     static let historyPickerTitle = "Show bills from the last"
     static let replayTitle = "Replay the tour"
@@ -50,9 +57,9 @@ enum AppSettingsCopy {
     static let billTypesErrorIdentifier = "settings.billTypes.error"
 }
 
-/// App settings (spec D 2.5.7; Civic Record spec 4.69): Appearance, Bill types, how far back the Bills tab
-/// goes, and the tour, as a settings list on paper (spec 3.25). Switches in `controlOn`; "Replay the tour" is
-/// an ink text row. Notifications moved to Profile.
+/// App settings (spec D 2.5.7; Civic Record spec 4.69): Appearance and the app icon, Bill types, how far back the
+/// Bills tab goes, and the tour, as a settings list on paper (spec 3.25). Switches in `controlOn`; "Replay the tour"
+/// is an ink text row. Notifications moved to Profile.
 struct AppSettingsView: View {
     @EnvironmentObject private var userStore: UserStore
     @AppStorage(ProductTutorialStorage.replayRequestedKey) private var replayTutorialRequested = false
@@ -60,6 +67,11 @@ struct AppSettingsView: View {
     @AppStorage(AppearancePreference.storageKey) private var appearance: AppearancePreference = .system
     /// A switch's failed save (UX-48), until the next switch is flipped.
     @State private var billTypesError: String?
+    /// The Home Screen icon, as iOS reports it when the screen opens.
+    @State private var appIcon = AppIconChoice.from(alternateIconName: UIApplication.shared.alternateIconName)
+    /// A refused icon change, until the next change.
+    @State private var appIconError: String?
+    private let canChangeAppIcon = UIApplication.shared.supportsAlternateIcons
 
     private var selectedBillboardHistoryWindow: BillboardHistoryWindow {
         BillboardHistoryWindow.from(rawValue: billboardHistoryWindowDays)
@@ -92,6 +104,27 @@ struct AppSettingsView: View {
         )
     }
 
+    /// Asks iOS to change the icon (iOS then confirms it in an alert); puts the picker back if iOS refuses.
+    private var appIconBinding: Binding<AppIconChoice> {
+        Binding(
+            get: { appIcon },
+            set: { choice in
+                guard choice != appIcon else { return }
+                let previous = appIcon
+                appIcon = choice
+                appIconError = nil
+                Task {
+                    do {
+                        try await UIApplication.shared.setAlternateIconName(choice.alternateIconName)
+                    } catch {
+                        appIcon = previous
+                        appIconError = AppSettingsCopy.appIconFailedText
+                    }
+                }
+            }
+        )
+    }
+
     var body: some View {
         List {
             Section {
@@ -103,10 +136,27 @@ struct AppSettingsView: View {
                     SettingsRowText("Appearance")
                 }
                 .accessibilityIdentifier("settings.appearance")
+
+                if canChangeAppIcon {
+                    Picker(selection: appIconBinding) {
+                        ForEach(AppIconChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    } label: {
+                        SettingsRowText(AppSettingsCopy.appIconTitle)
+                    }
+                    .accessibilityIdentifier("settings.appIcon")
+                }
             } header: {
                 RecordListHeader("Appearance")
             } footer: {
-                RecordListFooter(AppSettingsCopy.appearanceFooter)
+                VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
+                    if let appIconError {
+                        RecordErrorText(appIconError)
+                            .accessibilityIdentifier(AppSettingsCopy.appIconErrorIdentifier)
+                    }
+                    RecordListFooter(canChangeAppIcon ? AppSettingsCopy.appearanceAndIconFooter : AppSettingsCopy.appearanceFooter)
+                }
             }
             .recordListRows()
 
@@ -180,6 +230,7 @@ struct AppSettingsView: View {
         // A failed switch is said from the list, not its footer: a list makes its rows only as they scroll into
         // view (UX-48).
         .announcesToVoiceOver(billTypesError)
+        .announcesToVoiceOver(appIconError)
         .navigationTitle("App settings")
         .navigationBarTitleDisplayMode(.inline)
         .glassNavigationBar()

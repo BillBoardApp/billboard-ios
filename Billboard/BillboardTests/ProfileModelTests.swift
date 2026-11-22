@@ -325,10 +325,12 @@ final class ProfileModelTests: XCTestCase {
             NotificationsSectionModel.notAskedHint,
             NotificationsSectionModel.weeklyBriefFootnote,
             AppSettingsCopy.appearanceFooter,
+            AppSettingsCopy.appearanceAndIconFooter,
+            AppSettingsCopy.appIconFailedText,
             AppSettingsCopy.billTypesFooter,
             AppSettingsCopy.historyFooter(.twoWeeks),
             DeleteAccountCopy.warning
-        ] + NotificationKind.allCases.map(\.title)
+        ] + NotificationKind.allCases.map(\.title) + AppIconChoice.allCases.map(\.title)
 
         let retired = ["Subscri", "Sub-categor", "Home", "Alert", "Digest", "Self-attested", "constituent", "history window"]
         for text in copy {

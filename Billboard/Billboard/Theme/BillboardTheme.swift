@@ -177,7 +177,7 @@ nonisolated enum BillboardPalette {
     static let controlOn = Token(light: inkLight, dark: .hex(0x7C8AA3))
 
     // Brand
-    /// The wordmark's "BOARD" and the selected tab, only ever on navy (and the app icon's check).
+    /// The wordmark's "BOARD" and the selected tab, only ever on navy.
     static let brandTeal = Token(.hex(0x00BFA6))
 
     // Votes: always with the symbol and the word (VoteChoice)
