@@ -251,7 +251,7 @@ final class ProfileRenderTests: XCTestCase {
     func testEmailWrapsAtTheAtSignAndTheDomainsDots() {
         let zwsp = "\u{200B}"
         XCTAssertEqual(EmailText.wrappable("alex.morgan@example.com"), "alex.morgan\(zwsp)@example\(zwsp).com")
-        XCTAssertEqual(EmailText.wrappable("a@mail.example.co.uk"), "a\(zwsp)@mail\(zwsp).example\(zwsp).co\(zwsp).uk")
+        XCTAssertEqual(EmailText.wrappable("a@mail.dept.example.test"), "a\(zwsp)@mail\(zwsp).dept\(zwsp).example\(zwsp).test")
         XCTAssertEqual(EmailText.wrappable("no-at-sign"), "no-at-sign")
         XCTAssertEqual(EmailText.wrappable(""), "")
         XCTAssertEqual(EmailText.wrappable("alex.morgan@example.com").replacingOccurrences(of: zwsp, with: ""), "alex.morgan@example.com")
