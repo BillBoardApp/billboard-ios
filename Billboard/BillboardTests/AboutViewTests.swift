@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Billboard
 
@@ -35,7 +36,8 @@ final class AboutViewTests: XCTestCase {
 
     /// The approved legal copy stays word for word through the Civic Record restyle (project decision,
     /// 2026-10-17): the address privacy note, the About footer with its AI line, and the lines that say the
-    /// summaries are written with AI. Each sentence is asserted whole.
+    /// summaries are written with AI. Each sentence is asserted whole. The About footer says "open-source" since
+    /// 1.3 (approved D3, decision 17 of 2026-11-08).
     func testApprovedLegalCopyIsUnchanged() {
         XCTAssertEqual(
             LocationEditorView.privacyNote,
@@ -43,7 +45,7 @@ final class AboutViewTests: XCTestCase {
         )
         XCTAssertEqual(
             AboutInfo.disclaimer,
-            "Billboard is an independent app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
+            "Billboard is an independent, open-source app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
         )
         XCTAssertEqual(
             CreateAccountView.valueBullets,
@@ -112,12 +114,54 @@ final class AboutViewTests: XCTestCase {
     }
 
     func testDisclaimerNamesTheSourcesAndIndependence() {
-        XCTAssertTrue(AboutInfo.disclaimer.hasPrefix("Billboard is an independent app"))
+        XCTAssertTrue(AboutInfo.disclaimer.hasPrefix("Billboard is an independent, open-source app"))
         XCTAssertTrue(AboutInfo.disclaimer.contains("not affiliated with Congress or any government agency"))
         XCTAssertEqual(
             AboutInfo.disclaimer,
-            "Billboard is an independent app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
+            "Billboard is an independent, open-source app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
         )
         XCTAssertFalse(AboutInfo.disclaimer.contains("BillBoard"))
+    }
+
+    // MARK: - Source code and Open-source licenses (APPF-32)
+
+    /// The Source code row (approved D1) opens the app's public repository.
+    func testSourceCodeOpensThePublicRepository() {
+        XCTAssertEqual(AboutInfo.sourceCodeURL.absoluteString, "https://github.com/BillBoardApp/billboard-ios")
+    }
+
+    /// The Source code row and the licenses row are there even when the build has no website key, which hides
+    /// Roadmap and Privacy policy: the repository is public whatever the website.
+    func testSourceCodeAndLicensesShowWithoutTheWebsiteKey() {
+        let host = AccessibilityTreeText.Host(NavigationStack { AboutView(info: AboutInfo(infoDictionary: nil)) }, size: CGSize(width: 390, height: 1400), settle: 0.3)
+        defer { host.close() }
+        let ids = host.identifiers()
+        XCTAssertTrue(ids.contains("about.sourceCode"), "\(ids)")
+        XCTAssertTrue(ids.contains("about.openSourceLicenses"), "\(ids)")
+        XCTAssertFalse(ids.contains("about.roadmap"), "\(ids)")
+        XCTAssertFalse(ids.contains("about.privacy"), "\(ids)")
+        XCTAssertEqual(host.label(ofIdentifier: "about.sourceCode"), "Source code")
+        XCTAssertEqual(host.hint(of: "Source code"), "Opens in Safari")
+    }
+
+    /// With the website key, Source code follows Privacy policy in the links section (D1), and Open-source licenses
+    /// (D2) is its own row that opens a screen in the app, so it has no Safari hint.
+    func testAboutListsTheLinksThenTheLicensesRow() throws {
+        let info = AboutInfo(infoDictionary: [
+            "CFBundleShortVersionString": "1.3",
+            "CFBundleVersion": "92",
+            AboutInfo.websiteBaseURLKey: "https://billboard-project.com"
+        ])
+        let host = AccessibilityTreeText.Host(NavigationStack { AboutView(info: info) }, size: CGSize(width: 390, height: 1400), settle: 0.3)
+        defer { host.close() }
+        let labels = host.elements().map(\.label)
+        let privacy = try XCTUnwrap(labels.firstIndex(of: "Privacy policy"), "\(labels)")
+        let source = try XCTUnwrap(labels.firstIndex(of: "Source code"), "\(labels)")
+        let licenses = try XCTUnwrap(labels.firstIndex(of: "Open-source licenses"), "\(labels)")
+        XCTAssertLessThan(privacy, source)
+        XCTAssertLessThan(source, licenses)
+        XCTAssertEqual(host.identifier(of: "Open-source licenses"), "about.openSourceLicenses")
+        XCTAssertNil(host.hint(of: "Open-source licenses"))
+        XCTAssertTrue(host.text().contains(AboutInfo.disclaimer), host.text())
     }
 }
