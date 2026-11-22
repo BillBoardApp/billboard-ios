@@ -95,6 +95,9 @@ struct BillSlipContent: Equatable {
     /// The bill, or the group's status lead, is vetoed (project decision 2026-11-19): the stamp reads VETOED
     /// unless the status is Finalized. Lists still follow `status`.
     var vetoed = false
+    /// The Congress the bill (or the group's status lead) ended with, when it has no outcome (REL-46,
+    /// `Bill.endedCongress(at:)`): the stamp reads ENDED WITH THE 119TH CONGRESS.
+    var endedCongress: Int?
     /// The number of the group member whose status the slip shows, when it is not the primary: the
     /// stamp then reads "S. 456 PASSED".
     var companionLead: String? = nil
@@ -117,6 +120,7 @@ struct BillSlipContent: Equatable {
         numbers: [String],
         status: BillStatus,
         vetoed: Bool = false,
+        endedCongress: Int? = nil,
         companionLead: String? = nil,
         isWatched: Bool = false,
         subtitle: String? = nil,
@@ -128,6 +132,7 @@ struct BillSlipContent: Equatable {
         self.numbers = numbers
         self.status = status
         self.vetoed = vetoed
+        self.endedCongress = endedCongress
         self.companionLead = companionLead
         self.isWatched = isWatched
         self.subtitle = subtitle
@@ -137,13 +142,15 @@ struct BillSlipContent: Equatable {
     }
 
     /// The slip of `bill` for a reader with `profile`. A companion group's slip (`companion`) shows
-    /// every member's number, the group's status lead and the "Identical bills" tag.
+    /// every member's number, the group's status lead and the "Identical bills" tag. `now` decides whether the
+    /// bill's Congress has ended (REL-46).
     init(
         bill: Bill,
         profile: UserProfile,
         companion: BillCompanionDisplay? = nil,
         numberSubtitle: String? = nil,
-        sponsor: Sponsor? = nil
+        sponsor: Sponsor? = nil,
+        now: Date = CongressCalendar.now()
     ) {
         var tags: [IndexTag.Kind] = []
         if let companion {
@@ -157,6 +164,7 @@ struct BillSlipContent: Equatable {
             numbers: companion?.numbers ?? bill.officialBillNumber.map { [$0] } ?? [],
             status: lead?.status ?? bill.billStatus,
             vetoed: lead?.vetoed ?? bill.isVetoed,
+            endedCongress: lead.map(\.endedCongress) ?? bill.endedCongress(at: now),
             companionLead: lead.flatMap { $0.isPrimary ? nil : $0.billNumber },
             isWatched: bill.userWatched || companion?.isWatched == true,
             subtitle: numberSubtitle.flatMap { $0.isEmpty ? nil : $0 },
@@ -186,7 +194,7 @@ struct BillSlipContent: Equatable {
 
     /// The stamp in the docket line.
     var stamp: StatusStamp.Kind {
-        companionLead.map { .companionLead(number: $0, status: status, vetoed: vetoed) } ?? StatusStamp.Kind(status: status, vetoed: vetoed)
+        .docket(status: status, vetoed: vetoed, endedCongress: endedCongress, companionLead: companionLead)
     }
 
     /// The binoculars mark shows: a watched bill whose status is Updated.
@@ -341,6 +349,7 @@ struct BillSlip: View {
                 chamber: DocketLine.chamber(forBillNumber: number),
                 status: content.status,
                 vetoed: content.vetoed,
+                endedCongress: content.endedCongress,
                 companionLead: content.companionLead,
                 isWatched: content.isWatched
             )
@@ -350,6 +359,7 @@ struct BillSlip: View {
                 chamber: nil,
                 status: content.status,
                 vetoed: content.vetoed,
+                endedCongress: content.endedCongress,
                 companionLead: content.companionLead,
                 isWatched: content.isWatched
             )

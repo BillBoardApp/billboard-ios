@@ -591,7 +591,7 @@ final class FoundationComponentRenderTests: XCTestCase {
     private static let allStamps: [StatusStamp.Kind] = [
         .new, .updated, .passed, .failed, .vetoed, .becameLaw, .verified, .notVerified, .sealed, .unread,
         .allCaughtUp, .nothingYet, .notFound, .couldNotLoad, .companionLead(number: "S. 456", status: .passed),
-        .companionLead(number: "H.R. 10", status: .failed, vetoed: true)
+        .companionLead(number: "H.R. 10", status: .failed, vetoed: true), .ended(congress: 119)
     ]
 
     func testStampsRenderEveryKindInEveryLook() throws {
@@ -668,7 +668,7 @@ final class FoundationComponentRenderTests: XCTestCase {
         })
         for expected in ["New", "Updated", "Passed", "Failed", "Vetoed", "Became law", "Verified", "Not verified", "Sealed", "Unread",
                          "All caught up", "Nothing yet", "Not found", "Couldn't load", "Senate bill 456 passed",
-                         "House bill 10 vetoed"] {
+                         "House bill 10 vetoed", "Ended with the 119th Congress"] {
             XCTAssertTrue(strings.contains(expected), "\(expected) in \(strings)")
         }
         XCTAssertFalse(strings.contains("BECAME LAW"), "VoiceOver hears words, not capitals")
@@ -686,6 +686,7 @@ final class FoundationComponentRenderTests: XCTestCase {
                 DocketLine(number: "S. 456", status: .failed)
                 DocketLine(number: "H.R. 131", status: .failed, vetoed: true)
                 DocketLine(numbers: ["S. 10", "H.R. 10"], chamber: nil, status: .passed, vetoed: true, companionLead: "H.R. 10")
+                DocketLine(number: "H.R. 4521", status: .updated, endedCongress: 119)
             }
         }
     }

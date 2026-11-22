@@ -664,6 +664,8 @@ struct WeeklyBriefItemView: View {
     let item: WeeklyDigestItem
     /// The member a member item names, when the members list has them.
     var member: CongressMemberManifestItem? = nil
+    /// Decides whether the bill's Congress has ended (REL-46).
+    var now: Date = CongressCalendar.now()
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -681,12 +683,13 @@ struct WeeklyBriefItemView: View {
         let status = item.billState?.billStatus
         // VETOED for a vetoed bill (project decision 2026-11-19); `billState` keeps the status.
         let vetoed = item.vetoed == true
+        let ended = item.endedCongress(at: now)
         guard item.kind == .bill else { return nil }
         if let number = item.billNumber {
-            return DocketLine(number: number, status: status, vetoed: vetoed)
+            return DocketLine(number: number, status: status, vetoed: vetoed, endedCongress: ended)
         }
         guard let status else { return nil }
-        return DocketLine(numbers: [], chamber: nil, status: status, vetoed: vetoed)
+        return DocketLine(numbers: [], chamber: nil, status: status, vetoed: vetoed, endedCongress: ended)
     }
 
     private var memberAffiliation: String? {

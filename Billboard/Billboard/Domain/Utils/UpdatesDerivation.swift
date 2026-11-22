@@ -52,9 +52,10 @@ nonisolated enum StarterFeed {
 
 enum BillboardQueueDerivation {
     /// The pending bills for the Bills list: in the history window, not voted, not skipped, open (not
-    /// Passed, Became law or Failed: `BillStatus.isDecided`), and eligible for the profile (topics, life areas and members it follows, or an active priority;
-    /// for a profile that follows no topics or life areas, the starter feed's eligibility). The
-    /// starter feed's order and 15-card cap are applied by `BillBoardDerivedCollections`.
+    /// Passed, Became law or Failed: `BillStatus.isDecided`), of the Congress in office (`currentCongress`; an
+    /// earlier Congress's bills are past bills, REL-46), and eligible for the profile (topics, life areas and
+    /// members it follows, or an active priority; for a profile that follows no topics or life areas, the starter
+    /// feed's eligibility). The starter feed's order and 15-card cap are applied by `BillBoardDerivedCollections`.
     nonisolated static func snapshot(
         bills: [Bill],
         dismissedBillIDs: Set<UUID>,
@@ -62,7 +63,8 @@ enum BillboardQueueDerivation {
         historyWindow: BillboardHistoryWindow,
         voteIndex: UpdatesDerivation.VoteIdentityIndex,
         voteLookup: (String) -> VoteState,
-        starterFeedEnabled: Bool = FeatureFlags.starterFeed
+        starterFeedEnabled: Bool = FeatureFlags.starterFeed,
+        currentCongress: Int = CongressCalendar.currentCongress()
     ) -> BillboardQueueSnapshot {
         let recencyCutoff = Date(timeIntervalSinceNow: -historyWindow.timeInterval)
         let isEligible = eligibility(for: userProfile, starterFeedEnabled: starterFeedEnabled)
@@ -73,7 +75,8 @@ enum BillboardQueueDerivation {
                     isEligible: isEligible,
                     recencyCutoff: recencyCutoff,
                     voteIndex: voteIndex,
-                    voteLookup: voteLookup
+                    voteLookup: voteLookup,
+                    currentCongress: currentCongress
                 ))
             }
         }
@@ -91,7 +94,7 @@ enum BillboardQueueDerivation {
             }
             guard !dismissedBillIDs.contains(bill.id) else { continue }
             guard isEligible(bill) else { continue }
-            if bill.billStatus.isDecided { continue }
+            if bill.billStatus.isDecided || bill.isFromEarlierCongress(than: currentCongress) { continue }
 
             pendingBills.append(bill)
 
@@ -131,6 +134,8 @@ enum BillboardQueueDerivation {
         let recencyCutoff: Date
         let voteIndex: UpdatesDerivation.VoteIdentityIndex
         let voteLookup: (String) -> VoteState
+        /// The Congress in office: an earlier Congress's bills are closed (REL-46).
+        let currentCongress: Int
 
         func isRecent(_ bill: Bill) -> Bool {
             guard let storedAt = FlexibleISO8601.parse(bill.storedAt) else { return false }
@@ -141,9 +146,10 @@ enum BillboardQueueDerivation {
             UpdatesDerivation.isUserVoted(bill, voteIndex: voteIndex, voteLookup: voteLookup)
         }
 
-        /// Passed, Became law (Finalized, REL-44) or Failed.
+        /// Passed, Became law (Finalized, REL-44) or Failed, or of a Congress that has ended (REL-46), whatever its
+        /// status. A group shares its Congress, so all its members close together.
         func isClosed(_ bill: Bill) -> Bool {
-            bill.billStatus.isDecided
+            bill.billStatus.isDecided || bill.isFromEarlierCongress(than: currentCongress)
         }
 
         /// A bill in no group, checked as without groups.
