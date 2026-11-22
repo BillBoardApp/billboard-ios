@@ -14,6 +14,8 @@ enum PendingPushDeepLink {
         case digest(billIds: [String], notificationType: String?)
         case weeklyDigest(digestId: String?)
         case alert(Alert)
+        /// The district check push (REL-46): opens Profile with the Where you vote editor.
+        case districtCheck
 
         struct Alert: Codable, Equatable {
             var alertId: String?
@@ -44,6 +46,9 @@ enum PendingPushDeepLink {
 
             case .weeklyDigest(let digestId):
                 return .weeklyDigest(digestId: PushPayloadLimits.identifier(digestId))
+
+            case .districtCheck:
+                return .districtCheck
 
             case .alert(let alert):
                 let fieldLimit = PushPayloadLimits.maxFieldLength

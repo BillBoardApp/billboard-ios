@@ -39,6 +39,9 @@ struct PushNotificationPayload {
         case bill
         case billAlert
         case weeklyDigest
+        /// "Your district may have changed" (REL-46, sent once after a new Congress meets with new House maps): no
+        /// bills; a tap opens Profile with Where you vote.
+        case districtCheck
         case unknown
 
         init(raw: String?) {
@@ -50,6 +53,8 @@ struct PushNotificationPayload {
                 self = .billAlert
             case "weekly_digest", "weekly-digest":
                 self = .weeklyDigest
+            case "district_check", "district-check":
+                self = .districtCheck
             default:
                 self = .unknown
             }
@@ -220,6 +225,11 @@ struct PushNotificationPayload {
     var allBillIds: [String] {
         guard let billIds = billIds else { return [] }
         return PushPayloadLimits.billGuids(billIds)
+    }
+
+    /// The district check push (REL-46): `domain` "district_check".
+    var isDistrictCheck: Bool {
+        domain == .districtCheck
     }
 
     var isWeeklyDigestRelevant: Bool {
