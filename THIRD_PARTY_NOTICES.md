@@ -72,8 +72,9 @@ when the file was not regenerated after a change to this table, to a pin in `Pac
   line found at the top of their files.
 
 The set was worked out from the package manifests at the pinned revisions: the targets that the app's three Amplify
-products depend on when built for iOS. When a pin changes, check that set again (a Release build with
-`LD_GENERATE_MAP_FILE=YES` shows what is linked), update this table and the one above, and run the generator.
+products depend on when built for iOS. It matches the package objects a simulator build links (the app target's
+`Billboard.LinkFileList`, checked on 2026-11-22). When a pin changes, check that set again (that file, or a Release
+build with `LD_GENERATE_MAP_FILE=YES`), update this table and the one above, and run the generator.
 
 <!-- open-source-licenses:begin -->
 | Package | Part | Licence (SPDX) | Notice | Licence text | Copyright lines from |
