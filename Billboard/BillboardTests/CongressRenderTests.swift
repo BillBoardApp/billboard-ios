@@ -763,6 +763,76 @@ final class CongressRenderTests: XCTestCase {
         }
     }
 
+    // MARK: - Use basic profile (UX-39c)
+
+    // These tests are not async: a hosted page needs the main run loop, which an async test holds.
+
+    /// "Use basic profile" shows what the members list knows and nothing it doesn't: no Service section, so no
+    /// "Terms served 0", "Service start <this year>" or "Years in office 0". The Civic Profile is read on its own,
+    /// which works when only the member's record failed, and shows the chart.
+    func testTheBasicProfileInventsNoServiceFactsAndShowsTheChartWhenItLoads() throws {
+        let strings = try basicProfileStrings(civicProfile: Self.readyCivicProfileJSON, until: "Based on 47 votes, 12 sponsored and 9 cosponsored bills")
+        let text = strings.joined(separator: " | ")
+        XCTAssertFalse(strings.contains("Service"), text)
+        XCTAssertFalse(text.contains("Terms served"), text)
+        XCTAssertFalse(text.contains("Years in office"), text)
+        XCTAssertFalse(text.contains("\(Calendar.current.component(.year, from: Date()))"), text)
+        XCTAssertFalse(text.contains("Loading official vote history…"), text)
+        XCTAssertTrue(text.contains("Senator Tim Kaine, Democrat, Virginia"), "the members list's facts: \(text)")
+    }
+
+    /// When the Civic Profile can't be read either, the card says so instead of loading for good.
+    func testTheBasicProfileSaysWhenOfficialVotesCantLoad() throws {
+        let strings = try basicProfileStrings(civicProfile: nil, until: "Official votes aren't available right now.")
+        let text = strings.joined(separator: " | ")
+        XCTAssertFalse(text.contains("Loading official vote history…"), text)
+        XCTAssertFalse(strings.contains("Service"), text)
+    }
+
+    /// A member page whose record fails to load (offline), after "Use basic profile", once `until` shows. The Civic
+    /// Profile read answers `civicProfile`, or fails when it is nil.
+    private func basicProfileStrings(civicProfile: Data?, until expected: String) throws -> [String] {
+        let manifest = try member("K000384", "Tim Kaine", chamber: "Senate", state: "VA", party: "D")
+        let transport = RecordingTransport()
+        transport.failure = { request -> Error? in
+            if civicProfile != nil, request.path.contains("civic-profile") { return nil }
+            return URLError(.notConnectedToInternet)
+        }
+        transport.responses = civicProfile.map { [$0] } ?? []
+        let user = UserStore(preferencesService: FakePreferencesService(), congressService: FakeCongressService())
+        let civicStore = CivicProfileStore(service: FakeCivicService())
+        return APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                NavigationStack { CongressMemberProfileLoaderView(manifest: manifest) }
+                    .environmentObject(user)
+                    .environmentObject(civicStore),
+                size: CGSize(width: 390, height: 2400),
+                settle: 0.5
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.run(until: { host.strings().contains { $0.contains(CongressMemberLoadErrorView.title) } }), host.text())
+            XCTAssertTrue(host.activate(MemberBasicProfileButton.title), host.text())
+            XCTAssertTrue(host.run(until: { host.strings().contains(expected) }), "\(expected): \(host.text())")
+            XCTAssertTrue(
+                transport.requests.contains { $0.path.contains("civic-profile") },
+                "the basic profile reads the Civic Profile: \(transport.requests.map(\.path))"
+            )
+            return host.strings()
+        }
+    }
+
+    /// `GET /congress-member-civic-profile` for a member whose chart is ready.
+    private static let readyCivicProfileJSON = Data(#"""
+    {"axes": {"individualVsCommunity": 0.65, "localVsFederal": 0.55, "freeMarketVsRegulated": 0.4},
+     "votesUsed": 47, "totalVotesWithProfile": 80, "sponsoredBillsUsed": 12, "cosponsoredBillsUsed": 9,
+     "totalEvidenceUsed": 68, "totalEvidenceWithProfile": 110, "minEvidenceRequired": 25, "isReady": true,
+     "diagnostics": {"rollingWindow": 200, "evidenceWeights": {"voteYea": 1, "voteNay": 1, "sponsor": 1, "cosponsor": 0.5},
+       "weightedEvidenceUsed": 60, "totalWeightedEvidenceWithProfile": 100, "minWeightedEvidenceRequired": 20,
+       "minAxisWeightedEvidenceRequired": 4, "minAxesRequired": 3, "axesWithSufficientSignal": 3, "axisCoverage": {},
+       "readinessReasons": [], "latestEvidenceAt": null},
+     "evidence": []}
+    """#.utf8)
+
     // MARK: - Review fixes: rows, heads and lines at AX5 (spec 2.5, 7.2)
 
     /// The party rows stack at accessibility sizes as member rows do: the disc's line holds only the disc
