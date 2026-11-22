@@ -23,9 +23,9 @@ struct CongressMember: Identifiable, Hashable {
     let party: PoliticalParty
     let district: String? // House only (e.g. "CA-12")
 
-    // Service
-    let termsServed: Int
-    let serviceStartYear: Int
+    // Service: nil when the source doesn't say (the members list, a record with no terms), never a guess.
+    let termsServed: Int?
+    let serviceStartYear: Int?
 
     init(
         id: UUID,
@@ -42,8 +42,8 @@ struct CongressMember: Identifiable, Hashable {
         biography: String = "",
         party: PoliticalParty = .independent,
         district: String? = nil,
-        termsServed: Int = 0,
-        serviceStartYear: Int = Calendar.current.component(.year, from: Date())
+        termsServed: Int? = nil,
+        serviceStartYear: Int? = nil
     ) {
         self.id = id
         self.name = name

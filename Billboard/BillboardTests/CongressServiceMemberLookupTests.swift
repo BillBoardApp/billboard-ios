@@ -86,8 +86,8 @@ final class CongressServiceMemberLookupTests: XCTestCase {
         XCTAssertEqual(beyer.district, "8")
         XCTAssertEqual(beyer.currentCongressBillsSupportedCount, 12)
         XCTAssertEqual(beyer.biography, "")
-        XCTAssertEqual(beyer.termsServed, 0)
-        XCTAssertEqual(beyer.serviceStartYear, Calendar.current.component(.year, from: Date()))
+        XCTAssertNil(beyer.termsServed, "the members list has no service history")
+        XCTAssertNil(beyer.serviceStartYear)
 
         let kaine = try XCTUnwrap(CongressService.congressMember(for: sponsorID("K000384")))
         XCTAssertEqual(kaine.chamber, "Senate")

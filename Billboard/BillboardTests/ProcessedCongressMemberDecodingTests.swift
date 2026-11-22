@@ -115,6 +115,35 @@ final class CongressMemberTrackedCountsTests: XCTestCase {
         rows.map { "\($0.label)=\($0.value)" }
     }
 
+    /// A record that doesn't say how long the member has served leaves it unknown, and the page shows no Service
+    /// section (UX-39c), rather than "Terms served 0 · Service start <this year>". One that does keeps its figures.
+    @MainActor
+    func testServiceHistoryIsNeverGuessed() throws {
+        let manifest = try manifestItem(#"{"bioguideId": "K000384", "name": "Tim Kaine", "chamber": "Senate"}"#)
+        for payload in [
+            #"{"bioguideId": "K000384", "name": "Tim Kaine", "chamber": "Senate"}"#,
+            #"{"bioguideId": "K000384", "name": "Tim Kaine", "chamber": "Senate", "termsServed": 0, "terms": []}"#
+        ] {
+            let member = try CongressService.decodeProcessedCongressMember(from: Data(payload.utf8)).toCongressMember(fallback: manifest)
+            XCTAssertNil(member.termsServed, payload)
+            XCTAssertNil(member.serviceStartYear, payload)
+            XCTAssertEqual(CongressMemberPageContent(member: member, civicProfileMode: .unavailable).serviceRows, [], payload)
+        }
+
+        let served = Data(#"""
+        {"bioguideId": "K000384", "name": "Tim Kaine", "chamber": "Senate",
+         "terms": [{"chamber": "Senate", "startYear": 2013, "endYear": 2019, "stateCode": "VA"},
+                   {"chamber": "Senate", "startYear": 2019, "stateCode": "VA"}]}
+        """#.utf8)
+        let house = try CongressService.decodeProcessedCongressMember(from: served).toCongressMember(fallback: manifest)
+        XCTAssertEqual(house.termsServed, 2)
+        XCTAssertEqual(house.serviceStartYear, 2013)
+        XCTAssertEqual(
+            CongressMemberPageContent(member: house, civicProfileMode: .unavailable).serviceRows.map(\.label),
+            ["Terms served", "Service start", "Years in office"]
+        )
+    }
+
     @MainActor
     func testTrackedCountsAreShownApartFromCareerTotals() throws {
         let payload = Data(#"""

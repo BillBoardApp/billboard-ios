@@ -258,12 +258,10 @@ struct ProcessedCongressMember: Decodable {
         let resolvedDistrict = currentTerm?.district
             ?? district
             ?? manifest.district
-        let resolvedStartYear = derivedStartYear
-            ?? serviceStartYear
-            ?? Calendar.current.component(.year, from: Date())
-        let resolvedTerms = derivedTermsServed
-            ?? termsServed
-            ?? 0
+        // Unknown stays unknown, and the page leaves out its Service section (UX-39c): no "0 terms", no "since this
+        // year". A record with an empty terms list counts as one that doesn't say.
+        let resolvedStartYear = derivedStartYear ?? serviceStartYear
+        let resolvedTerms = [derivedTermsServed, termsServed].compactMap { $0 }.first { $0 > 0 }
         let resolvedBiography = (biography ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedName = name.isEmpty ? manifest.name : name
         // The tracked counts come as a pair. Use the manifest's when this payload has neither
