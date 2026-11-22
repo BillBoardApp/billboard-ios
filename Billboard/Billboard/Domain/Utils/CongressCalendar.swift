@@ -47,3 +47,57 @@ nonisolated enum CongressCalendar {
         return Session(congress: congress, session: session)
     }
 }
+
+// MARK: - When a Congress ends (REL-46)
+
+nonisolated extension CongressCalendar {
+    /// The clock the past-Congress rules read when a caller passes no date (`now()`): the device's. The unit
+    /// tests pin it to a day in the 119th Congress before any test runs, so a test that builds 119th bills reads
+    /// the same on either side of a changeover; the changeover tests pass their own dates.
+    nonisolated(unsafe) static var clock: () -> Date = { Date() }
+
+    /// The time by `clock`.
+    static func now() -> Date {
+        clock()
+    }
+
+    /// The first Congress whose two years end at noon on January 3 (20th Amendment); earlier ones ended on March 4.
+    static let firstJanuaryCongress = 74
+
+    /// The year `congress` ends in: the odd year after its two years, 1789 + 2 × congress (2027 for the 119th).
+    static func endYear(ofCongress congress: Int) -> Int {
+        1789 + 2 * congress
+    }
+
+    /// When `congress` ends and the next one starts: noon Eastern on January 3 of `endYear(ofCongress:)`, which is
+    /// 17:00 UTC (January keeps standard time). The 119th ends at 2027-01-03T17:00Z and the 120th at
+    /// 2029-01-03T17:00Z, as the backend's shared-bill page counts it (website/app.js, `congressEndTime`).
+    static func endTime(ofCongress congress: Int) -> Date {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        let components = DateComponents(year: endYear(ofCongress: congress), month: 1, day: 3, hour: 17)
+        return utc.date(from: components) ?? .distantFuture
+    }
+
+    /// When `congress` starts: when the one before it ends.
+    static func startTime(ofCongress congress: Int) -> Date {
+        endTime(ofCongress: congress - 1)
+    }
+
+    /// Whether `congress` has ended at `date`.
+    static func hasEnded(_ congress: Int, at date: Date) -> Bool {
+        date >= endTime(ofCongress: congress)
+    }
+
+    /// The Congress in office at `date`, whose bills are the current ones: it changes at noon Eastern on
+    /// January 3 of an odd year, when one Congress ends and the next starts. The masthead's `session(on:)` turns
+    /// the page over at midnight that day; a bill's Congress has ended only from noon. So the 119th is current
+    /// until 2027-01-03T17:00Z and the 120th from then.
+    static func currentCongress(at date: Date = now()) -> Int {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        let year = utc.component(.year, from: date)
+        let congress = (year - 1789) / 2 + 1
+        return date < startTime(ofCongress: congress) ? congress - 1 : congress
+    }
+}

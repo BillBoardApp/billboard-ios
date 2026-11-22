@@ -104,6 +104,56 @@ final class BillDisplayFormattingTests: XCTestCase {
         XCTAssertEqual(reversed.map(\.actionCode), ["28000", "31000", "33000"])
     }
 
+    // MARK: - Congress (REL-46)
+
+    func testTheCongressComesFromTheFieldElseTheGuid() {
+        XCTAssertEqual(BillDisplayFormatting.congress(fromGuid: "BILLS-119hr1ih"), 119)
+        XCTAssertEqual(BillDisplayFormatting.congress(fromGuid: " BILLS-120sjres7 "), 120)
+        XCTAssertNil(BillDisplayFormatting.congress(fromGuid: "BILLS-hr1"))
+        XCTAssertNil(BillDisplayFormatting.congress(fromGuid: "not-a-guid"))
+        XCTAssertNil(BillDisplayFormatting.congress(fromGuid: nil))
+
+        func bill(congress: String?, guid: String?) -> Bill {
+            Bill(title: "A bill", category: "Other", soWhat: "", billStatus: .new, guid: guid, congress: congress, userVoted: false)
+        }
+        XCTAssertEqual(bill(congress: "118", guid: "BILLS-119hr1").congressNumber, 118, "the field wins")
+        XCTAssertEqual(bill(congress: nil, guid: "BILLS-119hr1").congressNumber, 119, "a guid-only bill")
+        XCTAssertEqual(bill(congress: " ", guid: "BILLS-119hr1").congressNumber, 119)
+        XCTAssertEqual(bill(congress: "119-hr-1", guid: "BILLS-120hr1").congressNumber, 120, "a field that is not a number")
+        XCTAssertNil(bill(congress: nil, guid: nil).congressNumber)
+        XCTAssertEqual(bill(congress: nil, guid: "BILLS-119sconres32is").billTypeCode, "sconres")
+    }
+
+    /// The Congress shows only on a bill of an earlier Congress than the one in office, which turns over at noon
+    /// Eastern on January 3, 2027 (17:00 UTC).
+    func testTheCongressTagShowsOnlyOnOlderBills() throws {
+        XCTAssertEqual(BillDisplayFormatting.olderCongressTag(congress: 119, currentCongress: 120), "119th")
+        XCTAssertEqual(BillDisplayFormatting.olderCongressTag(congress: 111, currentCongress: 120), "111th")
+        XCTAssertNil(BillDisplayFormatting.olderCongressTag(congress: 120, currentCongress: 120))
+        XCTAssertNil(BillDisplayFormatting.olderCongressTag(congress: 121, currentCongress: 120))
+        XCTAssertNil(BillDisplayFormatting.olderCongressTag(congress: nil, currentCongress: 120))
+
+        let older = Bill(title: "A bill", category: "Other", soWhat: "", billStatus: .new, guid: "BILLS-119hr1", userVoted: false)
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = utc
+        let before = try XCTUnwrap(calendar.date(from: DateComponents(year: 2027, month: 1, day: 3, hour: 16, minute: 59)))
+        let after = try XCTUnwrap(calendar.date(from: DateComponents(year: 2027, month: 1, day: 3, hour: 17)))
+        XCTAssertNil(older.olderCongressTag(at: before))
+        XCTAssertEqual(older.olderCongressTag(at: after), "119th")
+        XCTAssertNil(older.olderCongressTag(), "the tests' clock is in the 119th Congress")
+    }
+
+    func testTheSpokenNumberSaysAnOlderBillsCongress() {
+        XCTAssertEqual(SpokenForm.billNumber("H.R. 1", congressTag: "119th"), "House bill 1, 119th Congress")
+        XCTAssertEqual(SpokenForm.billNumber("H.R. 1", congressTag: nil), "House bill 1")
+        XCTAssertEqual(SpokenForm.billNumber("S.J.Res. 21", congressTag: " "), "Senate joint resolution 21")
+        XCTAssertEqual(
+            SpokenForm.withCongress("House bill 10 and Senate bill 10", congressTag: "119th"),
+            "House bill 10 and Senate bill 10, 119th Congress"
+        )
+    }
+
     // MARK: - Companion bills (APPF-23)
 
     /// Each of the eight bill types, from a plain guid and from a text-version guid.

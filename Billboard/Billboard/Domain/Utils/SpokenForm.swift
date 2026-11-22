@@ -86,6 +86,19 @@ nonisolated enum SpokenForm {
         guard let words = billTypeWords[typeCode] else { return number }
         return "\(words) \(digits)"
     }
+
+    /// "House bill 1, 119th Congress": the spoken number with the Congress of an older bill (`congressTag`,
+    /// "119th"; `BillDisplayFormatting.olderCongressTag`, REL-46), else the number alone.
+    static func billNumber(_ number: String, congressTag: String?) -> String {
+        withCongress(billNumber(number), congressTag: congressTag)
+    }
+
+    /// `spoken` followed by ", 119th Congress" when `congressTag` is set: "House bill 10 and Senate bill 10, 119th
+    /// Congress".
+    static func withCongress(_ spoken: String, congressTag: String?) -> String {
+        guard let tag = congressTag?.trimmingCharacters(in: .whitespacesAndNewlines), !tag.isEmpty else { return spoken }
+        return "\(spoken), \(tag) Congress"
+    }
 }
 
 /// The full names of the postal codes Billboard shows: the 50 states, DC and the five territories
