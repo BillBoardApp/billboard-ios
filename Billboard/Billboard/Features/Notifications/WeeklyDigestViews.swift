@@ -686,7 +686,7 @@ struct WeeklyBriefItemView: View {
         let ended = item.endedCongress(at: now)
         guard item.kind == .bill else { return nil }
         if let number = item.billNumber {
-            return DocketLine(number: number, status: status, vetoed: vetoed, endedCongress: ended)
+            return DocketLine(number: number, status: status, vetoed: vetoed, endedCongress: ended, congressTag: item.olderCongressTag(at: now))
         }
         guard let status else { return nil }
         return DocketLine(numbers: [], chamber: nil, status: status, vetoed: vetoed, endedCongress: ended)

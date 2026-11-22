@@ -49,6 +49,9 @@ struct UpdatesActionRow: View {
     let alert: BillAlert
     /// "H.R. 77" when the bill is loaded; the docket line then shows only the date.
     let billNumber: String?
+    /// An older bill's Congress, "119th" (REL-46, `Bill.olderCongressTag(at:)`): "H.R. 77 · HOUSE · 119TH", read
+    /// "House bill 77, 119th Congress".
+    var congressTag: String?
     var now: Date = Date()
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -70,7 +73,7 @@ struct UpdatesActionRow: View {
     var accessibilityText: String {
         SpokenSentences.join([
             alert.title,
-            billNumber.map { SpokenForm.billNumber($0) },
+            billNumber.map { SpokenForm.billNumber($0, congressTag: congressTag) },
             date.map { "Action on \($0.spoken)" },
             actionText,
             topic
@@ -115,14 +118,14 @@ struct UpdatesActionRow: View {
         if isAX {
             VStack(alignment: .leading, spacing: 6) {
                 if let billNumber {
-                    DocketLine(number: billNumber, status: nil)
+                    DocketLine(number: billNumber, status: nil, congressTag: congressTag)
                 }
                 dateText
             }
         } else {
             HStack(alignment: .firstTextBaseline, spacing: BillboardStyle.Space.s) {
                 if let billNumber {
-                    DocketLine(number: billNumber, status: nil)
+                    DocketLine(number: billNumber, status: nil, congressTag: congressTag)
                 } else {
                     Spacer(minLength: 0)
                 }
@@ -145,7 +148,13 @@ struct UpdatesOutcomeRow: View {
     private var docketLine: DocketLine {
         let ended = bill.endedCongress(at: now)
         if let number = bill.officialBillNumber {
-            return DocketLine(number: number, status: bill.billStatus, vetoed: bill.isVetoed, endedCongress: ended)
+            return DocketLine(
+                number: number,
+                status: bill.billStatus,
+                vetoed: bill.isVetoed,
+                endedCongress: ended,
+                congressTag: bill.olderCongressTag(at: now)
+            )
         }
         return DocketLine(numbers: [], chamber: nil, status: bill.billStatus, vetoed: bill.isVetoed, endedCongress: ended)
     }

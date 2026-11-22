@@ -110,9 +110,11 @@ struct NotificationsView: View {
         )
     }
 
-    /// A Recent actions row (spec 4.53), with the bill's number when the bill is loaded.
+    /// A Recent actions row (spec 4.53), with the bill's number, and an older bill's Congress, when the bill is
+    /// loaded.
     private func actionRow(_ alert: BillAlert) -> UpdatesActionRow {
-        UpdatesActionRow(alert: alert, billNumber: alert.billID.flatMap { billsStore.bill(for: $0)?.officialBillNumber })
+        let bill = alert.billID.flatMap { billsStore.bill(for: $0) }
+        return UpdatesActionRow(alert: alert, billNumber: bill?.officialBillNumber, congressTag: bill?.olderCongressTag())
     }
 
     @ViewBuilder

@@ -8,7 +8,8 @@ import SwiftUI
 ///
 /// The line is one VoiceOver element: "House bill 1234. New.", with "Watching." when the mark shows. A
 /// vetoed bill's stamp reads VETOED (project decision 2026-11-19): "House bill 131. Vetoed." A New or Updated
-/// bill whose Congress ended reads ENDED WITH THE 119TH CONGRESS (REL-46).
+/// bill whose Congress ended reads ENDED WITH THE 119TH CONGRESS (REL-46). A bill of an earlier Congress than the one
+/// in office prints its Congress after the chamber, "H.R. 1 · HOUSE · 119TH", read "House bill 1, 119th Congress".
 /// Every bill number in it is read in its spoken form, the companions' too ("Identical to House bill
 /// 900", spec 1.7).
 /// When the line does not fit, and at every accessibility text size, the stamp moves onto its own
@@ -19,6 +20,10 @@ struct DocketLine: View {
     /// HOUSE or SENATE; nil for a companion pair (the numbers say it) or an unknown bill type.
     let chamber: CongressChamber?
     let status: BillStatus?
+    /// An older bill's Congress, "119th" (`BillDisplayFormatting.olderCongressTag`, REL-46): printed after the chamber
+    /// in `ink3` (the docket role sets it in capitals) and read after the numbers. Nil for a current bill. A group's
+    /// members share a Congress, so a line has one.
+    var congressTag: String?
     /// The bill (or the group's status lead) is vetoed: the stamp reads VETOED unless the status is
     /// Finalized (`StatusStamp.Kind(status:vetoed:)`).
     var vetoed = false
@@ -65,6 +70,7 @@ struct DocketLine: View {
         status: BillStatus?,
         vetoed: Bool = false,
         endedCongress: Int? = nil,
+        congressTag: String? = nil,
         companionLead: String? = nil,
         isWatched: Bool = false,
         companions: Companions? = nil
@@ -72,6 +78,7 @@ struct DocketLine: View {
         self.numbers = numbers
         self.chamber = chamber
         self.status = status
+        self.congressTag = congressTag
         self.vetoed = vetoed
         self.endedCongress = endedCongress
         self.companionLead = companionLead
@@ -85,6 +92,7 @@ struct DocketLine: View {
         status: BillStatus?,
         vetoed: Bool = false,
         endedCongress: Int? = nil,
+        congressTag: String? = nil,
         isWatched: Bool = false,
         companions: Companions? = nil
     ) {
@@ -94,6 +102,7 @@ struct DocketLine: View {
             status: status,
             vetoed: vetoed,
             endedCongress: endedCongress,
+            congressTag: congressTag,
             isWatched: isWatched,
             companions: companions
         )
@@ -121,10 +130,17 @@ struct DocketLine: View {
         return .docket(status: status, vetoed: vetoed, endedCongress: endedCongress, companionLead: companionLead)
     }
 
+    /// The tag to print and read: only with a number to follow.
+    private var shownCongressTag: String? {
+        numbers.isEmpty ? nil : congressTag?.trimmedNonEmpty
+    }
+
     /// What VoiceOver reads for the line: "House bill 1234. New.", "House bill 10 and Senate bill 10.
-    /// Senate bill 10 passed.", "House bill 1234. Updated. Watching. Identical to House bill 900."
+    /// Senate bill 10 passed.", "House bill 1234. Updated. Watching. Identical to House bill 900.", and for an older
+    /// bill "House bill 1, 119th Congress. Ended with the 119th Congress."
     var accessibilityText: String {
-        var sentences = [BillDisplayFormatting.naturalList(numbers.map(SpokenForm.billNumber))]
+        let spokenNumbers = BillDisplayFormatting.naturalList(numbers.map(SpokenForm.billNumber))
+        var sentences = [SpokenForm.withCongress(spokenNumbers, congressTag: shownCongressTag)]
         if let stampKind { sentences.append(stampKind.spokenWord) }
         if showsWatchedMark { sentences.append("Watching") }
         if let spoken = companions?.spoken { sentences.append(spoken) }
@@ -174,20 +190,28 @@ struct DocketLine: View {
         }
     }
 
-    /// "H.R. 1234 · HOUSE" as one text, so it keeps one baseline and wraps as a line of type. A bill
-    /// number never breaks inside, and a "·" stays at the end of its line, not the start of the next.
+    /// "H.R. 1234 · HOUSE", or "H.R. 1 · HOUSE · 119TH" for an older bill, as one text, so it keeps one baseline and
+    /// wraps as a line of type. A bill number never breaks inside, and a "·" stays at the end of its line, not the
+    /// start of the next.
     private var numbersText: some View {
         let unbroken = numbers.map { $0.replacingOccurrences(of: " ", with: Self.noBreakSpace) }
         let numberRun = Text(unbroken.joined(separator: "\(Self.noBreakSpace)· "))
             .fontWeight(.semibold)
             .foregroundStyle(BillboardColors.secondaryText)
-        let text: Text
+        var trailing: [String] = []
         if let chamber, numbers.count == 1 {
-            let chamberRun = Text("\(Self.noBreakSpace)· \(CongressMemberLabel.chamberWord(chamber))")
-                .foregroundStyle(BillboardColors.dimText)
-            text = Text("\(numberRun)\(chamberRun)")
-        } else {
+            trailing.append(CongressMemberLabel.chamberWord(chamber))
+        }
+        if let shownCongressTag {
+            trailing.append(shownCongressTag)
+        }
+        let text: Text
+        if trailing.isEmpty {
             text = numberRun
+        } else {
+            let trailingRun = Text(trailing.map { "\(Self.noBreakSpace)· \($0)" }.joined())
+                .foregroundStyle(BillboardColors.dimText)
+            text = Text("\(numberRun)\(trailingRun)")
         }
         return text.textRole(.docket)
     }
@@ -212,7 +236,7 @@ struct DocketLine: View {
         DocketLine(numbers: ["H.R. 10", "S. 10"], chamber: nil, status: .passed, companionLead: "S. 10")
         DocketLine(number: "H.R. 77", status: .finalized, companions: .init(["H.R. 900"]))
         DocketLine(number: "H.R. 131", status: .failed, vetoed: true)
-        DocketLine(number: "H.R. 4521", status: .updated, endedCongress: 119)
+        DocketLine(number: "H.R. 4521", status: .updated, endedCongress: 119, congressTag: "119th")
     }
     .padding()
     .background(BillboardColors.cardBackground)

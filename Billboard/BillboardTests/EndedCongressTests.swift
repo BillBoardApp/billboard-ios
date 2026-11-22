@@ -237,7 +237,7 @@ final class EndedCongressTests: XCTestCase {
         )
         XCTAssertEqual(DocketLine(number: "H.R. 12", status: .failed, endedCongress: 119).accessibilityText, "House bill 12. Failed.")
 
-        XCTAssertTrue(UpdatesOutcomeRow(bill: bill("hr", .failed), now: Self.noon).accessibilityText.contains("House bill 12. Failed."))
+        XCTAssertTrue(UpdatesOutcomeRow(bill: bill("hr", .failed), now: Self.noon).accessibilityText.contains("House bill 12, 119th Congress. Failed."))
         let page = BillFrontMatter.Content(bill: ended, now: Self.noon)
         XCTAssertEqual(page.endedCongress, 119)
         XCTAssertEqual(page.endedNote, Self.billNote)
@@ -258,7 +258,7 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertNil(item(.updated, eyebrow: "Updated Jan 8", vetoed: true).endedCongress(at: Self.noon))
         XCTAssertEqual(updated.dateEyebrow, "Jan 8", "the stamp says it; the eyebrow keeps the date")
         XCTAssertTrue(
-            WeeklyBriefItemView(item: updated, now: Self.noon).accessibilityText.contains("House bill 12. Ended with the 119th Congress."),
+            WeeklyBriefItemView(item: updated, now: Self.noon).accessibilityText.contains("House bill 12, 119th Congress. Ended with the 119th Congress."),
             WeeklyBriefItemView(item: updated, now: Self.noon).accessibilityText
         )
     }
