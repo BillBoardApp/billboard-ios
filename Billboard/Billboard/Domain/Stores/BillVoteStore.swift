@@ -50,11 +50,12 @@ final class BillVoteStore: ObservableObject {
     private var writeChains: [String: (token: UUID, task: Task<VoteWriteResult, Never>)] = [:]
 
     /// A bill with a vote write the server has not confirmed: the vote row as it was before the first
-    /// such write (`baseline`, what a refused vote rolls back to, with its `votedAt` when it is a vote)
-    /// and the latest vote's token.
+    /// such write (`baseline`, what a refused vote rolls back to, with its `votedAt` when it is a vote, and
+    /// `baselineUnsaved` when that row was a vote not saved yet) and the latest vote's token.
     private struct UnconfirmedVote {
         var baseline: VoteState
         var baselineVotedAt: Date?
+        var baselineUnsaved: VoteType?
         var latest: UUID
     }
 
@@ -69,6 +70,22 @@ final class BillVoteStore: ObservableObject {
     /// that belongs to one is dropped, because it would send the refused vote again (APPF-27). Once the bill's
     /// queued writes have all run, only the latest vote's refusal is kept: later updates belong to that vote.
     private var refusedVotes: [String: Set<UUID>] = [:]
+
+    /// The votes not saved yet, by the guid each was sent to: the bill's latest vote write ended `.unconfirmed`, so
+    /// the server may hold the vote or not, and bill detail shows it with "Not saved yet." (UX-49). Cleared by the
+    /// next vote on the bill (a refusal of that vote rolls back to this one, which is then still not saved), a push
+    /// that clears the vote, or once the server confirms the vote another way (`onUnsavedVoteConfirmed`). It lives in
+    /// memory in this account's store, which sign-out ends, so it never reaches another account. (APPF-30 step 2 is
+    /// to keep it across a relaunch.)
+    private(set) var unsavedVotes: [String: VoteType] = [:]
+
+    /// Runs once when the server confirms a vote in `unsavedVotes` some other way than its own write: a reasons
+    /// update that sends the same vote was stored, or a read of the bill's row returned that vote (UX-49b). The
+    /// vote's own write never ended `.stored`, so what follows a stored vote runs now: the bills store writes the
+    /// bill's `type=bill` preference row (`BillsStore.connect(voteStore:)`), and this store refreshes the civic
+    /// score and profile. It lives here, not on the bill page, because a reasons update sent as the page is left
+    /// can end after the page is gone.
+    var onUnsavedVoteConfirmed: (@MainActor (_ guid: String, _ vote: VoteType) -> Void)?
 
     /// Weak references for post-vote refresh.
     private weak var civicScoreStore: CivicScoreStore?
@@ -168,6 +185,8 @@ final class BillVoteStore: ObservableObject {
         guard !cleaned.isEmpty else { return }
         cache.remove(billId: cleaned)
         statesByBillId.removeValue(forKey: cleaned)
+        // The server cleared the vote, a vote not saved yet included: no read can confirm that vote now.
+        unsavedVotes[cleaned] = nil
         // The server cleared the vote: a refused vote still in flight rolls back to "unknown", not to it.
         if let pending = unconfirmedVotes[cleaned] {
             unconfirmedVotes[cleaned] = UnconfirmedVote(baseline: .unknown, baselineVotedAt: nil, latest: pending.latest)
@@ -265,7 +284,8 @@ final class BillVoteStore: ObservableObject {
 
     /// Stores the server's rows for `ids`. An id the server left out stays as it is (never assumed not
     /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken. Returns
-    /// the rows it stored (an Abstain row as `.voted(.abstain)`).
+    /// the rows it stored (an Abstain row as `.voted(.abstain)`). A row that is a vote not saved yet confirms it
+    /// (`confirmUnsavedVote`); another row, or none, leaves it not saved.
     @discardableResult
     private func applyRemote(
         _ remote: [String: BillVotesService.RemoteVoteState],
@@ -283,6 +303,7 @@ final class BillVoteStore: ObservableObject {
                 cache.setVoted(billId: id, vote: rv.vote, votedAt: rv.votedAt, now: now)
                 statesByBillId[id] = rv.vote.countsAsVote ? .voted(rv.vote) : .notVoted
                 stored[id] = .voted(rv.vote)
+                confirmUnsavedVote(billId: id, vote: rv.vote)
             case .notVoted:
                 cache.setNotVoted(billId: id, now: now)
                 statesByBillId[id] = .notVoted
@@ -299,9 +320,10 @@ final class BillVoteStore: ObservableObject {
     /// - Calls server idempotently (overwrite existing vote).
     ///
     /// A failed write keeps the optimistic vote and ends `.unconfirmed` (nothing retries it; bill detail offers
-    /// Try again, UX-49), except a vote the server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT` and the
-    /// other coded refusals, sent before the server stores anything), which rolls the bill back to its vote
-    /// before this one (spec D 2.8.4, APPF-27) and sets `lastError`. Server codes get their own copy.
+    /// Try again, UX-49; the vote stays in `unsavedVotes` until the server confirms it, UX-49b), except a vote the
+    /// server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT` and the other coded refusals, sent before the server
+    /// stores anything), which rolls the bill back to its vote before this one (spec D 2.8.4, APPF-27) and sets
+    /// `lastError`. Server codes get their own copy.
     ///
     /// Returns true once the server has stored the vote.
     @discardableResult
@@ -319,7 +341,8 @@ final class BillVoteStore: ObservableObject {
         print(">>> [BillVoteStore] setVote -> billId=\(cleaned) vote=\(vote.feedbackValue) reasons=\(reasons.count)")
         #endif
 
-        // Remember the row this vote replaces, in case the server refuses it.
+        // Remember the row this vote replaces, in case the server refuses it: a vote not saved yet too, which this
+        // write's own result now decides.
         let voteToken = UUID()
         latestVotes[cleaned] = voteToken
         if var pending = unconfirmedVotes[cleaned] {
@@ -329,9 +352,11 @@ final class BillVoteStore: ObservableObject {
             unconfirmedVotes[cleaned] = UnconfirmedVote(
                 baseline: cache.getState(for: cleaned),
                 baselineVotedAt: cache.votedRow(for: cleaned)?.votedAt,
+                baselineUnsaved: unsavedVotes[cleaned],
                 latest: voteToken
             )
         }
+        unsavedVotes[cleaned] = nil
 
         // Optimistic update. We don't know `votedAt` from server yet; use `now`.
         let now = Date()
@@ -348,10 +373,7 @@ final class BillVoteStore: ObservableObject {
                     reasons: reasonKeys
                 )
                 self?.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: vote, votedAt: now)
-                // Refresh profile-derived metrics in the background after a successful vote; a read
-                // already running is followed by one more, so this vote counts (UX-39 N11).
-                Task { await self?.civicScoreStore?.refresh(afterSavedVote: true) }
-                Task { await self?.civicProfileStore?.refresh(afterSavedVote: true) }
+                self?.refreshCivicStatsAfterSavedVote()
                 return .stored
             } catch {
                 guard let self else { return .notSaved }
@@ -366,6 +388,11 @@ final class BillVoteStore: ObservableObject {
                 guard failure.rollsBack else {
                     // Keep the optimistic state: bill detail says the vote is not saved yet, with Try again
                     // (UX-49). No `lastError`: a page that was left says nothing, so it never shows on another bill.
+                    // The latest vote is kept as not saved yet, for the server to confirm another way (UX-49b); an
+                    // earlier one is not, as the newer vote's own result decides.
+                    if self.latestVotes[cleaned] == voteToken {
+                        self.unsavedVotes[cleaned] = vote
+                    }
                     self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
                     return .unconfirmed
                 }
@@ -394,11 +421,13 @@ final class BillVoteStore: ObservableObject {
         }
     }
 
-    /// The server refused the vote: put back the vote row from before it (with its own `votedAt`) and return
-    /// it, unless a newer vote on the bill is still waiting, whose own result then decides (nil).
+    /// The server refused the vote: put back the vote row from before it (with its own `votedAt`, and still not saved
+    /// yet when it was) and return it, unless a newer vote on the bill is still waiting, whose own result then
+    /// decides (nil).
     private func rollBackRefusedVote(billId: String, token: UUID) -> VoteState? {
         guard let pending = unconfirmedVotes[billId], pending.latest == token else { return nil }
         unconfirmedVotes[billId] = nil
+        unsavedVotes[billId] = pending.baselineUnsaved
         switch pending.baseline {
         case .unknown:
             cache.remove(billId: billId)
@@ -412,6 +441,23 @@ final class BillVoteStore: ObservableObject {
             statesByBillId[billId] = Self.normalizeState(.voted(previous))
         }
         return pending.baseline
+    }
+
+    /// The server holds `vote` on `billId`. When that is the vote not saved yet (`unsavedVotes`), it is saved now:
+    /// it leaves `unsavedVotes`, and `onUnsavedVoteConfirmed` and the civic refresh run, once (UX-49b). Another
+    /// vote leaves it not saved yet.
+    private func confirmUnsavedVote(billId: String, vote: VoteType) {
+        guard unsavedVotes[billId] == vote else { return }
+        unsavedVotes[billId] = nil
+        onUnsavedVoteConfirmed?(billId, vote)
+        refreshCivicStatsAfterSavedVote()
+    }
+
+    /// Refreshes profile-derived metrics in the background after a vote is saved; a read already running is
+    /// followed by one more, so this vote counts (UX-39 N11).
+    private func refreshCivicStatsAfterSavedVote() {
+        Task { [weak self] in await self?.civicScoreStore?.refresh(afterSavedVote: true) }
+        Task { [weak self] in await self?.civicProfileStore?.refresh(afterSavedVote: true) }
     }
 
     // MARK: - Errors (UX-49)
@@ -481,7 +527,8 @@ final class BillVoteStore: ObservableObject {
     ///
     /// The update belongs to the bill's latest vote (`submitVote`) and waits for its write. When the server
     /// refuses that vote, the update is dropped without being sent (false, and `lastError` keeps the vote's
-    /// text): it would send the vote the app rolled back, which the server could then store (APPF-27).
+    /// text): it would send the vote the app rolled back, which the server could then store (APPF-27). A stored
+    /// update of a vote not saved yet confirms that vote (`onUnsavedVoteConfirmed`, UX-49b).
     ///
     /// Returns true once the server has stored the update.
     @discardableResult
@@ -509,6 +556,8 @@ final class BillVoteStore: ObservableObject {
                     feedback: vote,
                     reasons: reasonKeys
                 )
+                // The update sends the whole row: a vote not saved yet is saved now (UX-49b).
+                self?.confirmUnsavedVote(billId: cleaned, vote: vote)
                 return .stored
             } catch {
                 if APIErrorResponse.isCancellation(error) { return .notSaved }
