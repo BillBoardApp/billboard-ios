@@ -292,6 +292,174 @@ final class FormErrorAnnouncementTests: XCTestCase {
         }
     }
 
+    // MARK: - Where do you vote? (UX-45a)
+
+    // These tests are not async: a hosted screen needs the main run loop, which an async test holds.
+
+    /// Find my district with an address the geocoder can't place: the line under the button is said once, queued
+    /// after the button's label changes back, and said again when the next try fails the same way.
+    func testWhereDoYouVoteSaysAnAddressNotFound() {
+        let spoken = SpokenLines()
+        let transport = RecordingTransport()
+        let notFound = Data(#"{"verified":false}"#.utf8)
+        transport.responses = [notFound, notFound]
+        APIClient.$current.withValue(transport.client) {
+            let host = Self.host(Self.signedOut(Self.whereDoYouVote()), spoken: spoken)
+            defer { host.close() }
+            XCTAssertEqual(spoken.lines, [], "nothing to say yet")
+
+            XCTAssertTrue(host.activate("Find my district"), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: "location.error") != nil }), host.text())
+            host.run(0.3)
+            XCTAssertEqual(host.label(ofIdentifier: "location.error"), LocationEditorView.addressNotFoundMessage)
+            XCTAssertEqual(spoken.lines, [LocationEditorView.addressNotFoundMessage], "said once")
+
+            XCTAssertTrue(host.activate("Find my district"), host.text())
+            XCTAssertTrue(host.run(until: { transport.requests.count == 2 && host.label(ofIdentifier: "location.error") != nil }), host.text())
+            host.run(0.3)
+            XCTAssertEqual(spoken.lines, [LocationEditorView.addressNotFoundMessage, LocationEditorView.addressNotFoundMessage], "and again after the next try")
+        }
+    }
+
+    /// A find that fails on the way (offline) says its line once.
+    func testWhereDoYouVoteSaysAFailedSave() {
+        let spoken = SpokenLines()
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let host = Self.host(Self.signedOut(Self.whereDoYouVote()), spoken: spoken)
+            defer { host.close() }
+
+            XCTAssertTrue(host.activate("Find my district"), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: "location.error") != nil }), host.text())
+            host.run(0.3)
+            XCTAssertEqual(transport.requests.count, 1, "the find was sent")
+            XCTAssertEqual(host.label(ofIdentifier: "location.error"), AuthErrorMessages.network)
+            XCTAssertEqual(spoken.lines, [AuthErrorMessages.network], "said once")
+        }
+    }
+
+    /// Setup's Continue follows the representatives; when that fails, the line under Try again is said once, and
+    /// said again when Try again fails too.
+    func testSetupSaysAFailedFollow() {
+        let spoken = SpokenLines()
+        let preferences = FailingPreferences()
+        let host = Self.host(Self.whereDoYouVote(.setup, saved: Self.savedDistrict, preferences: preferences), spoken: spoken)
+        defer { host.close() }
+        let headline = LocationSavedPanel.spokenHeadline(state: "VA", district: "11")
+        XCTAssertEqual(spoken.lines, [headline])
+
+        XCTAssertTrue(host.activate("Continue"), host.text())
+        XCTAssertTrue(host.run(until: { host.strings().contains(LocationSavedPanel.setupFollowFailedMessage) }), host.text())
+        host.run(0.3)
+        XCTAssertEqual(preferences.putCount, 1, "the follow was sent")
+        XCTAssertEqual(spoken.lines, [headline, LocationSavedPanel.setupFollowFailedMessage], "said once")
+
+        XCTAssertTrue(host.activate("Try again"), host.text())
+        XCTAssertTrue(host.run(until: { preferences.putCount == 2 && host.strings().contains(LocationSavedPanel.setupFollowFailedMessage) }), host.text())
+        host.run(0.3)
+        XCTAssertEqual(
+            spoken.lines,
+            [headline, LocationSavedPanel.setupFollowFailedMessage, LocationSavedPanel.setupFollowFailedMessage],
+            "and again after Try again"
+        )
+    }
+
+    /// Profile's Follow your representatives says a failed follow once.
+    func testProfileSaysAFailedFollow() {
+        let spoken = SpokenLines()
+        let preferences = FailingPreferences()
+        let host = Self.host(Self.whereDoYouVote(.profile, saved: Self.savedDistrict, preferences: preferences), spoken: spoken)
+        defer { host.close() }
+        let headline = LocationSavedPanel.spokenHeadline(state: "VA", district: "11")
+
+        XCTAssertTrue(host.activate("Follow your representatives"), host.text())
+        XCTAssertTrue(host.run(until: { host.strings().contains(LocationSavedPanel.profileFollowFailedMessage) }), host.text())
+        host.run(0.3)
+        XCTAssertEqual(preferences.putCount, 1, "the follow was sent")
+        XCTAssertEqual(spoken.lines, [headline, LocationSavedPanel.profileFollowFailedMessage], "said once")
+    }
+
+    /// "You're in VA-11." is said once as the panel shows, in the words VoiceOver reads on the headline, and through
+    /// the form's queued sayer, so the button's label change is not cut off.
+    func testTheSuccessHeadlineIsQueued() {
+        let spoken = SpokenLines()
+        let host = Self.host(Self.whereDoYouVote(.profile, saved: Self.savedDistrict, preferences: FailingPreferences()), spoken: spoken)
+        defer { host.close() }
+        XCTAssertEqual(spoken.lines, ["You're in Virginia's 11th district."])
+        host.run(0.3)
+        XCTAssertEqual(spoken.lines, ["You're in Virginia's 11th district."], "not again")
+        let queued = VoiceOverAnnouncement.queued(spoken.lines[0])
+        XCTAssertEqual(queued.attribute(.accessibilitySpeechQueueAnnouncement, at: 0, effectiveRange: nil) as? Bool, true)
+    }
+
+    /// Where do you vote? with an address ready for Find my district.
+    private static func whereDoYouVote() -> some View {
+        var form = LocationForm()
+        form.line1 = "10 Main St"
+        form.city = "Fairfax"
+        form.state = "VA"
+        form.zip = "22030"
+        return NavigationStack {
+            LocationEditorView(context: .profile, congressService: FakeCongressService(), form: form) { _ in }
+        }
+    }
+
+    /// Where do you vote? open on the success panel for `saved`, its follows saved to `preferences`.
+    private static func whereDoYouVote(
+        _ context: LocationEditorView.Context,
+        saved: LocationEditorResult,
+        preferences: FailingPreferences
+    ) -> some View {
+        let auth = AuthManager()
+        auth.cancelSignIn()
+        return NavigationStack {
+            LocationEditorView(context: context, congressService: FakeCongressService(), savedResult: saved) { _ in }
+        }
+        .environmentObject(auth)
+        .environmentObject(UserStore(preferencesService: preferences, congressService: FakeCongressService()))
+    }
+
+    /// VA-11 found from an address, with its two senators and its House member, none followed yet.
+    private static var savedDistrict: LocationEditorResult {
+        func member(_ id: String, name: String, chamber: String, district: String?) -> CongressMemberManifestItem {
+            CongressMemberManifestItem(dto: UserAPIContractsV1.CongressMemberManifestItem(
+                bioguideId: id,
+                name: name,
+                chamber: chamber,
+                state: "VA",
+                party: "Democratic",
+                district: district,
+                depictionImageUrl: nil,
+                updatedAt: nil,
+                currentCongressBillsSupportedCount: nil,
+                trackedSponsoredCount: nil,
+                trackedSupportedCount: nil
+            ))
+        }
+        return LocationEditorResult(
+            state: "VA",
+            district: "11",
+            method: .address,
+            verification: DistrictVerificationStatus(
+                verified: true,
+                status: "verified",
+                method: DistrictVerificationStatus.methodAddressGeocode,
+                verifiedAt: nil,
+                resolved: DistrictVerificationResolved(state: "VA", districtId: "11"),
+                signals: nil,
+                repsSignalEligible: nil,
+                nextStep: nil
+            ),
+            representatives: [
+                member("S1", name: "Tim Kaine", chamber: "Senate", district: nil),
+                member("S2", name: "Mark Warner", chamber: "Senate", district: nil),
+                member("H11", name: "Jane Doe", chamber: "House", district: "11")
+            ],
+            followedRepresentatives: false
+        )
+    }
+
     // MARK: - Helpers
 
     private static func host<Content: View>(_ view: Content, spoken: SpokenLines) -> AccessibilityTreeText.Host {
@@ -320,6 +488,25 @@ private final class SpokenLines {
 
     var announce: @MainActor @Sendable (String) -> Void {
         { [self] line in lines.append(line) }
+    }
+}
+
+/// Preferences whose saves fail as offline after a short wait, as a real request does: the follow is "Following…" for
+/// a moment before the failure shows.
+@MainActor
+private final class FailingPreferences: PreferencesServicing {
+    private(set) var putCount = 0
+
+    func getPreferences() async throws -> [PreferencesItem] { [] }
+
+    func putPreferences(_ items: [PreferencesItem]) async throws {
+        putCount += 1
+        try await Task.sleep(for: .milliseconds(100))
+        throw URLError(.notConnectedToInternet)
+    }
+
+    func deletePreferences(_ items: [PreferencesItem]) async throws {
+        throw URLError(.notConnectedToInternet)
     }
 }
 
