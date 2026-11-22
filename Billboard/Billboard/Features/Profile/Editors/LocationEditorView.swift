@@ -64,12 +64,14 @@ struct LocationEditorView: View {
 
     /// - Parameters:
     ///   - congressService: nil means `CongressService.Live()`.
+    ///   - form: what the form opens with before the profile's district and the saved address fill it in (tests).
     ///   - savedResult: opens on the success panel for this saved district (render tests); nil opens the form.
     init(
         context: Context,
         congressService: (any CongressServicing)? = nil,
         onSignOut: (() -> Void)? = nil,
         isSignOutDisabled: Bool = false,
+        form: LocationForm = LocationForm(),
         savedResult: LocationEditorResult? = nil,
         onSaved: @escaping (LocationEditorResult) -> Void = { _ in },
         onDone: @escaping (LocationEditorResult) -> Void
@@ -80,6 +82,7 @@ struct LocationEditorView: View {
         self.isSignOutDisabled = isSignOutDisabled
         self.onSaved = onSaved
         self.onDone = onDone
+        _form = State(initialValue: form)
         _savedResult = State(initialValue: savedResult)
     }
 
@@ -113,11 +116,13 @@ struct LocationEditorView: View {
     @EnvironmentObject private var userStore: UserStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var form = LocationForm()
+    @State private var form: LocationForm
     @State private var mode: Mode = .address
     @State private var savedResult: LocationEditorResult?
     @State private var isBusy = false
     @State private var errorMessage: String?
+    /// Failed finds and saves so far: each failure's line is a new view, said again even when the words are the same.
+    @State private var errorCount = 0
     @State private var manifest: [CongressMemberManifestItem] = []
     @State private var followState: FollowState = .idle
     @State private var hasPrefilled = false
@@ -380,11 +385,14 @@ struct LocationEditorView: View {
         }
     }
 
+    /// A failed find or save, under the button, said to VoiceOver as it appears (UX-45): VoiceOver's focus stays on the
+    /// button, whose label changes back from "Finding your district…" at the same moment, so the line is queued after it.
     @ViewBuilder
     private var errorText: some View {
         if let errorMessage {
-            RecordErrorText(errorMessage)
+            RecordErrorText(errorMessage, announces: true)
                 .accessibilityIdentifier("location.error")
+                .id(errorCount)
         }
     }
 
@@ -491,11 +499,10 @@ struct LocationEditorView: View {
         }
     }
 
-    /// Shows a failed find or save under the button and says it to VoiceOver, whose focus stays on
-    /// the button (only a success was announced, so a failure was silent).
+    /// Shows a failed find or save under the button, which says it to VoiceOver (`errorText`).
     private func showError(_ message: String) {
+        errorCount += 1
         errorMessage = message
-        AccessibilityNotification.Announcement(message).post()
     }
 
     private func showSaved(
@@ -520,9 +527,6 @@ struct LocationEditorView: View {
             savedResult = result
         }
         onSaved(result)
-        AccessibilityNotification.Announcement(
-            DistrictPickerModel.successHeadline(state: state, district: district)
-        ).post()
     }
 
     private func unfollowedRepresentativeIDs(_ result: LocationEditorResult) -> [String] {
@@ -608,6 +612,10 @@ struct LocationSavedPanel: View {
     /// The size from which Follow your representatives is the text button.
     static let followTextButtonSize: DynamicTypeSize = .accessibility4
 
+    /// A failed follow, said to VoiceOver as it appears (UX-45); a failed Try again says it again.
+    static let setupFollowFailedMessage = "We couldn't follow your representatives. Try again, or continue and follow them in Congress."
+    static let profileFollowFailedMessage = "We couldn't follow your representatives. Try again in a moment."
+
     /// The headline as VoiceOver reads it: the district code in words.
     static func spokenHeadline(state: String, district: String) -> String {
         let headline = DistrictPickerModel.successHeadline(state: state, district: district)
@@ -633,6 +641,8 @@ struct LocationSavedPanel: View {
                     .accessibilityLabel(Self.spokenHeadline(state: result.state, district: result.district))
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("location.success.headline")
+                    // Said as the panel replaces the form, queued after the button's own label change (UX-45).
+                    .announcesToVoiceOver(Self.spokenHeadline(state: result.state, district: result.district))
 
                 StatusStamp(result.isVerified ? .verified : .notVerified)
                     .padding(.top, BillboardStyle.Space.xs)
@@ -693,7 +703,7 @@ struct LocationSavedPanel: View {
         .accessibilityIdentifier("location.continue")
 
         if followState == .failed {
-            RecordErrorText("We couldn't follow your representatives. Try again, or continue and follow them in Congress.")
+            RecordErrorText(Self.setupFollowFailedMessage, announces: true)
 
             Button("Continue without following") {
                 onContinue(false)
@@ -726,7 +736,7 @@ struct LocationSavedPanel: View {
             .accessibilityIdentifier("location.followRepresentatives")
 
             if followState == .failed {
-                RecordErrorText("We couldn't follow your representatives. Try again in a moment.")
+                RecordErrorText(Self.profileFollowFailedMessage, announces: true)
             }
         } else if !result.representatives.isEmpty {
             Text("You follow your representatives.")
