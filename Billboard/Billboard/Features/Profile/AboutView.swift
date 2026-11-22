@@ -2,19 +2,23 @@ import SwiftUI
 import UIKit
 
 /// What "About Billboard" shows (spec D 2.7): the version line and the two website links, built
-/// from the bundle's Info.plist. Pure, for `AboutViewTests`.
+/// from the bundle's Info.plist, and the public source code link. Pure, for `AboutViewTests`.
 struct AboutInfo: Equatable {
     /// Info.plist key of the public website (`https://billboard-project.com`), set by D0.
     static let websiteBaseURLKey = "WEBSITE_BASE_URL"
     static let roadmapPath = "roadmap.html"
     static let privacyPath = "privacy.html"
+    /// The app's public repository (approved D1, decision 17 of 2026-11-08): shown whatever the build's website key,
+    /// since billboard-ios is public.
+    static let sourceCodeURL = URL(string: "https://github.com/BillBoardApp/billboard-ios")!
 
     /// Legal-facing: the project confirms this wording (spec D 7.4). The sources are the backend's:
     /// bills from the Congress.gov API and GovInfo; House roll calls from the Congress.gov API and
     /// Senate roll calls from senate.gov. The app shows no headlines: the priority resolver's
     /// Bedrock model reads news headlines (Google News search of AP, Reuters and NPR), picks the
-    /// "In the news" bills and writes the reason shown under the chip, hence "chosen with AI".
-    static let disclaimer = "Billboard is an independent app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
+    /// "In the news" bills and writes the reason shown under the chip, hence "chosen with AI". "open-source" since
+    /// 1.3, the first release built from the public repository (approved D3, decision 17 of 2026-11-08).
+    static let disclaimer = "Billboard is an independent, open-source app and is not affiliated with Congress or any government agency. Bill information comes from Congress.gov and GovInfo, roll-call votes from Congress.gov and the U.S. Senate, and In the news picks are chosen with AI from public news headlines."
 
     /// "Version 1.2 (45)".
     let versionLine: String
@@ -89,9 +93,9 @@ struct AboutInfo: Equatable {
 
 /// "About Billboard" (spec D 2.7; Civic Record spec 4.70, frame 16), from Settings, as a settings list on
 /// paper under the system glass bar with the system back button: "Billboard" and the version (in the docket
-/// face, read from the bundle), the public roadmap and the privacy policy in ink with a trailing
-/// `arrow.up.right` (both open in Safari), Contact us (a new email to `ContactUs.address`, UX-39), and the
-/// disclaimer, word for word. No row symbols.
+/// face, read from the bundle), the public roadmap, the privacy policy and the source code in ink with a trailing
+/// `arrow.up.right` (all open in Safari), Open-source licenses (a screen in the app, with a chevron; APPF-32),
+/// Contact us (a new email to `ContactUs.address`, UX-39), and the disclaimer, word for word. No row symbols.
 struct AboutView: View {
     let info: AboutInfo
 
@@ -119,21 +123,33 @@ struct AboutView: View {
             }
             .recordListRows()
 
-            if info.roadmapURL != nil || info.privacyURL != nil {
-                Section {
-                    if let roadmapURL = info.roadmapURL {
-                        AboutLinkRow(title: "Roadmap", destination: roadmapURL)
-                            .accessibilityIdentifier("about.roadmap")
-                    }
-                    if let privacyURL = info.privacyURL {
-                        AboutLinkRow(title: "Privacy policy", destination: privacyURL)
-                            .accessibilityIdentifier("about.privacy")
-                    }
-                } footer: {
-                    RecordListFooter("Opens in Safari.")
+            // The website links need the build's website key; the source code link (D1) is always there.
+            Section {
+                if let roadmapURL = info.roadmapURL {
+                    AboutLinkRow(title: "Roadmap", destination: roadmapURL)
+                        .accessibilityIdentifier("about.roadmap")
                 }
-                .recordListRows()
+                if let privacyURL = info.privacyURL {
+                    AboutLinkRow(title: "Privacy policy", destination: privacyURL)
+                        .accessibilityIdentifier("about.privacy")
+                }
+                AboutLinkRow(title: "Source code", destination: AboutInfo.sourceCodeURL)
+                    .accessibilityIdentifier("about.sourceCode")
+            } footer: {
+                RecordListFooter("Opens in Safari.")
             }
+            .recordListRows()
+
+            // APPF-32: the notices and licences of the code the app is built with (approved D2), a screen in the app.
+            Section {
+                NavigationLink {
+                    OpenSourceLicensesView()
+                } label: {
+                    SettingsRowText(OpenSourceLicensesCopy.title)
+                }
+                .accessibilityIdentifier("about.openSourceLicenses")
+            }
+            .recordListRows()
 
             // UX-39: the one contact address, also for stranded sign-ups and data requests. The footer shows the
             // address for anyone without Mail.
