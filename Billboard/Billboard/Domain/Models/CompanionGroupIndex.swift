@@ -109,14 +109,21 @@ nonisolated struct CompanionStatusLead: Equatable, Sendable {
     let status: BillStatus
     /// The lead member is vetoed and did not become law (`Bill.isVetoed`, project decision 2026-11-19).
     var vetoed = false
+    /// The Congress the lead member ended with, when it has no outcome (`Bill.endedCongress(at:)`, REL-46): the
+    /// group's members share the Congress, so the whole group ended.
+    var endedCongress: Int?
     let isPrimary: Bool
     /// The lead member's official number, e.g. "S. 456".
     let billNumber: String
 
     /// "Passed" when the primary leads, else the status naming the member: "Passed · S. 456". A
     /// member that became law (Finalized, REL-44) reads "Became law" ("Became law · S. 456"), and a
-    /// vetoed member "Vetoed" ("Vetoed · H.R. 10").
+    /// vetoed member "Vetoed" ("Vetoed · H.R. 10"). A group whose Congress ended with no outcome reads "Ended
+    /// with the 119th Congress", naming no member (REL-46).
     var label: String {
+        if let endedCongress, !vetoed, status == .new || status == .updated {
+            return EndedCongress.stampWord(congress: endedCongress)
+        }
         let word = vetoed && status != .finalized ? BillStatus.vetoedLabel : status.displayLabel
         return isPrimary ? word : "\(word) · \(billNumber)"
     }
@@ -334,35 +341,39 @@ nonisolated struct CompanionGroupIndex: Sendable, Equatable {
 
     /// The member with the highest rank (Finalized 5 > vetoed 4 > Passed 3 > Failed 2 > Updated 1 > New or
     /// not loaded 0, `statusRank(for:)`); ties go to the later `storedAt`, then to the primary. `memberBills`
-    /// are the loaded members' bills (any order; legacy text-version bills count for their member).
-    func statusLead(for group: BillCompanionGroup, memberBills: [Bill]) -> CompanionStatusLead {
-        var best: (guid: String, status: BillStatus, vetoed: Bool, rank: Int, date: Date)?
+    /// are the loaded members' bills (any order; legacy text-version bills count for their member). `now`
+    /// decides whether the lead's Congress has ended (REL-46); a lead with no loaded bill is read from its guid, as
+    /// New.
+    func statusLead(for group: BillCompanionGroup, memberBills: [Bill], now: Date = CongressCalendar.now()) -> CompanionStatusLead {
+        var best: (guid: String, bill: Bill?, rank: Int, date: Date)?
         for member in group.memberGuids {
             let bills = memberBills.filter { memberGuid(for: $0) == member }
             let candidates = bills.map { bill in
-                (
-                    status: bill.billStatus,
-                    vetoed: bill.isVetoed,
-                    rank: Self.statusRank(for: bill),
-                    date: FlexibleISO8601.parse(bill.storedAt) ?? .distantPast
-                )
+                (bill: Optional(bill), rank: Self.statusRank(for: bill), date: FlexibleISO8601.parse(bill.storedAt) ?? .distantPast)
             }
             let top = candidates.max { lhs, rhs in
                 lhs.rank != rhs.rank ? lhs.rank < rhs.rank : lhs.date < rhs.date
-            } ?? (status: BillStatus.new, vetoed: false, rank: 0, date: Date.distantPast)
+            } ?? (bill: nil, rank: 0, date: Date.distantPast)
             // Strictly greater: an equal rank and date keeps the earlier member (the primary first).
             if let current = best, !(top.rank > current.rank || (top.rank == current.rank && top.date > current.date)) {
                 continue
             }
-            best = (member, top.status, top.vetoed, top.rank, top.date)
+            best = (member, top.bill, top.rank, top.date)
         }
-        let lead = best ?? (group.primaryGuid, .new, false, 0, .distantPast)
+        let guid = best?.guid ?? group.primaryGuid
+        let bill = best?.bill
+        let record = bill?.endedCongressRecord ?? EndedCongress.Record(
+            congress: BillDisplayFormatting.congress(fromGuid: guid),
+            typeCode: BillDisplayFormatting.billTypeCode(billType: nil, billNumber: nil, guid: guid),
+            status: .new
+        )
         return CompanionStatusLead(
-            guid: lead.guid,
-            status: lead.status,
-            vetoed: lead.vetoed,
-            isPrimary: lead.guid == group.primaryGuid,
-            billNumber: Self.billNumber(forGUID: lead.guid)
+            guid: guid,
+            status: bill?.billStatus ?? .new,
+            vetoed: bill?.isVetoed ?? false,
+            endedCongress: EndedCongress.stampCongress(for: record, at: now),
+            isPrimary: guid == group.primaryGuid,
+            billNumber: Self.billNumber(forGUID: guid)
         )
     }
 

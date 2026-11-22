@@ -129,7 +129,7 @@ struct BillBoardTab: View {
     }
 
     private var canExpandHistoryWindow: Bool {
-        selectedBillboardHistoryWindow.canExpandFurther
+        selectedBillboardHistoryWindow.canExpandFurther()
     }
 
     private func expandHistoryWindowUntilResults(startFromNextWeek: Bool) async {
@@ -141,7 +141,7 @@ struct BillBoardTab: View {
         var historyWindow = selectedBillboardHistoryWindow
         var shouldContinue = startFromNextWeek || computeQueueSnapshot(for: historyWindow).pendingBills.isEmpty
 
-        while shouldContinue, !Task.isCancelled, historyWindow.canExpandFurther {
+        while shouldContinue, !Task.isCancelled, historyWindow.canExpandFurther() {
             historyWindow = historyWindow.nextExpanded
             appState.sessionBillboardHistoryWindow = historyWindow
             await billsStore.load(forceRefresh: true, mode: .manifestOnly, historyWindow: historyWindow)

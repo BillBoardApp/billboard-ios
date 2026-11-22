@@ -137,14 +137,17 @@ struct UpdatesActionRow: View {
 /// lines) and the topic, over a hairline. It opens the bill with the vote panel (project decision 1).
 struct UpdatesOutcomeRow: View {
     let bill: Bill
+    /// Decides whether the bill's Congress has ended (REL-46).
+    var now: Date = CongressCalendar.now()
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var docketLine: DocketLine {
+        let ended = bill.endedCongress(at: now)
         if let number = bill.officialBillNumber {
-            return DocketLine(number: number, status: bill.billStatus, vetoed: bill.isVetoed)
+            return DocketLine(number: number, status: bill.billStatus, vetoed: bill.isVetoed, endedCongress: ended)
         }
-        return DocketLine(numbers: [], chamber: nil, status: bill.billStatus, vetoed: bill.isVetoed)
+        return DocketLine(numbers: [], chamber: nil, status: bill.billStatus, vetoed: bill.isVetoed, endedCongress: ended)
     }
 
     private var summary: String? {

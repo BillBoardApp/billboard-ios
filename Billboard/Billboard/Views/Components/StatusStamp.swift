@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// A word inside a ruled rectangle, like a clerk's rubber stamp (Civic Record spec 3.2): NEW,
-/// UPDATED, PASSED, FAILED, VETOED, BECAME LAW and the rest of the stamp family. Never a dot, never a seal.
+/// UPDATED, PASSED, FAILED, VETOED, BECAME LAW, ENDED WITH THE 119TH CONGRESS and the rest of the stamp
+/// family. Never a dot, never a seal.
 ///
 /// The word is in the `stamp` role (11 pt SF Mono semibold, +0.08 em, capitals) and its colour is
 /// also the rule's. The fill is transparent, so the stamp shows the sheet beneath; nothing animates.
@@ -29,6 +30,9 @@ struct StatusStamp: View {
         /// A vetoed bill that did not become law (project decision 2026-11-19): in the Failed colour, single-ruled.
         case vetoed
         case becameLaw
+        /// A New or Updated bill whose Congress has ended (REL-46, `Bill.endedCongress(at:)`): "Ended with the 119th
+        /// Congress", in `ink3`, single-ruled. It wraps rather than truncates at the largest text sizes.
+        case ended(congress: Int)
         /// A companion group whose status comes from one member: "S. 456 PASSED", or "H.R. 10 VETOED" when
         /// that member is vetoed.
         case companionLead(number: String, status: BillStatus, vetoed: Bool = false)
@@ -40,10 +44,16 @@ struct StatusStamp: View {
         case notice(String, Tone)
 
         /// The stamp for a bill status. Replaces R2's status dot, arrows and seals. A vetoed bill's stamp is
-        /// VETOED, whatever its status, unless it became law (`Bill.isVetoed`): a law is never VETOED.
-        init(status: BillStatus, vetoed: Bool = false) {
+        /// VETOED, whatever its status, unless it became law (`Bill.isVetoed`): a law is never VETOED. A New or
+        /// Updated bill whose Congress ended (`endedCongress`, REL-46) is ENDED WITH THE 119TH CONGRESS: Became law,
+        /// Vetoed, Passed and Failed are outcomes and stand over it.
+        init(status: BillStatus, vetoed: Bool = false, endedCongress: Int? = nil) {
             if vetoed, status != .finalized {
                 self = .vetoed
+                return
+            }
+            if let endedCongress, status == .new || status == .updated {
+                self = .ended(congress: endedCongress)
                 return
             }
             switch status {
@@ -53,6 +63,16 @@ struct StatusStamp: View {
             case .failed: self = .failed
             case .finalized: self = .becameLaw
             }
+        }
+
+        /// A docket line's stamp: the status's (`init(status:vetoed:endedCongress:)`), or a companion group's lead
+        /// naming its member ("S. 456 PASSED"). A group whose lead has no outcome and whose Congress ended is plainly
+        /// ENDED WITH THE 119TH CONGRESS: its members share the Congress, and none has an outcome.
+        static func docket(status: BillStatus, vetoed: Bool = false, endedCongress: Int? = nil, companionLead: String? = nil) -> Kind {
+            let plain = Kind(status: status, vetoed: vetoed, endedCongress: endedCongress)
+            if case .ended = plain { return plain }
+            if let companionLead { return .companionLead(number: companionLead, status: status, vetoed: vetoed) }
+            return plain
         }
 
         static let nothingYet = Kind.notice("Nothing yet", .dim)
@@ -69,6 +89,7 @@ struct StatusStamp: View {
             case .failed: return "Failed"
             case .vetoed: return BillStatus.vetoedLabel
             case .becameLaw: return "Became law"
+            case let .ended(congress): return EndedCongress.stampWord(congress: congress)
             case let .companionLead(number, status, vetoed): return "\(number) \(Kind(status: status, vetoed: vetoed).word)"
             case .verified: return "Verified"
             case .notVerified: return "Not verified"
@@ -100,7 +121,7 @@ struct StatusStamp: View {
         var color: Color {
             switch self {
             case .new, .verified, .sealed, .unread: return BillboardColors.primaryText
-            case .notVerified: return BillboardColors.dimText
+            case .notVerified, .ended: return BillboardColors.dimText
             case .updated: return BillboardColors.statusUpdated
             case .passed, .becameLaw: return BillboardColors.statusPassed
             case .failed, .vetoed: return BillboardColors.statusFailed
@@ -118,7 +139,7 @@ struct StatusStamp: View {
         var paletteToken: BillboardColorToken {
             switch self {
             case .new, .verified, .sealed, .unread: return BillboardPalette.primaryText
-            case .notVerified: return BillboardPalette.dimText
+            case .notVerified, .ended: return BillboardPalette.dimText
             case .updated: return BillboardPalette.statusUpdated
             case .passed, .becameLaw: return BillboardPalette.statusPassed
             case .failed, .vetoed: return BillboardPalette.statusFailed
@@ -163,8 +184,8 @@ struct StatusStamp: View {
         self.size = size
     }
 
-    init(status: BillStatus, vetoed: Bool = false) {
-        self.kind = Kind(status: status, vetoed: vetoed)
+    init(status: BillStatus, vetoed: Bool = false, endedCongress: Int? = nil) {
+        self.kind = Kind(status: status, vetoed: vetoed, endedCongress: endedCongress)
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -224,7 +245,7 @@ struct StatusStamp: View {
     let kinds: [StatusStamp.Kind] = [
         .new, .updated, .passed, .failed, .vetoed, .becameLaw, .verified, .notVerified, .sealed, .unread,
         .allCaughtUp, .nothingYet, .couldNotLoad, .companionLead(number: "S. 456", status: .passed),
-        .companionLead(number: "H.R. 10", status: .failed, vetoed: true)
+        .companionLead(number: "H.R. 10", status: .failed, vetoed: true), .ended(congress: 119)
     ]
     FlowLayout(spacing: 12) {
         ForEach(Array(kinds.enumerated()), id: \.offset) { _, kind in

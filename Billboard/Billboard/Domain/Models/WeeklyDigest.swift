@@ -134,6 +134,21 @@ extension WeeklyDigestItem {
         return BillDisplayFormatting.officialBillNumber(billType: nil, billNumber: nil, guid: billGuid)
     }
 
+    /// The Congress a bill item's stamp says it ended with, or nil (REL-46, `EndedCongress.stampCongress`): from
+    /// its guid's Congress and type and its status. An item carries no actions, so a New or Updated bill of an
+    /// ended Congress is stamped, as its slip is before the bill is opened.
+    nonisolated func endedCongress(at now: Date = CongressCalendar.now()) -> Int? {
+        guard kind == .bill, let status = billState?.billStatus else { return nil }
+        let record = EndedCongress.Record(
+            congress: BillDisplayFormatting.congress(fromGuid: billGuid),
+            typeCode: BillDisplayFormatting.billTypeCode(billType: nil, billNumber: nil, guid: billGuid),
+            status: status,
+            isVetoed: vetoed == true && status != .finalized,
+            titles: title
+        )
+        return EndedCongress.stampCongress(for: record, at: now)
+    }
+
     /// The eyebrow as the Weekly Brief detail shows it (Civic Record spec 4.52): the date alone ("Oct
     /// 14"), since the docket line's stamp already says the status. The server and the local builder
     /// write "Updated Oct 14" or "Became law Oct 14" (the local builder "Vetoed Oct 14" for a vetoed bill), so
@@ -142,6 +157,11 @@ extension WeeklyDigestItem {
     nonisolated var dateEyebrow: String? {
         guard kind == .bill, let eyebrow = eyebrow?.trimmingCharacters(in: .whitespacesAndNewlines), !eyebrow.isEmpty else {
             return nil
+        }
+        // The local builder's "Ended with the 119th Congress Jan 8" (REL-46, `Bill.outcomeLabel(at:)`).
+        if let ended = eyebrow.range(of: #"^Ended with the \d+(st|nd|rd|th) Congress"#, options: [.regularExpression, .caseInsensitive]) {
+            let date = eyebrow[ended.upperBound...].trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "·")))
+            return date.isEmpty ? nil : date
         }
         let statusWords = ["Became law", "Finalized", "Updated", "Passed", "Failed", "Vetoed", "New"]
         for word in statusWords {

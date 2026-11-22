@@ -102,8 +102,12 @@ struct BillboardHistoryWindow: RawRepresentable, Hashable, CaseIterable, Identif
         rawValue > 0 ? BillboardHistoryWindow(rawValue: rawValue) : .default
     }
 
-    var canExpandFurther: Bool {
-        rawValue < Self.maxExpanded.rawValue
+    /// Whether pulling down may add another week: the window stops at a year, and once it reaches back to the start
+    /// of the Congress in office at `now` (REL-46), since an earlier Congress's bills are off the Bills list.
+    func canExpandFurther(now: Date = CongressCalendar.now()) -> Bool {
+        guard rawValue < Self.maxExpanded.rawValue else { return false }
+        let windowStart = now.addingTimeInterval(-timeInterval)
+        return windowStart > CongressCalendar.startTime(ofCongress: CongressCalendar.currentCongress(at: now))
     }
 
     var nextExpanded: BillboardHistoryWindow {

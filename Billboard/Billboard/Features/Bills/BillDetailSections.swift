@@ -12,7 +12,10 @@ import SwiftUI
 /// status stamp, a decided bill's included), the plain-language title, the official "To…" title in upright
 /// New York, "In the news" with its reason, the last-updated time, and the double rule. For a companion
 /// group (APPF-23) the docket line has every member's number and the group's status lead ("S. 456 PASSED").
-/// A vetoed bill, or a group whose lead is vetoed, is stamped VETOED (project decision 2026-11-19).
+/// A vetoed bill, or a group whose lead is vetoed, is stamped VETOED (project decision 2026-11-19). A bill whose
+/// Congress ended without becoming law (REL-46) has the note under its titles, in the caption face in `ink3`, with how
+/// far a passed bill got ("Passed the House only.") above it; a New or Updated one is stamped ENDED WITH THE 119TH
+/// CONGRESS.
 struct BillFrontMatter: View {
     /// What the front matter shows, worked out from the bill so it can be drawn and tested without a store.
     struct Content: Equatable {
@@ -21,6 +24,9 @@ struct BillFrontMatter: View {
         var status: BillStatus
         /// The bill, or the group's status lead, is vetoed: the stamp reads VETOED unless the status is Finalized.
         var vetoed = false
+        /// The Congress the bill (or the group's lead) ended with, when it has no outcome: the stamp reads ENDED WITH
+        /// THE 119TH CONGRESS (REL-46).
+        var endedCongress: Int?
         /// The member whose status the group shows, when it is not the primary.
         var companionLead: String? = nil
         var title: String
@@ -30,43 +36,65 @@ struct BillFrontMatter: View {
         var newsReason: String? = nil
         /// When the bill's record was last stored (`Bill.storedAt`).
         var lastUpdated: Date? = nil
+        /// "Passed the House only." over the ended note, for a passed bill from February 1 (`Bill.oneChamberLine(at:)`).
+        var oneChamberLine: String?
+        /// "The 119th Congress ended on January 3, 2027. This bill did not become law. To move forward it would have
+        /// to be introduced again." (`Bill.endedNote(at:)`, REL-46).
+        var endedNote: String?
 
         init(
             numbers: [String],
             status: BillStatus,
             vetoed: Bool = false,
+            endedCongress: Int? = nil,
             companionLead: String? = nil,
             title: String,
             officialTitle: String? = nil,
             isInTheNews: Bool = false,
             newsReason: String? = nil,
-            lastUpdated: Date? = nil
+            lastUpdated: Date? = nil,
+            oneChamberLine: String? = nil,
+            endedNote: String? = nil
         ) {
             self.numbers = numbers
             self.status = status
             self.vetoed = vetoed
+            self.endedCongress = endedCongress
             self.companionLead = companionLead
             self.title = title
             self.officialTitle = officialTitle
             self.isInTheNews = isInTheNews
             self.newsReason = newsReason
             self.lastUpdated = lastUpdated
+            self.oneChamberLine = oneChamberLine
+            self.endedNote = endedNote
         }
 
-        init(bill: Bill, companion: BillCompanionDisplay? = nil) {
+        /// `now` decides whether the bill's Congress has ended (REL-46). The note is the page's bill's own.
+        init(bill: Bill, companion: BillCompanionDisplay? = nil, now: Date = CongressCalendar.now()) {
             let lead = companion?.statusLead
             let reason = bill.priorityReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let note = bill.endedNote(at: now)
             self.init(
                 numbers: companion?.numbers ?? bill.officialBillNumber.map { [$0] } ?? [],
                 status: lead?.status ?? bill.billStatus,
                 vetoed: lead?.vetoed ?? bill.isVetoed,
+                endedCongress: lead.map(\.endedCongress) ?? bill.endedCongress(at: now),
                 companionLead: lead.flatMap { $0.isPrimary ? nil : $0.billNumber },
                 title: bill.title,
                 officialTitle: bill.displayOfficialTitle,
                 isInTheNews: bill.hasActivePriority,
                 newsReason: bill.hasActivePriority && reason?.isEmpty == false ? reason : nil,
-                lastUpdated: FlexibleISO8601.parse(bill.storedAt)
+                lastUpdated: FlexibleISO8601.parse(bill.storedAt),
+                oneChamberLine: note == nil ? nil : bill.oneChamberLine(at: now),
+                endedNote: note
             )
+        }
+
+        /// The ended note's lines, the one-chamber line first; empty when the bill's Congress has not ended.
+        var endedLines: [String] {
+            guard let endedNote else { return [] }
+            return [oneChamberLine, endedNote].compactMap { $0 }
         }
 
         /// The docket line's chamber: from the bill type for one bill, none for a group (its numbers say it).
@@ -94,6 +122,7 @@ struct BillFrontMatter: View {
     static let pageSpace = "bill.page"
     static let numberIdentifier = "bill.detail.number"
     static let officialTitleIdentifier = "bill.detail.officialTitle"
+    static let endedNoteIdentifier = "bill.detail.endedNote"
 
     /// "Last updated Oct 14, 2026 · 11:30 AM" (the docket role sets it in capitals).
     static func lastUpdatedText(_ date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
@@ -137,13 +166,14 @@ struct BillFrontMatter: View {
                     chamber: content.chamber,
                     status: content.status,
                     vetoed: content.vetoed,
+                    endedCongress: content.endedCongress,
                     companionLead: content.companionLead
                 )
                 .accessibilityIdentifier(Self.numberIdentifier)
                 .padding(.bottom, 10)
             } else {
                 // No number to file it under: the stamp alone keeps the decided status on the page.
-                StatusStamp(status: content.status, vetoed: content.vetoed)
+                StatusStamp(status: content.status, vetoed: content.vetoed, endedCongress: content.endedCongress)
                     .padding(.bottom, 10)
             }
 
@@ -177,6 +207,11 @@ struct BillFrontMatter: View {
                     .padding(.top, 14)
             }
 
+            if !content.endedLines.isEmpty {
+                endedNote
+                    .padding(.top, 12)
+            }
+
             if let lastUpdated = content.lastUpdated {
                 Text(Self.lastUpdatedText(lastUpdated))
                     .textRole(.docket)
@@ -194,6 +229,24 @@ struct BillFrontMatter: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, BillboardStyle.Space.xl)
         .padding(.top, BillboardStyle.Space.m)
+    }
+
+    /// The ended note (REL-46), with the one-chamber line above it, in the caption face in `ink3`: one VoiceOver
+    /// element, "Passed the House only. The 119th Congress ended on January 3, 2027. …"
+    private var endedNote: some View {
+        VStack(alignment: .leading, spacing: BillboardStyle.Space.xs) {
+            ForEach(content.endedLines, id: \.self) { line in
+                Text(line)
+                    .textRole(.caption)
+                    .foregroundStyle(BillboardColors.dimText)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SpokenSentences.join(content.endedLines))
+        .accessibilityIdentifier(Self.endedNoteIdentifier)
     }
 
     /// The "In the news" tag and its reason on one baseline; the reason goes under the tag at accessibility
@@ -787,7 +840,7 @@ struct BillCompanionMemberRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
-            DocketLine(number: number, status: bill?.billStatus, vetoed: bill?.isVetoed ?? false)
+            DocketLine(number: number, status: bill?.billStatus, vetoed: bill?.isVetoed ?? false, endedCongress: bill?.endedCongress())
 
             if let bill, isHydrated {
                 details(for: bill)

@@ -67,7 +67,8 @@ struct BillBoardLoadErrorState: View {
 struct BillBoardCaughtUpState: View {
     /// The window's title, lower case ("1 week").
     let windowTitle: String
-    /// Whether pulling down can add another week (the window stops at a year).
+    /// Whether pulling down can add another week (the window stops at a year, and at the start of the Congress in
+    /// office: `BillboardHistoryWindow.canExpandFurther(now:)`).
     var canExpand: Bool = true
 
     /// "No bills left to vote on from the last 1 week. Pull down to add one more week, up to a year."

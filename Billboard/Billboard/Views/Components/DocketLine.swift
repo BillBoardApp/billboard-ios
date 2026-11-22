@@ -7,7 +7,8 @@ import SwiftUI
 /// An optional second docket line names the bill's companions: "Identical to H.R. 900".
 ///
 /// The line is one VoiceOver element: "House bill 1234. New.", with "Watching." when the mark shows. A
-/// vetoed bill's stamp reads VETOED (project decision 2026-11-19): "House bill 131. Vetoed."
+/// vetoed bill's stamp reads VETOED (project decision 2026-11-19): "House bill 131. Vetoed." A New or Updated
+/// bill whose Congress ended reads ENDED WITH THE 119TH CONGRESS (REL-46).
 /// Every bill number in it is read in its spoken form, the companions' too ("Identical to House bill
 /// 900", spec 1.7).
 /// When the line does not fit, and at every accessibility text size, the stamp moves onto its own
@@ -21,6 +22,9 @@ struct DocketLine: View {
     /// The bill (or the group's status lead) is vetoed: the stamp reads VETOED unless the status is
     /// Finalized (`StatusStamp.Kind(status:vetoed:)`).
     var vetoed = false
+    /// The bill's Congress has ended and it has no outcome (`Bill.endedCongress(at:)`, REL-46): the stamp reads
+    /// ENDED WITH THE 119TH CONGRESS (`StatusStamp.Kind.docket`).
+    var endedCongress: Int?
     /// The number of the companion whose status the group shows, when it is not the first: the stamp
     /// then reads "S. 456 PASSED".
     var companionLead: String? = nil
@@ -60,6 +64,7 @@ struct DocketLine: View {
         chamber: CongressChamber?,
         status: BillStatus?,
         vetoed: Bool = false,
+        endedCongress: Int? = nil,
         companionLead: String? = nil,
         isWatched: Bool = false,
         companions: Companions? = nil
@@ -68,18 +73,27 @@ struct DocketLine: View {
         self.chamber = chamber
         self.status = status
         self.vetoed = vetoed
+        self.endedCongress = endedCongress
         self.companionLead = companionLead
         self.isWatched = isWatched
         self.companions = companions
     }
 
     /// One bill: its number, with the chamber taken from the bill type.
-    init(number: String, status: BillStatus?, vetoed: Bool = false, isWatched: Bool = false, companions: Companions? = nil) {
+    init(
+        number: String,
+        status: BillStatus?,
+        vetoed: Bool = false,
+        endedCongress: Int? = nil,
+        isWatched: Bool = false,
+        companions: Companions? = nil
+    ) {
         self.init(
             numbers: [number],
             chamber: Self.chamber(forBillNumber: number),
             status: status,
             vetoed: vetoed,
+            endedCongress: endedCongress,
             isWatched: isWatched,
             companions: companions
         )
@@ -104,8 +118,7 @@ struct DocketLine: View {
 
     private var stampKind: StatusStamp.Kind? {
         guard let status else { return nil }
-        if let companionLead { return .companionLead(number: companionLead, status: status, vetoed: vetoed) }
-        return StatusStamp.Kind(status: status, vetoed: vetoed)
+        return .docket(status: status, vetoed: vetoed, endedCongress: endedCongress, companionLead: companionLead)
     }
 
     /// What VoiceOver reads for the line: "House bill 1234. New.", "House bill 10 and Senate bill 10.
@@ -199,6 +212,7 @@ struct DocketLine: View {
         DocketLine(numbers: ["H.R. 10", "S. 10"], chamber: nil, status: .passed, companionLead: "S. 10")
         DocketLine(number: "H.R. 77", status: .finalized, companions: .init(["H.R. 900"]))
         DocketLine(number: "H.R. 131", status: .failed, vetoed: true)
+        DocketLine(number: "H.R. 4521", status: .updated, endedCongress: 119)
     }
     .padding()
     .background(BillboardColors.cardBackground)
