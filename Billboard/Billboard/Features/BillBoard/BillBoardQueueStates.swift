@@ -30,7 +30,9 @@ struct BillBoardQueueSyncPlaceholder: View {
 }
 
 /// Shown in place of the Bills list when loading failed and nothing is cached (spec 4.22): a record
-/// notice stamped COULDN'T LOAD, R2's message, and Retry as the primary action. No gold triangle.
+/// notice stamped COULDN'T LOAD, R2's message, and "Try again" in the notice's action style, a secondary capsule
+/// (UX-39e). Its own button, not the notice's action, so it can show the spinner while the bills load again. No
+/// gold triangle.
 struct BillBoardLoadErrorState: View {
     let message: String
     let isRetrying: Bool
@@ -44,12 +46,12 @@ struct BillBoardLoadErrorState: View {
                 HStack(spacing: BillboardStyle.Space.s) {
                     if isRetrying {
                         ProgressView()
-                            .tint(BillboardColors.onFill)
+                            .tint(BillboardButtonKind.secondary.progressTint)
                     }
-                    Text("Retry")
+                    Text("Try again")
                 }
             }
-            .buttonStyle(BillboardButtonStyle(kind: .primary, fullWidth: false, drawsAsEnabled: isRetrying))
+            .buttonStyle(BillboardButtonStyle(kind: .secondary, fullWidth: false, drawsAsEnabled: isRetrying))
             .disabled(isRetrying)
             .accessibilityIdentifier("home.queue.retry")
         }

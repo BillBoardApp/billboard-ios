@@ -103,8 +103,9 @@ struct BillDetailLoadingView: View {
     }
 }
 
-/// A failed load with Retry (spec 4.48): the bill's details, or a linked bill that is not loaded (APPF-26).
-/// A COULDN'T LOAD record notice with the message, and a primary Retry.
+/// A failed load with Try again (spec 4.48): the bill's details, or a linked bill that is not loaded (APPF-26).
+/// A COULDN'T LOAD record notice with the message and its action, "Try again", the app's one retry word, as a
+/// secondary capsule (UX-39e, feature review N10).
 struct BillDetailLoadErrorView: View {
     let title: String
     let message: String
@@ -114,11 +115,12 @@ struct BillDetailLoadErrorView: View {
 
     var body: some View {
         BillDetailNoticePage {
-            RecordNotice(.couldNotLoad, title: title, message: message)
-            Button("Retry", action: retry)
-                .buttonStyle(BillboardButtonStyle(kind: .primary))
-                .accessibilityIdentifier(Self.retryIdentifier)
-                .padding(.top, BillboardStyle.Space.l)
+            RecordNotice(
+                .couldNotLoad,
+                title: title,
+                message: message,
+                action: .init(title: "Try again", accessibilityIdentifier: Self.retryIdentifier, perform: retry)
+            )
         }
     }
 }
