@@ -98,6 +98,9 @@ struct BillSlipContent: Equatable {
     /// The Congress the bill (or the group's status lead) ended with, when it has no outcome (REL-46,
     /// `Bill.endedCongress(at:)`): the stamp reads ENDED WITH THE 119TH CONGRESS.
     var endedCongress: Int?
+    /// An older bill's Congress, "119th" (REL-46): the docket line prints it after the chamber, and the slip reads
+    /// "House bill 1, 119th Congress". Nil for a bill of the Congress in office.
+    var congressTag: String?
     /// The number of the group member whose status the slip shows, when it is not the primary: the
     /// stamp then reads "S. 456 PASSED".
     var companionLead: String? = nil
@@ -121,6 +124,7 @@ struct BillSlipContent: Equatable {
         status: BillStatus,
         vetoed: Bool = false,
         endedCongress: Int? = nil,
+        congressTag: String? = nil,
         companionLead: String? = nil,
         isWatched: Bool = false,
         subtitle: String? = nil,
@@ -133,6 +137,7 @@ struct BillSlipContent: Equatable {
         self.status = status
         self.vetoed = vetoed
         self.endedCongress = endedCongress
+        self.congressTag = congressTag
         self.companionLead = companionLead
         self.isWatched = isWatched
         self.subtitle = subtitle
@@ -143,7 +148,7 @@ struct BillSlipContent: Equatable {
 
     /// The slip of `bill` for a reader with `profile`. A companion group's slip (`companion`) shows
     /// every member's number, the group's status lead and the "Identical bills" tag. `now` decides whether the
-    /// bill's Congress has ended (REL-46).
+    /// bill's Congress has ended and whether it is an older Congress's (REL-46).
     init(
         bill: Bill,
         profile: UserProfile,
@@ -165,6 +170,7 @@ struct BillSlipContent: Equatable {
             status: lead?.status ?? bill.billStatus,
             vetoed: lead?.vetoed ?? bill.isVetoed,
             endedCongress: lead.map(\.endedCongress) ?? bill.endedCongress(at: now),
+            congressTag: bill.olderCongressTag(at: now),
             companionLead: lead.flatMap { $0.isPrimary ? nil : $0.billNumber },
             isWatched: bill.userWatched || companion?.isWatched == true,
             subtitle: numberSubtitle.flatMap { $0.isEmpty ? nil : $0 },
@@ -217,11 +223,13 @@ struct BillSlipContent: Equatable {
     /// The one sentence VoiceOver reads for the slip (spec 3.4): "Clean Energy Reporting Act. House bill
     /// 1234. New. In the news. Topic: Energy. Sponsor: Representative Jordan Ellis, Republican, Texas's 7th
     /// district. Last updated October 14."
-    /// Bill numbers are spoken ("House bill 1234", spec 1.7). Never a vote.
+    /// Bill numbers are spoken ("House bill 1234", spec 1.7), an older bill's with its Congress ("House bill 1, 119th
+    /// Congress"). Never a vote.
     func accessibilityLabel(now: Date = Date(), locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         var sentences = [title]
         if !numbers.isEmpty {
-            sentences.append(BillDisplayFormatting.naturalList(numbers.map(SpokenForm.billNumber)))
+            let spoken = BillDisplayFormatting.naturalList(numbers.map(SpokenForm.billNumber))
+            sentences.append(SpokenForm.withCongress(spoken, congressTag: congressTag))
         }
         sentences.append(stamp.spokenWord)
         if showsWatchedMark {
@@ -350,6 +358,7 @@ struct BillSlip: View {
                 status: content.status,
                 vetoed: content.vetoed,
                 endedCongress: content.endedCongress,
+                congressTag: content.congressTag,
                 companionLead: content.companionLead,
                 isWatched: content.isWatched
             )
@@ -360,6 +369,7 @@ struct BillSlip: View {
                 status: content.status,
                 vetoed: content.vetoed,
                 endedCongress: content.endedCongress,
+                congressTag: content.congressTag,
                 companionLead: content.companionLead,
                 isWatched: content.isWatched
             )

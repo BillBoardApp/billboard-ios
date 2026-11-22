@@ -27,6 +27,8 @@ struct BillFrontMatter: View {
         /// The Congress the bill (or the group's lead) ended with, when it has no outcome: the stamp reads ENDED WITH
         /// THE 119TH CONGRESS (REL-46).
         var endedCongress: Int?
+        /// An older bill's Congress, "119th": the docket line prints it after the chamber (REL-46).
+        var congressTag: String?
         /// The member whose status the group shows, when it is not the primary.
         var companionLead: String? = nil
         var title: String
@@ -47,6 +49,7 @@ struct BillFrontMatter: View {
             status: BillStatus,
             vetoed: Bool = false,
             endedCongress: Int? = nil,
+            congressTag: String? = nil,
             companionLead: String? = nil,
             title: String,
             officialTitle: String? = nil,
@@ -60,6 +63,7 @@ struct BillFrontMatter: View {
             self.status = status
             self.vetoed = vetoed
             self.endedCongress = endedCongress
+            self.congressTag = congressTag
             self.companionLead = companionLead
             self.title = title
             self.officialTitle = officialTitle
@@ -80,6 +84,7 @@ struct BillFrontMatter: View {
                 status: lead?.status ?? bill.billStatus,
                 vetoed: lead?.vetoed ?? bill.isVetoed,
                 endedCongress: lead.map(\.endedCongress) ?? bill.endedCongress(at: now),
+                congressTag: bill.olderCongressTag(at: now),
                 companionLead: lead.flatMap { $0.isPrimary ? nil : $0.billNumber },
                 title: bill.title,
                 officialTitle: bill.displayOfficialTitle,
@@ -167,6 +172,7 @@ struct BillFrontMatter: View {
                     status: content.status,
                     vetoed: content.vetoed,
                     endedCongress: content.endedCongress,
+                    congressTag: content.congressTag,
                     companionLead: content.companionLead
                 )
                 .accessibilityIdentifier(Self.numberIdentifier)
@@ -840,7 +846,16 @@ struct BillCompanionMemberRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
-            DocketLine(number: number, status: bill?.billStatus, vetoed: bill?.isVetoed ?? false, endedCongress: bill?.endedCongress())
+            DocketLine(
+                number: number,
+                status: bill?.billStatus,
+                vetoed: bill?.isVetoed ?? false,
+                endedCongress: bill?.endedCongress(),
+                congressTag: BillDisplayFormatting.olderCongressTag(
+                    congress: bill?.congressNumber ?? BillDisplayFormatting.congress(fromGuid: memberGuid),
+                    currentCongress: CongressCalendar.currentCongress()
+                )
+            )
 
             if let bill, isHydrated {
                 details(for: bill)

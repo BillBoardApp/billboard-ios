@@ -134,6 +134,16 @@ extension WeeklyDigestItem {
         return BillDisplayFormatting.officialBillNumber(billType: nil, billNumber: nil, guid: billGuid)
     }
 
+    /// "119th" for a bill item of an earlier Congress than the one in office at `now`, from its guid (REL-46,
+    /// `BillDisplayFormatting.olderCongressTag`); nil otherwise.
+    nonisolated func olderCongressTag(at now: Date = CongressCalendar.now()) -> String? {
+        guard kind == .bill else { return nil }
+        return BillDisplayFormatting.olderCongressTag(
+            congress: BillDisplayFormatting.congress(fromGuid: billGuid),
+            currentCongress: CongressCalendar.currentCongress(at: now)
+        )
+    }
+
     /// The Congress a bill item's stamp says it ended with, or nil (REL-46, `EndedCongress.stampCongress`): from
     /// its guid's Congress and type and its status. An item carries no actions, so a New or Updated bill of an
     /// ended Congress is stamped, as its slip is before the bill is opened.

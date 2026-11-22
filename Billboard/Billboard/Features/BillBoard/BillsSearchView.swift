@@ -564,7 +564,7 @@ struct SkippedBillsList: View {
                             }
                         }
                         .buttonStyle(BillboardButtonStyle(kind: .secondary, fullWidth: false))
-                        .accessibilityLabel(item.billNumbers.isEmpty ? "Put back" : "Put back \(item.billNumbers.map(SpokenForm.billNumber).joined(separator: " and "))")
+                        .accessibilityLabel(Self.putBackLabel(for: item))
                         .accessibilityInputLabels(["Put back"])
                         .accessibilityIdentifier("search.skipped.putBack.\(index)")
                     }
@@ -572,6 +572,14 @@ struct SkippedBillsList: View {
             }
         }
         .environment(\.billCardCompanions, Self.companions(for: items))
+    }
+
+    /// "Put back House bill 10 and Senate bill 10", with an older bill's Congress: "Put back House bill 1, 119th
+    /// Congress" (REL-46).
+    static func putBackLabel(for item: BillBoardItem, now: Date = CongressCalendar.now()) -> String {
+        guard !item.billNumbers.isEmpty else { return "Put back" }
+        let numbers = item.billNumbers.map(SpokenForm.billNumber).joined(separator: " and ")
+        return "Put back \(SpokenForm.withCongress(numbers, congressTag: item.bill.olderCongressTag(at: now)))"
     }
 
     private static func companions(for items: [BillBoardItem]) -> [UUID: BillCompanionDisplay] {

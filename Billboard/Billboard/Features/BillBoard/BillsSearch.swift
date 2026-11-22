@@ -97,20 +97,24 @@ enum BillsSearch {
     /// The matching bills, one entry per companion group: a group matches when either member does, and shows on
     /// the primary's bill when it is loaded. `textOf` gives a bill's `searchableText` (cached by the caller).
     /// Matches keep the given order, except that a number search lists the bills with that number (and their
-    /// companions) before bills that only name it.
+    /// companions) before bills that only name it, and that within each part the bills of the Congress in office
+    /// (`currentCongress`) come before an earlier Congress's (REL-46): "H.R. 1" finds the 120th's H.R. 1 first.
     static func results(
         in bills: [Bill],
         query: Query,
         companions: CompanionGroupIndex,
+        currentCongress: Int = CongressCalendar.currentCongress(),
         textOf: (Bill) -> String = { searchableText(of: $0) }
     ) -> [Bill] {
         let matches = bills.filter { matches($0, text: textOf($0), query: query, companions: companions) }
         let grouped = withCompanions(matches, in: bills, companions: companions)
-        guard let numberKey = query.numberKey else { return grouped }
+        func currentFirst(_ bills: [Bill]) -> [Bill] {
+            bills.filter { !$0.isFromEarlierCongress(than: currentCongress) } + bills.filter { $0.isFromEarlierCongress(than: currentCongress) }
+        }
+        guard let numberKey = query.numberKey else { return currentFirst(grouped) }
         let numbered = grouped.filter { hasNumber($0, numberKey: numberKey, companions: companions) }
-        guard !numbered.isEmpty, numbered.count < grouped.count else { return grouped }
         let numberedIDs = Set(numbered.map(\.id))
-        return numbered + grouped.filter { !numberedIDs.contains($0.id) }
+        return currentFirst(numbered) + currentFirst(grouped.filter { !numberedIDs.contains($0.id) })
     }
 
     /// `matches` one entry per companion group, on the primary's bill when `bills` has it.
@@ -166,7 +170,7 @@ enum BillsSearch {
 final class BillsSearchIndex {
     private var version: BillsStore.SearchVersion?
     private var entries: [(bill: Bill, text: String)] = []
-    private var cachedResults: (version: BillsStore.SearchVersion, query: BillsSearch.Query, bills: [Bill])?
+    private var cachedResults: (version: BillsStore.SearchVersion, query: BillsSearch.Query, congress: Int, bills: [Bill])?
 
     /// The matches for `query`, reusing the index and the last result while `version` stays the same; `bills`
     /// gives the bills to index (`BillsStore.searchableBills()`) when it changed.
@@ -174,9 +178,10 @@ final class BillsSearchIndex {
         for query: BillsSearch.Query,
         version: BillsStore.SearchVersion,
         companions: CompanionGroupIndex,
+        currentCongress: Int = CongressCalendar.currentCongress(),
         bills: () -> [Bill]
     ) -> [Bill] {
-        if let cachedResults, cachedResults.version == version, cachedResults.query == query {
+        if let cachedResults, cachedResults.version == version, cachedResults.query == query, cachedResults.congress == currentCongress {
             return cachedResults.bills
         }
         if self.version != version {
@@ -188,10 +193,10 @@ final class BillsSearchIndex {
         for entry in entries where texts[entry.bill.id] == nil {
             texts[entry.bill.id] = entry.text
         }
-        let results = BillsSearch.results(in: entries.map(\.bill), query: query, companions: companions) { bill in
+        let results = BillsSearch.results(in: entries.map(\.bill), query: query, companions: companions, currentCongress: currentCongress) { bill in
             texts[bill.id] ?? BillsSearch.searchableText(of: bill)
         }
-        cachedResults = (version, query, results)
+        cachedResults = (version, query, currentCongress, results)
         return results
     }
 }
