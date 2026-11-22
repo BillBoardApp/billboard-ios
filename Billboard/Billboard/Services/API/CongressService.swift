@@ -250,9 +250,7 @@ enum CongressService {
                 currentCongressBillsSupportedCount: item.currentCongressBillsSupportedCount,
                 biography: "",
                 party: party,
-                district: item.district,
-                termsServed: 0,
-                serviceStartYear: Calendar.current.component(.year, from: Date())
+                district: item.district
             )
         }
         return nil

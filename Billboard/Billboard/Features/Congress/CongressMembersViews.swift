@@ -371,6 +371,8 @@ struct CongressMemberProfileLoaderView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var civicProfileMode: CongressMemberCivicProfileCardMode = .unavailable
+    /// "Use basic profile" was tapped: the page shows the members list's facts, and reads the Civic Profile on its own.
+    @State private var usesBasicProfile = false
     /// "Couldn't unfollow this member.": the latest Follow tap's save failed and the follows were put back. It
     /// stays under the front matter until the next tap (UX-48).
     @State private var followError: String?
@@ -408,10 +410,7 @@ struct CongressMemberProfileLoaderView: View {
                 CongressMemberLoadErrorView(
                     message: errorMessage,
                     onRetry: { Task { await load() } },
-                    onUseBasicProfile: {
-                        member = fallbackMember
-                        civicProfileMode = civicProfileModeFor(chamber: fallbackMember.chamber)
-                    }
+                    onUseBasicProfile: { useBasicProfile() }
                 )
                 .navigationTitle(manifest.name)
             } else {
@@ -441,8 +440,34 @@ struct CongressMemberProfileLoaderView: View {
             }
         }
         .task(id: manifest.id) { await load() }
+        .task(id: usesBasicProfile) {
+            guard usesBasicProfile, civicProfileMode == .loading else { return }
+            civicProfileMode = await basicCivicProfileMode()
+        }
     }
 
+    /// The page from the members list alone (UX-39c). The list has no service history, so the page shows no Service
+    /// section rather than invented figures. The Civic Profile is read on its own (it can load when only the member's
+    /// record failed) and ends as the chart or "Official votes aren't available right now.", never loading for good.
+    private func useBasicProfile() {
+        let basic = fallbackMember
+        member = basic
+        civicProfileMode = civicProfileModeFor(chamber: basic.chamber)
+        usesBasicProfile = true
+    }
+
+    private func basicCivicProfileMode() async -> CongressMemberCivicProfileCardMode {
+        do {
+            return .profile(try await CongressService.getCongressMemberCivicProfile(bioguideId: manifest.id))
+        } catch {
+#if DEBUG
+            print("[CongressMemberProfileLoaderView] basic profile: failed to fetch civic profile for id=\(manifest.id):\n\(CongressService.debugString(for: error))")
+#endif
+            return .unavailable
+        }
+    }
+
+    /// The members list's facts only: no biography, no service history (`termsServed` and `serviceStartYear` nil).
     private var fallbackMember: CongressMember {
         let resolvedParty = PoliticalParty.from(raw: manifest.party) ?? .independent
         let resolvedChamber = manifest.chamberNormalized ?? "Member"
@@ -459,9 +484,7 @@ struct CongressMemberProfileLoaderView: View {
             trackedSupportedCount: manifest.trackedSupportedCount,
             biography: "",
             party: resolvedParty,
-            district: manifest.district,
-            termsServed: 0,
-            serviceStartYear: Calendar.current.component(.year, from: Date())
+            district: manifest.district
         )
     }
 
@@ -669,11 +692,14 @@ struct CongressMemberPageContent: View {
         return rows.filter { !$0.answer.trimmed.isEmpty }
     }
 
+    /// Empty, and no Service section, unless the record has both the terms and the first year (UX-39c): the basic
+    /// profile, from the members list alone, said "Terms served 0 · Service start <this year> · Years in office 0".
     var serviceRows: [Ledger.Row] {
-        [
-            .init("Terms served", "\(member.termsServed)"),
-            .init("Service start", "\(member.serviceStartYear)"),
-            .init("Years in office", "\(max(0, Calendar.current.component(.year, from: Date()) - member.serviceStartYear))")
+        guard let termsServed = member.termsServed, let serviceStartYear = member.serviceStartYear else { return [] }
+        return [
+            .init("Terms served", "\(termsServed)"),
+            .init("Service start", "\(serviceStartYear)"),
+            .init("Years in office", "\(max(0, Calendar.current.component(.year, from: Date()) - serviceStartYear))")
         ]
     }
 
@@ -719,8 +745,11 @@ struct CongressMemberPageContent: View {
                 }
             }
 
-            RecordSection("Service") {
-                Ledger(rows: serviceRows, answerRole: .figure)
+            let service = serviceRows
+            if !service.isEmpty {
+                RecordSection("Service") {
+                    Ledger(rows: service, answerRole: .figure)
+                }
             }
 
             let careerRows = member.careerActivityRows
