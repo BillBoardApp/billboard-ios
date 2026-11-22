@@ -42,6 +42,12 @@ enum BillDisplayFormatting {
         return typedBillNumberParts(billType: parsed.billType, billNumber: parsed.billNumber)
     }
 
+    /// The bill's type code ("hr", "sjres"), from its type and number or its GovInfo guid; nil when neither
+    /// gives a known bill type and number.
+    nonisolated static func billTypeCode(billType: String?, billNumber: String?, guid: String?) -> String? {
+        billNumberParts(billType: billType, billNumber: billNumber, guid: guid)?.typeCode
+    }
+
     nonisolated private static func typedBillNumberParts(billType: String?, billNumber: String?) -> (typeCode: String, number: Int)? {
         let normalizedType = (billType ?? "")
             .lowercased()
@@ -100,8 +106,25 @@ enum BillDisplayFormatting {
         return "\(typeCode)\(number)"
     }
 
-    /// Splits "BILLS-<congress><type><number><version>" into its type and number.
-    nonisolated private static func parseGuid(_ guid: String?) -> (billType: String, billNumber: String)? {
+    // MARK: - Congress (REL-46)
+
+    /// The Congress in a GovInfo package guid: 119 for "BILLS-119hr1ih". Nil when the guid is not a bill's.
+    nonisolated static func congress(fromGuid guid: String?) -> Int? {
+        guard let parsed = parseGuid(guid), let congress = Int(parsed.congress), congress > 0 else { return nil }
+        return congress
+    }
+
+    /// "119th": the Congress an older bill's docket line prints after its chamber ("H.R. 1 · HOUSE · 119TH"; the
+    /// docket role sets it in capitals), and VoiceOver reads as "119th Congress". Only for a bill whose Congress is
+    /// earlier than `currentCongress` (`CongressCalendar.currentCongress(at:)`); nil for a current bill or an
+    /// unknown Congress, so the current Congress's slips stay as they are.
+    nonisolated static func olderCongressTag(congress: Int?, currentCongress: Int) -> String? {
+        guard let congress, congress < currentCongress else { return nil }
+        return SpokenForm.ordinal(congress)
+    }
+
+    /// Splits "BILLS-<congress><type><number><version>" into its Congress, type and number.
+    nonisolated private static func parseGuid(_ guid: String?) -> (congress: String, billType: String, billNumber: String)? {
         guard let trimmed = guid?.trimmingCharacters(in: .whitespacesAndNewlines),
               trimmed.uppercased().hasPrefix("BILLS-") else { return nil }
         let rest = Array(trimmed.dropFirst("BILLS-".count))
@@ -109,6 +132,7 @@ enum BillDisplayFormatting {
         var index = 0
         while index < rest.count, rest[index].isASCII, rest[index].isNumber { index += 1 }
         guard index > 0 else { return nil }
+        let congress = String(rest[0..<index])
 
         let typeStart = index
         while index < rest.count, rest[index].isASCII, rest[index].isLetter { index += 1 }
@@ -122,7 +146,7 @@ enum BillDisplayFormatting {
 
         // Whatever follows must be the text version suffix (letters only), e.g. "is", "eh".
         guard rest[index...].allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }
-        return (billType, billNumber)
+        return (congress, billType, billNumber)
     }
 
     // MARK: - Dates
@@ -411,6 +435,29 @@ extension Bill {
     /// Official bill number derived from the bill type/number or the GovInfo guid.
     nonisolated var officialBillNumber: String? {
         BillDisplayFormatting.officialBillNumber(billType: billType, billNumber: billID, guid: guid)
+    }
+
+    /// The bill's Congress: its `congress` field when that is a number, else the Congress in its guid
+    /// ("BILLS-119hr1" gives 119). Nil when neither gives one. Votes, watches and links already tell Congresses
+    /// apart (`BillsStore.billIdentityKey`); this is what the past-Congress rules and labels read (REL-46).
+    nonisolated var congressNumber: Int? {
+        if let field = congress?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !field.isEmpty, field.allSatisfy({ $0.isASCII && $0.isNumber }),
+           let number = Int(field), number > 0 {
+            return number
+        }
+        return BillDisplayFormatting.congress(fromGuid: guid)
+    }
+
+    /// The bill's type code ("hr", "sjres"); see `BillDisplayFormatting.billTypeCode`.
+    nonisolated var billTypeCode: String? {
+        BillDisplayFormatting.billTypeCode(billType: billType, billNumber: billID, guid: guid)
+    }
+
+    /// "119th" on a bill of an earlier Congress than the one in office at `now`, else nil
+    /// (`BillDisplayFormatting.olderCongressTag`).
+    nonisolated func olderCongressTag(at now: Date = CongressCalendar.now()) -> String? {
+        BillDisplayFormatting.olderCongressTag(congress: congressNumber, currentCongress: CongressCalendar.currentCongress(at: now))
     }
 
     /// The bill number as search text ("hr900"); see `BillDisplayFormatting.billNumberSearchKey`.

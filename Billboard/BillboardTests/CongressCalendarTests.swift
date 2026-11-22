@@ -93,4 +93,48 @@ final class CongressCalendarTests: XCTestCase {
         XCTAssertEqual(dateline.date, "Sat, Jan 2, 2027")
         XCTAssertEqual(dateline.session, "120th Congress\u{00A0}· 1st session")
     }
+
+    // MARK: - When a Congress ends (REL-46)
+
+    private func utc(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) throws -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        return try XCTUnwrap(calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute)))
+    }
+
+    /// A Congress ends at noon Eastern on January 3 of the odd year after its two years: 17:00 UTC.
+    func testACongressEndsAtNoonEasternOnJanuaryThird() throws {
+        XCTAssertEqual(CongressCalendar.endTime(ofCongress: 119), try utc(2027, 1, 3, 17))
+        XCTAssertEqual(CongressCalendar.endTime(ofCongress: 120), try utc(2029, 1, 3, 17))
+        XCTAssertEqual(CongressCalendar.endTime(ofCongress: 119), try newYork(2027, 1, 3, 12, 0), "noon in Washington")
+        XCTAssertEqual(CongressCalendar.startTime(ofCongress: 120), CongressCalendar.endTime(ofCongress: 119))
+        XCTAssertEqual(CongressCalendar.endYear(ofCongress: 119), 2027)
+
+        XCTAssertFalse(CongressCalendar.hasEnded(119, at: try utc(2027, 1, 3, 16, 59)))
+        XCTAssertTrue(CongressCalendar.hasEnded(119, at: try utc(2027, 1, 3, 17, 0)))
+        XCTAssertTrue(CongressCalendar.hasEnded(118, at: try utc(2026, 11, 20, 12, 0)))
+        XCTAssertFalse(CongressCalendar.hasEnded(120, at: try utc(2027, 1, 3, 17, 0)))
+    }
+
+    /// The Congress in office turns over at the same instant: the 119th until 16:59 UTC on January 3, 2027, the
+    /// 120th from 17:00. The masthead's session turned over at midnight that day (`session(on:)`).
+    func testTheCurrentCongressTurnsOverAtNoonEastern() throws {
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2026, 11, 20, 12, 0)), 119)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2027, 1, 1, 2, 0)), 119, "New Year's Eve in Washington")
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2027, 1, 3, 16, 59)), 119)
+        XCTAssertEqual(CongressCalendar.session(on: try utc(2027, 1, 3, 16, 59)).congress, 120, "the masthead has already turned over")
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2027, 1, 3, 17, 0)), 120)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2028, 6, 1, 12, 0)), 120)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2029, 1, 3, 16, 59)), 120)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2029, 1, 3, 17, 0)), 121)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2025, 1, 3, 17, 0)), 119)
+        XCTAssertEqual(CongressCalendar.currentCongress(at: try utc(2025, 1, 3, 16, 0)), 118)
+    }
+
+    /// The unit tests' clock is pinned to a day in the 119th Congress (`BillboardTestBundle`), so tests that build
+    /// 119th bills read the same after the changeover.
+    func testTheTestsPinTheClockToThe119thCongress() {
+        XCTAssertEqual(CongressCalendar.now(), BillboardTestBundle.pinnedCongressDate)
+        XCTAssertEqual(CongressCalendar.currentCongress(), 119)
+    }
 }
