@@ -1847,6 +1847,177 @@ final class BillDetailRenderTests: XCTestCase {
         }
     }
 
+    // MARK: How Congress voted: your members (UX-39a)
+
+    private static func manifestMember(_ id: String, _ name: String, chamber: String, state: String, district: Int? = nil, party: String) throws -> CongressMemberManifestItem {
+        let district = district.map { #","district":\#($0)"# } ?? ""
+        let json = #"{"bioguideId":"\#(id)","name":"\#(name)","chamber":"\#(chamber)","state":"\#(state)","party":"\#(party)"\#(district)}"#
+        return try JSONDecoder().decode(CongressMemberManifestItem.self, from: Data(json.utf8))
+    }
+
+    /// The members manifest: Texas's two senators and TX-7's member (the user's), Jane Doe (CA-12) and an Ohio
+    /// senator. Sam Roe and Pat Lee have left Congress, so they are not in it.
+    private static func yourMembersManifest() throws -> [CongressMemberManifestItem] {
+        [
+            try manifestMember("e000001", "Jordan Ellis", chamber: "House of Representatives", state: "TX", district: 7, party: "R"),
+            try manifestMember("D000002", "Jane Doe", chamber: "House of Representatives", state: "CA", district: 12, party: "D"),
+            try manifestMember("T000010", "Avery Stone", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("T000011", "Riley Hart", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("M000020", "Casey Moore", chamber: "Senate", state: "OH", party: "D")
+        ]
+    }
+
+    /// The document bill with a Senate roll call too.
+    private static func billWithBothChambers() -> Bill {
+        var bill = documentBill(houseMembers: 4)
+        bill.officialVotes = Bill.OfficialVotesBreakdown(
+            house: houseVote(members: 4),
+            senate: Bill.OfficialChamberVote(
+                yea: 52, nay: 47, present: 0, notVoting: 1, totalCounted: 100,
+                actionCode: nil, actionDate: "2026-10-13", resultText: "Passed", memberDataAvailable: true,
+                members: [
+                    member("M000020", "Casey Moore", "D", "OH", nil, "Yea"),
+                    member("T000011", "Riley Hart", "R", "TX", nil, "Nay"),
+                    member("T000010", "Avery Stone", "R", "TX", nil, "Yea")
+                ]
+            ),
+            lastSyncedAt: nil,
+            source: nil,
+            completeness: nil
+        )
+        return bill
+    }
+
+    /// How Congress voted for a TX-7 voter, in a navigation stack, with the members manifest.
+    private func yourMembersVotes(_ manifest: [CongressMemberManifestItem]) -> some View {
+        let service = FakeCongressService()
+        service.cachedManifest = manifest
+        return NavigationStack {
+            ScrollView {
+                onDocument(BillOfficialVotesSection(bill: Self.billWithBothChambers(), userStateCode: "TX", userDistrictValue: "7"))
+            }
+        }
+        .environmentObject(CongressMembersManifestStore(service: service))
+        .environmentObject(UserStore(preferencesService: FakePreferencesService(), congressService: FakeCongressService()))
+    }
+
+    /// Your senators and your House member come first in their chamber, tagged, and VoiceOver says which they are
+    /// before the position. Everyone else reads as before.
+    func testHowCongressVotedTagsYourMembers() throws {
+        let host = AccessibilityTreeText.Host(yourMembersVotes(try Self.yourMembersManifest()), size: CGSize(width: 375, height: 2400))
+        defer { host.close() }
+        let strings = host.strings()
+        let ellis = "Representative Jordan Ellis, Republican, Texas's 7th district, your representative, Yea"
+        let stone = "Senator Avery Stone, Republican, Texas, your senator, Yea"
+        let hart = "Senator Riley Hart, Republican, Texas, your senator, Nay"
+        assertInOrder([
+            ellis,
+            "Representative Jane Doe, Democrat, California's 12th district, Yea",
+            "Representative Sam Roe, Republican, Ohio's 4th district, Nay",
+            stone,
+            hart,
+            "Senator Casey Moore, Democrat, Ohio, Yea"
+        ], in: strings, "your members first in each chamber, then Yea, Nay")
+        XCTAssertFalse(strings.contains { $0.contains("Jane Doe") && $0.contains("your ") }, "\(strings)")
+    }
+
+    /// A member in the members manifest opens their page (the manifest's ID in any case); one who has left Congress
+    /// is a plain row, not a button.
+    func testHowCongressVotedOpensMemberPages() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        try APIClient.$current.withValue(APIClient(transport: { _ in throw URLError(.notConnectedToInternet) })) {
+            let host = AccessibilityTreeText.Host(
+                yourMembersVotes(try Self.yourMembersManifest()).environmentObject(CivicProfileStore(service: FakeCivicService())),
+                size: CGSize(width: 375, height: 2400),
+                settle: 0.3,
+                scene: scene
+            )
+            defer { host.close() }
+            let ellis = "Representative Jordan Ellis, Republican, Texas's 7th district, your representative, Yea"
+            let samRoe = "Representative Sam Roe, Republican, Ohio's 4th district, Nay"
+            XCTAssertEqual(host.traits(of: ellis)?.contains(.button), true, host.text())
+            XCTAssertEqual(host.traits(of: "Senator Casey Moore, Democrat, Ohio, Yea")?.contains(.button), true, host.text())
+            XCTAssertEqual(host.traits(of: samRoe)?.contains(.button), false, "left Congress: \(host.text())")
+
+            let navigation = try XCTUnwrap(host.navigationController, "the stack's navigation controller")
+            XCTAssertTrue(host.activate(ellis), host.text())
+            XCTAssertTrue(host.run(untilSettled: { navigation.viewControllers.count == 2 }), "the member page pushed")
+            XCTAssertTrue(
+                host.run(until: { host.strings().contains { $0.contains(CongressMemberLoadErrorView.title) } }),
+                "Jordan Ellis's page (offline here): \(host.text())"
+            )
+        }
+    }
+
+    /// Without the members manifest (offline on a first launch) nobody is tagged and no row is a link.
+    func testHowCongressVotedWithoutTheManifestTagsAndLinksNobody() {
+        let host = AccessibilityTreeText.Host(yourMembersVotes([]), size: CGSize(width: 375, height: 2400))
+        defer { host.close() }
+        let strings = host.strings()
+        XCTAssertFalse(strings.contains { $0.contains("your senator") || $0.contains("your representative") }, "\(strings)")
+        XCTAssertEqual(host.traits(of: "Representative Jordan Ellis, Republican, Texas's 7th district, Yea")?.contains(.button), false, "\(strings)")
+    }
+
+    /// Who is the user's: two senators and the House member for a numbered district; the at-large member for an
+    /// at-large state; DC's delegate and a territory's member, with no senators.
+    func testYourMemberRoles() throws {
+        let manifest = [
+            try Self.manifestMember("T000010", "Avery Stone", chamber: "Senate", state: "TX", party: "R"),
+            try Self.manifestMember("T000011", "Riley Hart", chamber: "Senate", state: "TX", party: "R"),
+            try Self.manifestMember("E000001", "Jordan Ellis", chamber: "House of Representatives", state: "TX", district: 7, party: "R"),
+            try Self.manifestMember("E000002", "Morgan Fry", chamber: "House of Representatives", state: "TX", district: 8, party: "D"),
+            try Self.manifestMember("A000001", "Quinn Alder", chamber: "Senate", state: "AK", party: "R"),
+            try Self.manifestMember("A000002", "Drew Birch", chamber: "Senate", state: "AK", party: "R"),
+            try Self.manifestMember("A000003", "Sky Cedar", chamber: "House of Representatives", state: "AK", district: 0, party: "R"),
+            try Self.manifestMember("N000001", "Lee Norton", chamber: "House of Representatives", state: "DC", party: "D"),
+            try Self.manifestMember("P000001", "Rae Palm", chamber: "House of Representatives", state: "PR", district: 98, party: "R")
+        ]
+        XCTAssertEqual(YourMemberRole.roles(state: "TX", district: "7", manifest: manifest), [
+            "T000010": .senator, "T000011": .senator, "E000001": .representative
+        ])
+        XCTAssertEqual(YourMemberRole.roles(state: "tx", district: "07", manifest: manifest)["E000001"], .representative)
+        XCTAssertEqual(YourMemberRole.roles(state: "AK", district: "At-Large", manifest: manifest), [
+            "A000001": .senator, "A000002": .senator, "A000003": .representative
+        ])
+        XCTAssertEqual(YourMemberRole.roles(state: "DC", district: "At-Large", manifest: manifest), ["N000001": .representative])
+        XCTAssertEqual(YourMemberRole.roles(state: "PR", district: "At-Large", manifest: manifest), ["P000001": .representative])
+        XCTAssertEqual(YourMemberRole.roles(state: "", district: "7", manifest: manifest), [:], "no state, nobody")
+        XCTAssertEqual(YourMemberRole.senator.tagTitle, "Your senator")
+        XCTAssertEqual(YourMemberRole.representative.tagTitle, "Your representative")
+    }
+
+    /// The tags render in light and dark, at the default size and AX3, and at AX5 on a 375 pt phone, where each word of
+    /// a tag fits the column on one line (a tag breaks only between its words).
+    func testYourMemberTagsRenderAndKeepTheirWordsWholeAtAX5() throws {
+        let column: CGFloat = 375 - 2 * BillboardStyle.Space.xl
+        for role in [YourMemberRole.senator, .representative] {
+            for word in role.tagTitle.split(separator: " ").map(String.init) {
+                let controller = UIHostingController(
+                    rootView: Text(word).textRole(IndexTag.wordRole(at: .accessibility5)).fixedSize().environment(\.dynamicTypeSize, .accessibility5)
+                )
+                let width = controller.sizeThatFits(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).width
+                // The tag's 7 pt sides and 1 pt border.
+                XCTAssertLessThanOrEqual(width, column - 16, "\(word) at AX5: \(width) pt")
+            }
+        }
+        let manifest = try Self.yourMembersManifest()
+        for variant in Self.variants(.accessibility3) + [Variant(scheme: .light, size: .accessibility5), Variant(scheme: .dark, size: .accessibility5)] {
+            let service = FakeCongressService()
+            service.cachedManifest = manifest
+            let view = onDocument(BillOfficialVotesSection(bill: Self.billWithBothChambers(), userStateCode: "TX", userDistrictValue: "7"))
+                .environmentObject(CongressMembersManifestStore(service: service))
+            let image = try render(view, variant: variant, width: 375)
+            attach(image, name: "how-congress-voted-your-members-\(variant.name)")
+            XCTAssertEqual(image.width, 375)
+            assertColor(
+                try pixel(of: image, x: 2, y: image.height / 2),
+                BillboardPalette.document.resolved(dark: variant.scheme == .dark).rgb,
+                accuracy: 0.03,
+                "the document ground (\(variant.name))"
+            )
+        }
+    }
+
     // MARK: Compare with Congress
 
     func testCompareWithCongressRendersWithSquareBars() throws {

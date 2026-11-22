@@ -36,6 +36,39 @@ enum CongressRepresentativesState: Equatable {
     case members([CongressMemberManifestItem])
 }
 
+/// Which of the user's own members a roll-call row is (UX-39a): one of their senators, or their House member. The
+/// same match as the Congress tab's Your representatives (`CongressTabModel.representatives`), so an at-large seat,
+/// DC's delegate and a territory's member are found as there. DC and the territories have no senators.
+enum YourMemberRole: Equatable {
+    case senator
+    case representative
+
+    /// The tag under the member's name.
+    var tagTitle: String {
+        switch self {
+        case .senator: return "Your senator"
+        case .representative: return "Your representative"
+        }
+    }
+
+    /// What VoiceOver says after the member, before the position.
+    var spoken: String {
+        switch self {
+        case .senator: return "your senator"
+        case .representative: return "your representative"
+        }
+    }
+
+    /// The user's members by upper-cased bioguide ID; empty without a state.
+    static func roles(state: String, district: String, manifest: [CongressMemberManifestItem]) -> [String: YourMemberRole] {
+        var roles: [String: YourMemberRole] = [:]
+        for member in CongressTabModel.representatives(state: state, district: district, in: manifest) {
+            roles[member.id.uppercased()] = member.chamberNormalized == CongressChamber.senate.rawValue ? .senator : .representative
+        }
+        return roles
+    }
+}
+
 /// The logic behind the Congress tab, kept out of the views so it can be tested: who represents
 /// the user, which members they follow, member search and the "bills this week" counts. Nothing
 /// here makes a request; it reads the members manifest, the profile and the loaded bills.
