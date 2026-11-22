@@ -2045,7 +2045,7 @@ final class BillDetailRenderTests: XCTestCase {
         ]
         let expected = [
             "loading": [BillDetailLoadingView.text],
-            "error": ["Couldn't load. Couldn't load this bill. Check your connection and try again.", "Retry"],
+            "error": ["Couldn't load. Couldn't load this bill. Check your connection and try again.", "Try again"],
             "not-found": ["Not found. Bill not found."]
         ]
         for (name, view) in states {
@@ -2054,9 +2054,10 @@ final class BillDetailRenderTests: XCTestCase {
             for part in expected[name] ?? [] {
                 XCTAssertTrue(strings.contains { $0.contains(part) }, "\(name): \(part) in: \(strings)")
             }
-            XCTAssertFalse(strings.contains { $0.contains("Retry") } && name != "error", "\(name): \(strings)")
+            XCTAssertFalse(strings.contains { $0.contains("Try again") } && name != "error", "\(name): \(strings)")
+            XCTAssertFalse(strings.contains { $0.contains("Retry") }, "one retry word, Try again (UX-39e): \(name): \(strings)")
             if name == "error" {
-                XCTAssertEqual(host.label(ofIdentifier: BillDetailLoadErrorView.retryIdentifier), "Retry")
+                XCTAssertEqual(host.label(ofIdentifier: BillDetailLoadErrorView.retryIdentifier), "Try again")
             }
             host.close()
         }

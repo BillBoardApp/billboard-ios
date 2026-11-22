@@ -90,7 +90,12 @@ final class QuietStatesRenderTests: XCTestCase {
                 ))
             ]),
             ("bill-profile-updates", [
-                AnyView(RecordNotice(.couldNotLoad, title: "Couldn't load this bill.", message: "Check your connection and try again.")),
+                AnyView(RecordNotice(
+                    .couldNotLoad,
+                    title: "Couldn't load this bill.",
+                    message: "Check your connection and try again.",
+                    action: .init(title: "Try again") {}
+                )),
                 AnyView(RecordNotice(.notFound, title: BillDetailMissingBillView.notFoundTitle)),
                 AnyView(RecordNotice(.couldNotLoad, title: BillStatsHeatMapSection.couldNotLoadText)),
                 AnyView(RecordNotice(
