@@ -8,8 +8,9 @@ import SwiftUI
 // the official roll calls, which are not other users' votes, so INT-11 does not seal them.
 
 /// How Congress voted (spec 4.45): each chamber's roll call as a tally in the TallySheet style, then how
-/// its members voted, the user's representatives first. Official Congress data, so never sealed (INT-11
-/// gates only other Billboard users' votes).
+/// its members voted, the user's representatives first, tagged "Your senator" or "Your representative"
+/// (UX-39a). A member in the members manifest opens their page; one who has left Congress stays a plain row.
+/// Official Congress data, so never sealed (INT-11 gates only other Billboard users' votes).
 struct BillOfficialVotesSection: View {
     let bill: Bill
     let userStateCode: String
@@ -27,32 +28,14 @@ struct BillOfficialVotesSection: View {
         !CongressChamberTally.tallies(for: bill).isEmpty
     }
 
-    private var userRepresentativeBioguideIDs: Set<String> {
-        let state = userStateCode
-        guard !state.isEmpty else { return [] }
+    /// The user's senators and House member, by upper-cased bioguide ID.
+    private var yourMemberRoles: [String: YourMemberRole] {
+        YourMemberRole.roles(state: userStateCode, district: userDistrictValue, manifest: congressManifestStore.items)
+    }
 
-        let manifest = congressManifestStore.items
-        let normalizedDistrict = DistrictNormalization.normalize(userDistrictValue, userState: state)?.uppercased()
-
-        var ids = Set<String>()
-        for member in manifest {
-            let memberState = (member.state ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            guard memberState == state else { continue }
-
-            if member.chamberNormalized == "Senate" {
-                ids.insert(member.id.uppercased())
-                continue
-            }
-
-            guard member.chamberNormalized == "House",
-                  let normalizedDistrict,
-                  let memberDistrict = DistrictNormalization.normalize(member.district ?? "", userState: state)?.uppercased(),
-                  memberDistrict == normalizedDistrict else {
-                continue
-            }
-            ids.insert(member.id.uppercased())
-        }
-        return ids
+    /// The members manifest by upper-cased bioguide ID: who has a member page to open.
+    private var manifestByID: [String: CongressMemberManifestItem] {
+        Dictionary(congressManifestStore.items.map { ($0.id.uppercased(), $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func votePositionSortOrder(_ value: String) -> Int {
@@ -67,12 +50,11 @@ struct BillOfficialVotesSection: View {
         return 4
     }
 
-    private func prioritizedMembers(for chamberVote: Bill.OfficialChamberVote?) -> [Bill.OfficialVoteMember] {
-        let myIDs = userRepresentativeBioguideIDs
+    private func prioritizedMembers(for chamberVote: Bill.OfficialChamberVote?, roles: [String: YourMemberRole]) -> [Bill.OfficialVoteMember] {
         let members = chamberVote?.members ?? []
         return members.sorted { lhs, rhs in
-            let lhsMine = myIDs.contains(lhs.bioguideId.uppercased())
-            let rhsMine = myIDs.contains(rhs.bioguideId.uppercased())
+            let lhsMine = roles[lhs.bioguideId.uppercased()] != nil
+            let rhsMine = roles[rhs.bioguideId.uppercased()] != nil
             if lhsMine != rhsMine { return lhsMine && !rhsMine }
 
             let lhsPosition = votePositionSortOrder(lhs.votePosition)
@@ -83,9 +65,8 @@ struct BillOfficialVotesSection: View {
         }
     }
 
-    private func defaultVisibleMemberCount(for members: [Bill.OfficialVoteMember]) -> Int {
-        let myIDs = userRepresentativeBioguideIDs
-        let repCount = members.filter { myIDs.contains($0.bioguideId.uppercased()) }.count
+    private func defaultVisibleMemberCount(for members: [Bill.OfficialVoteMember], roles: [String: YourMemberRole]) -> Int {
+        let repCount = members.filter { roles[$0.bioguideId.uppercased()] != nil }.count
         return max(8, repCount)
     }
 
@@ -100,12 +81,14 @@ struct BillOfficialVotesSection: View {
     var body: some View {
         let tallies = CongressChamberTally.tallies(for: bill)
         if !tallies.isEmpty {
+            let roles = yourMemberRoles
+            let pages = manifestByID
             RecordSection(Self.title, showsRule: showsRule) {
                 VStack(alignment: .leading, spacing: BillboardStyle.Space.xxl) {
                     ForEach(tallies, id: \.chamber) { tally in
                         VStack(alignment: .leading, spacing: BillboardStyle.Space.m) {
                             CongressChamberTallyView(tally: tally)
-                            memberVotes(for: tally.chamber)
+                            memberVotes(for: tally.chamber, roles: roles, pages: pages)
                         }
                     }
                 }
@@ -116,19 +99,22 @@ struct BillOfficialVotesSection: View {
     /// How each member of the chamber voted, the user's representatives first, then Yea, Nay, Present
     /// and Not voting; eight (or all the representatives) until "Show all House votes (435)".
     @ViewBuilder
-    private func memberVotes(for chamber: CongressChamber) -> some View {
-        let members = prioritizedMembers(for: chamberVote(chamber))
+    private func memberVotes(
+        for chamber: CongressChamber,
+        roles: [String: YourMemberRole],
+        pages: [String: CongressMemberManifestItem]
+    ) -> some View {
+        let members = prioritizedMembers(for: chamberVote(chamber), roles: roles)
         if !members.isEmpty {
             let showAll = showAll(for: chamber)
-            let defaultCount = defaultVisibleMemberCount(for: members)
+            let defaultCount = defaultVisibleMemberCount(for: members, roles: roles)
             let visible = showAll.wrappedValue ? members : Array(members.prefix(defaultCount))
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(visible.enumerated()), id: \.element.id) { index, member in
                     if index > 0 {
                         HairlineRule()
                     }
-                    CongressMemberVoteRow(member: member, chamber: chamber)
-                        .padding(.vertical, 10)
+                    memberRow(member, chamber: chamber, role: roles[member.bioguideId.uppercased()], page: pages[member.bioguideId.uppercased()])
                 }
 
                 if members.count > visible.count {
@@ -145,6 +131,31 @@ struct BillOfficialVotesSection: View {
                     .padding(.top, BillboardStyle.Space.xs)
                 }
             }
+        }
+    }
+
+    /// A member's row, which opens their page when the members manifest has them.
+    @ViewBuilder
+    private func memberRow(
+        _ member: Bill.OfficialVoteMember,
+        chamber: CongressChamber,
+        role: YourMemberRole?,
+        page: CongressMemberManifestItem?
+    ) -> some View {
+        if let page {
+            let row = CongressMemberVoteRow(member: member, chamber: chamber, yourRole: role, opensPage: true)
+            NavigationLink {
+                CongressMemberProfileLoaderView(manifest: page)
+            } label: {
+                row
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle())
+            .accessibilityLabel(row.accessibilityLabel)
+        } else {
+            CongressMemberVoteRow(member: member, chamber: chamber, yourRole: role)
+                .padding(.vertical, 10)
         }
     }
 
@@ -419,11 +430,16 @@ struct CongressChamberTallyView: View {
 
 /// How one member voted (spec 4.45): the party disc, the name, the docket affiliation led by the party
 /// letter ("D · SENATE · VA"), and the position: "✓ Yea" or "✕ Nay" in the vote colour, Present and Not
-/// voting as plain words. At accessibility sizes each part takes its own line. One VoiceOver element:
-/// "Tim Kaine, Democrat, Virginia, Yea".
+/// voting as plain words. The user's own members carry an ink tag under the name, "Your senator" or "Your
+/// representative" (UX-39a), and a row that opens the member's page ends in the chevron. At accessibility sizes
+/// each part takes its own line. One VoiceOver element: "Senator Tim Kaine, Democrat, Virginia, your senator, Yea".
 struct CongressMemberVoteRow: View {
     let member: Bill.OfficialVoteMember
     let chamber: CongressChamber
+    /// The user's senator or House member, tagged as such.
+    var yourRole: YourMemberRole?
+    /// The row is a link to the member's page.
+    var opensPage = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// The party disc stands beside the name with its letter in the affiliation, at 19 pt (spec 3.14).
@@ -460,8 +476,8 @@ struct CongressMemberVoteRow: View {
             district: member.district,
             chamber: chamber
         )
-        let word = Self.position(member.votePosition).word
-        return word.isEmpty ? who : "\(who), \(word)"
+        let parts = [who, yourRole?.spoken, Self.position(member.votePosition).word]
+        return parts.compactMap { $0.trimmedNonEmpty }.joined(separator: ", ")
     }
 
     var body: some View {
@@ -473,24 +489,38 @@ struct CongressMemberVoteRow: View {
                         nameText
                     }
                     affiliationText
-                    positionLabel
+                    roleTag
+                    // The chevron ends the last line, so the name keeps the line's width.
+                    HStack(alignment: .center, spacing: BillboardStyle.Space.s) {
+                        positionLabel
+                        if opensPage {
+                            Spacer(minLength: BillboardStyle.Space.s)
+                            RowChevron()
+                        }
+                    }
                 }
             } else {
                 HStack(alignment: .center, spacing: BillboardStyle.Space.s) {
                     disc
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .firstTextBaseline, spacing: BillboardStyle.Space.s) {
-                            nameText.fixedSize()
-                            affiliationText.fixedSize()
+                    VStack(alignment: .leading, spacing: BillboardStyle.Space.xs) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: BillboardStyle.Space.s) {
+                                nameText.fixedSize()
+                                affiliationText.fixedSize()
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                nameText
+                                affiliationText
+                            }
                         }
-                        VStack(alignment: .leading, spacing: 2) {
-                            nameText
-                            affiliationText
-                        }
+                        roleTag
                     }
                     Spacer(minLength: BillboardStyle.Space.s)
                     positionLabel
                         .fixedSize()
+                    if opensPage {
+                        RowChevron()
+                    }
                 }
             }
         }
@@ -504,6 +534,14 @@ struct CongressMemberVoteRow: View {
         if let party {
             PartyDisc(party: party, diameter: discSize, ringColor: nil)
                 .accessibilityHidden(true)
+        }
+    }
+
+    /// "YOUR SENATOR" with the `person` glyph, in ink: no hue, as every index tag.
+    @ViewBuilder
+    private var roleTag: some View {
+        if let yourRole {
+            IndexTag(title: yourRole.tagTitle, systemImage: "person")
         }
     }
 
