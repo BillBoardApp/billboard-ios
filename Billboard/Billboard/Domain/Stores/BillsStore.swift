@@ -76,8 +76,10 @@ final class BillsStore: ObservableObject {
 
     /// Connect to a BillVoteStore so votes are automatically synced.
     /// Call this once after both stores are created (e.g., in TabsBar).
+    /// A vote not saved yet that the server confirms another way gets its Bill row here (UX-49b).
     func connect(voteStore: BillVoteStore) {
         self.voteStore = voteStore
+        voteStore.onUnsavedVoteConfirmed = { [weak self] guid, _ in self?.unsavedVoteConfirmed(guid: guid) }
     }
 
     /// Connect to UserStore so watch state syncs to backend preferences.

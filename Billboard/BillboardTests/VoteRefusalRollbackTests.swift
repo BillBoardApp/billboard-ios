@@ -662,13 +662,17 @@ final class VoteRefusalRollbackTests: XCTestCase {
     // MARK: - A vote not saved yet (UX-49)
 
     /// The page's stores, built here and not with the async `makeCompanionStore`: the hosted page needs the main
-    /// run loop, which an async test holds.
-    private func pageStores(_ bill: Bill, votes: FakeBillVotesService) -> (store: BillsStore, voteStore: BillVoteStore) {
+    /// run loop, which an async test holds. The bills store writes preferences to `preferences`.
+    private func pageStores(
+        _ bill: Bill,
+        votes: FakeBillVotesService,
+        preferences: FakePreferencesService? = nil
+    ) -> (store: BillsStore, voteStore: BillVoteStore) {
         let scope = "not-saved-strip-tests-\(UUID().uuidString)"
         addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
         let service = FakeBillsService()
         service.cachedManifest = []
-        let store = BillsStore(bills: [bill], cacheScope: scope, service: service, preferencesService: FakePreferencesService())
+        let store = BillsStore(bills: [bill], cacheScope: scope, service: service, preferencesService: preferences ?? FakePreferencesService())
         let voteStore = BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil)), service: votes)
         store.connect(voteStore: voteStore)
         return (store, voteStore)
@@ -738,13 +742,15 @@ final class VoteRefusalRollbackTests: XCTestCase {
     }
 
     /// A reason picked after a vote not saved yet sends the whole row again (the vote with the reason). Once that is
-    /// stored the vote is saved, so the strip and its Try again go; the stamp stays.
+    /// stored the vote is saved, so the strip and its Try again go; the stamp stays. The vote then gets the Bill row
+    /// a stored vote gets, once, so the server follows the bill for this voter (UX-49b).
     func testAReasonSavedAfterAVoteNotSavedYetEndsTheStrip() throws {
         let votes = FakeBillVotesService()
         votes.singleResult = .success(.notVoted)
         votes.setFeedbackError = URLError(.notConnectedToInternet)
+        let preferences = FakePreferencesService()
         let bill = pageBill()
-        let (store, voteStore) = pageStores(bill, votes: votes)
+        let (store, voteStore) = pageStores(bill, votes: votes, preferences: preferences)
         let transport = RecordingTransport()
         transport.failure = { _ in URLError(.notConnectedToInternet) }
         try APIClient.$current.withValue(transport.client) {
@@ -756,6 +762,7 @@ final class VoteRefusalRollbackTests: XCTestCase {
             defer { host.close() }
             XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
             XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+            XCTAssertEqual(preferences.putCalls, [], "no Bill row for a vote not saved yet")
 
             votes.setFeedbackError = nil
             let reason = try XCTUnwrap(
@@ -770,19 +777,21 @@ final class VoteRefusalRollbackTests: XCTestCase {
             XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
             XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
             XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
+            assertOneBillRow(preferences, guid: Self.guid, host: host)
         }
         withExtendedLifetime(voteStore) {}
     }
 
     /// A write that timed out after the server stored it: Results open on the follow-up stats, and the server's row,
-    /// read back, is the shown vote, so the strip goes.
+    /// read back, is the shown vote, so the strip goes. The vote gets its Bill row, once (UX-49b).
     func testResultsThatOpenOnTheShownVoteEndTheStrip() {
         let votes = FakeBillVotesService()
         votes.singleResult = .success(.notVoted)
         votes.setFeedbackError = URLError(.timedOut)
         votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .yea, votedAt: Date()))])
+        let preferences = FakePreferencesService()
         let bill = pageBill()
-        let (store, voteStore) = pageStores(bill, votes: votes)
+        let (store, voteStore) = pageStores(bill, votes: votes, preferences: preferences)
         let transport = statsTransport(responses: [Self.statsBody])
         APIClient.$current.withValue(transport.client) {
             let host = AccessibilityTreeText.Host(
@@ -799,19 +808,22 @@ final class VoteRefusalRollbackTests: XCTestCase {
             XCTAssertNil(host.label(ofIdentifier: SealedTally.resultsIdentifier), "Results are open")
             XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
             XCTAssertEqual(votes.setFeedbackCalls.count, 1, "nothing sent again")
+            assertOneBillRow(preferences, guid: Self.guid, host: host)
         }
         withExtendedLifetime(voteStore) {}
     }
 
     /// A change from Nay to Yea that timed out, on a page whose first stats load failed: the follow-up stats come back
-    /// for the Nay the server still holds, so the strip and its Try again stay.
+    /// for the Nay the server still holds, so the strip and its Try again stay, and no Bill row is written for the Yea
+    /// (UX-49b).
     func testResultsThatOpenOnTheVoteBeforeAChangeKeepTheStrip() {
         let votes = FakeBillVotesService()
         votes.singleResult = .success(.voted(BillVotesService.RemoteVote(vote: .nay, votedAt: Date().addingTimeInterval(-60))))
         votes.setFeedbackError = URLError(.timedOut)
         votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .nay, votedAt: Date().addingTimeInterval(-60)))])
+        let preferences = FakePreferencesService()
         let bill = pageBill()
-        let (store, voteStore) = pageStores(bill, votes: votes)
+        let (store, voteStore) = pageStores(bill, votes: votes, preferences: preferences)
         // The first stats load fails (a body that does not decode); the one after the change works.
         let transport = statsTransport(responses: [Data("not stats".utf8), Self.statsBody])
         APIClient.$current.withValue(transport.client) {
@@ -830,8 +842,97 @@ final class VoteRefusalRollbackTests: XCTestCase {
             host.run(0.5)
             XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", host.text())
             XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+            XCTAssertEqual(preferences.putCalls, [], "the Yea is not saved: no Bill row")
         }
         withExtendedLifetime(voteStore) {}
+    }
+
+    /// A companion group whose vote row is held under a member's legacy text-version guid: a change from the other
+    /// member's page goes to that guid, and when its write fails and a reason saved after it confirms it, the Bill row
+    /// goes under that same guid, where the vote is (UX-49b), as it does for a stored vote.
+    func testAGroupVoteNotSavedYetGetsItsBillRowUnderTheGuidItWentTo() throws {
+        let house = "BILLS-119hr900"
+        let legacy = "BILLS-119s456is"
+        let group = BillCompanionGroup(primaryGuid: house, memberGuids: [house, "BILLS-119s456"], relationship: "identical")
+        let houseBill = Bill(
+            id: UUID.deterministic(from: house),
+            title: "Bill \(house)",
+            category: "Other",
+            soWhat: "",
+            storedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60 * 60)),
+            link: "https://www.govinfo.gov/app/details/BILLS-119hr900ih",
+            billStatus: .new,
+            guid: house,
+            userVoted: false,
+            isPriority: true
+        )
+        let votes = FakeBillVotesService()
+        votes.setFeedbackError = URLError(.timedOut)
+        let preferences = FakePreferencesService()
+        let scope = "legacy-guid-bill-row-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let service = FakeBillsService()
+        service.cachedGroups = [group]
+        service.cachedManifest = []
+        let store = BillsStore(
+            bills: [houseBill, companionTestBill(legacy, userVote: .nay)],
+            cacheScope: scope,
+            service: service,
+            preferencesService: preferences
+        )
+        let voteStore = BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil)), service: votes)
+        store.connect(voteStore: voteStore)
+        // The groups come from the cache; the hosted page needs the main run loop, which an async test holds.
+        Task { await store.restoreCachedStateIfNeeded() }
+        let deadline = Date().addingTimeInterval(5)
+        while store.companionVote(forBillID: houseBill.id) == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(store.companionVote(forBillID: houseBill.id)?.targetGuid, legacy, "precondition: the row sits on the legacy guid")
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        try APIClient.$current.withValue(transport.client) {
+            let host = AccessibilityTreeText.Host(
+                page(houseBill, store: store, voteStore: voteStore, size: .large),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.activate("Change your vote", settle: 0.6), host.text())
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+            XCTAssertEqual(preferences.putCalls, [], "no Bill row for a vote not saved yet")
+
+            votes.setFeedbackError = nil
+            let reason = try XCTUnwrap(
+                host.identifiers().sorted().first { $0.hasPrefix("bill.feedback.") && $0 != VoteReasonPicker.moreIdentifier },
+                host.text()
+            )
+            XCTAssertTrue(host.activate(identifier: reason), host.text())
+            XCTAssertTrue(host.run(until: { votes.setFeedbackCalls.count == 2 }), "the reasons update: \(votes.setFeedbackCalls)")
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.billId), [legacy, legacy], "the change and its reasons went to the row's guid")
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            assertOneBillRow(preferences, guid: legacy, host: host)
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
+    /// Exactly one `PUT /preferences` once the page has run a little longer: the Bill row for `guid` (type "bill",
+    /// category "", the backend contract), which makes the server follow the bill for this voter.
+    private func assertOneBillRow(
+        _ preferences: FakePreferencesService,
+        guid: String,
+        host: AccessibilityTreeText.Host,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(host.run(until: { !preferences.putCalls.isEmpty }), "the Bill row is written", file: file, line: line)
+        host.run(0.3)
+        XCTAssertEqual(preferences.putCalls.count, 1, "once: \(preferences.putCalls)", file: file, line: line)
+        let saved = preferences.putCalls.flatMap { $0 }
+        XCTAssertEqual(saved.map(\.preference), [guid], file: file, line: line)
+        XCTAssertEqual(saved.map(\.type), ["bill"], file: file, line: line)
+        XCTAssertEqual(saved.map(\.category), [""], file: file, line: line)
     }
 
     /// Stats for `guid`, over the floor.

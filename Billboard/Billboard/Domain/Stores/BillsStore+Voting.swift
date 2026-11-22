@@ -234,7 +234,8 @@ extension BillsStore {
     /// the vote's result is not held up). The server follows a bill with that row: `userMatcher` sends the
     /// bill's alert pushes to users with a Bill or Watch row on it, and the weekly brief lists the bill
     /// under "You're watching this". So it is sent only once the vote is stored: a refused vote that rolls
-    /// back must leave no follow (APPF-27), and neither does a vote whose outcome is unknown.
+    /// back must leave no follow (APPF-27), and neither does a vote whose outcome is unknown until the server
+    /// confirms it another way (`unsavedVoteConfirmed(guid:)`, UX-49b).
     ///
     /// Backend contract for Bills SetPreferences: preference is the bill guid (e.g. "BILLS-119hr900is"),
     /// type "bill" (the server stores it as "Bill"), and category must be "" (empty string).
@@ -261,6 +262,15 @@ extension BillsStore {
                 #endif
             }
         }
+    }
+
+    /// The vote store's `onUnsavedVoteConfirmed` (set in `connect(voteStore:)`): a vote whose own write ended with its
+    /// outcome unknown was confirmed another way, by a stored reasons update or a read of its row. It gets the
+    /// `type=bill` preference row a stored vote gets, under `guid`, the guid the vote went to (for a companion group,
+    /// maybe a member's legacy text-version guid), so the server follows the bill for this voter (UX-49b). The hook
+    /// holds this store weakly: once it is gone (sign-out) nothing is sent.
+    func unsavedVoteConfirmed(guid: String) {
+        Self.saveBillPreference(guid: guid, using: preferencesService)
     }
 
     /// A vote write recorded by `recordVote` ended. When the server refused the vote and the vote store
