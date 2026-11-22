@@ -534,7 +534,7 @@ final class HomeRenderTests: XCTestCase {
     // MARK: - States and banner
 
     /// The queue states (spec 4.22): the syncing placeholder, ALL CAUGHT UP (with and without the pull
-    /// hint), the Show one more week row, COULDN'T LOAD with Retry, and the sync capsule and Jump to top.
+    /// hint), the Show one more week row, COULDN'T LOAD with Try again, and the sync capsule and Jump to top.
     func testQueueStatesRenderInEveryVariant() throws {
         for variant in Self.variants {
             let states = VStack(spacing: 16) {
@@ -577,7 +577,8 @@ final class HomeRenderTests: XCTestCase {
         defer { host.close() }
         let strings = host.strings()
         XCTAssertTrue(strings.contains("Couldn't load. Couldn't load your bills. Can't reach Billboard right now. Check your connection and try again."), "\(strings)")
-        XCTAssertEqual(host.identifier(of: "Retry"), "home.queue.retry", "the notice's id leaves Retry's alone")
+        XCTAssertEqual(host.identifier(of: "Try again"), "home.queue.retry", "the notice's id leaves Try again's alone")
+        XCTAssertFalse(strings.contains { $0.contains("Retry") }, "one retry word, Try again (UX-39e): \(strings)")
         XCTAssertEqual(host.identifier(of: "Show one more week"), "home.queue.expandHistory")
         XCTAssertTrue(strings.contains("Older bills you haven't voted on"), "\(strings)")
     }
