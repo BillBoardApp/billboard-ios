@@ -5,8 +5,8 @@ project depends on or ships, with what is known about its licence. It is not leg
 
 ## Swift packages
 
-The app target declares one package, `amplify-swift`, and links its products `Amplify`, `AWSAPIPlugin`, `AWSCognitoAuthPlugin`. Swift Package Manager resolves the rest of the list below as their dependencies (some may not be linked into
-the app). The list is every pin in `BillBoard.xcworkspace/xcshareddata/swiftpm/Package.resolved` (34 packages). Nothing is vendored in this repository: Xcode downloads each package from its own
+The app target declares one package, `amplify-swift`, and links its products `Amplify`, `AWSAPIPlugin`, `AWSCognitoAuthPlugin`. Swift Package Manager resolves the rest of the list below as their dependencies; only seven of
+them are linked into the app (see [In the app](#in-the-app)). The list is every pin in `BillBoard.xcworkspace/xcshareddata/swiftpm/Package.resolved` (34 packages). Nothing is vendored in this repository: Xcode downloads each package from its own
 repository, which carries its licence text and any NOTICE file.
 
 Licence identifiers were read from each package's own LICENSE file at the pinned revision. `Apache-2.0 WITH Swift-exception` marks a package whose licence adds the Swift Runtime Library Exception.
@@ -49,6 +49,69 @@ Licence identifiers were read from each package's own LICENSE file at the pinned
 | `thrift-swift` | 1.1.2 | Apache-2.0 | <https://github.com/undefinedlabs/Thrift-Swift> | licence read from source-file headers (the package ships no LICENSE file) |
 
 Apache-2.0: <https://www.apache.org/licenses/LICENSE-2.0>. MIT: the text in the package's own LICENSE file.
+
+## In the app
+
+The app shows these notices on its **Open-source licenses** screen (About Billboard). Seven packages are linked into
+the app; the other 27 pins above are resolved only for targets the app does not link (Amplify's DataStore, Storage and
+push notifications, smithy-swift's SwiftNIO client, opentelemetry-swift's gRPC and other exporters, aws-crt-swift's
+command-line tools, and code built only on Linux, such as s2n-tls and AWS-LC).
+
+The table below drives the screen. `scripts/generate-open-source-licenses.sh` reads it and, for each row, the listed
+files from the package at its pinned revision, and writes them to `Billboard/Billboard/Resources/OpenSourceLicenses.json`,
+which the app bundles. That file is checked in, so a build needs no network and no build script.
+`./scripts/generate-open-source-licenses.sh --check` (a step of `scripts/test.sh`) needs no package checkouts: it fails
+when the file was not regenerated after a change to this table, to a pin in `Package.resolved`, or to the repository's
+`NOTICE` or `LICENSE`.
+
+- **Part**: a library bundled inside the package (empty for the package itself).
+- **Notice**: NOTICE files, shown whole.
+- **Licence text**: licence files, shown whole. A source file here means the licence comment at its top (a block with
+  a copyright line, other than a one-line SPDX header).
+- **Copyright lines from**: the source folders of the targets the app links; the screen lists each distinct copyright
+  line found at the top of their files.
+
+The set was worked out from the package manifests at the pinned revisions: the targets that the app's three Amplify
+products depend on when built for iOS. When a pin changes, check that set again (a Release build with
+`LD_GENERATE_MAP_FILE=YES` shows what is linked), update this table and the one above, and run the generator.
+
+<!-- open-source-licenses:begin -->
+| Package | Part | Licence (SPDX) | Notice | Licence text | Copyright lines from |
+|---|---|---|---|---|---|
+| `amplify-swift` | | Apache-2.0 | `NOTICE` | `LICENSE` | `Amplify`, `AmplifyPlugins/Core/AWSPluginsCore`, `AmplifyPlugins/Core/AmplifyCredentials`, `AmplifyPlugins/API/Sources/AWSAPIPlugin`, `AmplifyPlugins/Auth/Sources/AmplifyAvailability`, `AmplifyPlugins/Auth/Sources/AmplifyBigInteger`, `AmplifyPlugins/Auth/Sources/AmplifySRP`, `AmplifyPlugins/Auth/Sources/AWSCognitoAuthPlugin` |
+| `amplify-swift` | libtommath | Unlicense | | `AmplifyPlugins/Auth/Sources/libtommath/LICENSE` | `AmplifyPlugins/Auth/Sources/libtommath` |
+| `amplify-swift` | Reachability.swift | BSD-2-Clause | | `AmplifyPlugins/API/Sources/AWSAPIPlugin/Reachability/AmplifyReachability.swift` | |
+| `aws-crt-swift` | | Apache-2.0 | `NOTICE` | `LICENSE` | `Source/AwsCommonRuntimeKit` |
+| `aws-crt-swift` | aws-c-auth | Apache-2.0 | `aws-common-runtime/aws-c-auth/NOTICE` | `aws-common-runtime/aws-c-auth/LICENSE` | `aws-common-runtime/aws-c-auth/include`, `aws-common-runtime/aws-c-auth/source` |
+| `aws-crt-swift` | aws-c-cal | Apache-2.0 | `aws-common-runtime/aws-c-cal/NOTICE` | `aws-common-runtime/aws-c-cal/LICENSE` | `aws-common-runtime/aws-c-cal/include`, `aws-common-runtime/aws-c-cal/source` |
+| `aws-crt-swift` | aws-c-cal | APSL-2.0 | | `aws-common-runtime/aws-c-cal/source/darwin/common_cryptor_spi.h` | |
+| `aws-crt-swift` | aws-c-common | Apache-2.0 | `aws-common-runtime/aws-c-common/NOTICE` | `aws-common-runtime/aws-c-common/LICENSE` | `aws-common-runtime/aws-c-common/include`, `aws-common-runtime/aws-c-common/source` |
+| `aws-crt-swift` | aws-c-common | BSD-3-Clause AND MIT | | `aws-common-runtime/aws-c-common/THIRD-PARTY-LICENSES.txt` | |
+| `aws-crt-swift` | aws-c-common | BSD-3-Clause | | `aws-common-runtime/aws-c-common/source/posix/time.c` | |
+| `aws-crt-swift` | aws-c-compression | Apache-2.0 | `aws-common-runtime/aws-c-compression/NOTICE` | `aws-common-runtime/aws-c-compression/LICENSE` | `aws-common-runtime/aws-c-compression/include`, `aws-common-runtime/aws-c-compression/source` |
+| `aws-crt-swift` | aws-c-event-stream | Apache-2.0 | `aws-common-runtime/aws-c-event-stream/NOTICE` | `aws-common-runtime/aws-c-event-stream/LICENSE` | `aws-common-runtime/aws-c-event-stream/include`, `aws-common-runtime/aws-c-event-stream/source` |
+| `aws-crt-swift` | aws-c-http | Apache-2.0 | `aws-common-runtime/aws-c-http/NOTICE` | `aws-common-runtime/aws-c-http/LICENSE` | `aws-common-runtime/aws-c-http/include`, `aws-common-runtime/aws-c-http/source` |
+| `aws-crt-swift` | aws-c-io | Apache-2.0 | `aws-common-runtime/aws-c-io/NOTICE` | `aws-common-runtime/aws-c-io/LICENSE` | `aws-common-runtime/aws-c-io/include`, `aws-common-runtime/aws-c-io/source` |
+| `aws-crt-swift` | aws-c-mqtt | Apache-2.0 | `aws-common-runtime/aws-c-mqtt/NOTICE` | `aws-common-runtime/aws-c-mqtt/LICENSE` | `aws-common-runtime/aws-c-mqtt/include`, `aws-common-runtime/aws-c-mqtt/source` |
+| `aws-crt-swift` | aws-c-sdkutils | Apache-2.0 | `aws-common-runtime/aws-c-sdkutils/NOTICE` | `aws-common-runtime/aws-c-sdkutils/LICENSE` | `aws-common-runtime/aws-c-sdkutils/include`, `aws-common-runtime/aws-c-sdkutils/source` |
+| `aws-crt-swift` | aws-checksums | Apache-2.0 | | `aws-common-runtime/aws-checksums/LICENSE` | `aws-common-runtime/aws-checksums/include`, `aws-common-runtime/aws-checksums/source` |
+| `aws-sdk-swift` | | Apache-2.0 | `NOTICE` | `LICENSE` | `Sources/Core`, `Sources/Services/AWSCognitoIdentity`, `Sources/Services/AWSCognitoIdentityProvider` |
+| `opentelemetry-swift` | | Apache-2.0 | | `LICENSE` | `Sources/OpenTelemetryApi`, `Sources/OpenTelemetrySdk`, `Sources/Exporters/InMemory`, `Sources/Exporters/OpenTelemetryProtocolCommon`, `Sources/Exporters/OpenTelemetryProtocolHttp`, `Sources/Exporters/DataCompression` |
+| `smithy-swift` | | Apache-2.0 | `NOTICE` | `LICENSE` | `Sources` |
+| `swift-log` | | Apache-2.0 | `NOTICE.txt` | `LICENSE.txt` | `Sources/Logging` |
+| `swift-protobuf` | | Apache-2.0 WITH Swift-exception | | `LICENSE.txt` | `Sources/SwiftProtobuf` |
+| `swift-protobuf` | | BSD-3-Clause | | `Sources/SwiftProtobuf/descriptor.pb.swift` | |
+<!-- open-source-licenses:end -->
+
+Notes on the table:
+
+- `aws-crt-swift` builds ten of its bundled C libraries for iOS; s2n-tls and AWS-LC are built only on Linux.
+  `aws-c-common` also bundles cJSON, libcbor and an Intel header, under the licences in its
+  `THIRD-PARTY-LICENSES.txt`, and one file (`source/posix/time.c`) carries a BSD-3-Clause notice.
+- `amplify-swift`'s API plugin includes a copy of Reachability.swift under BSD-2-Clause.
+- `swift-protobuf`'s generated Google well-known types (`*.pb.swift` in `Sources/SwiftProtobuf`) carry the Protocol
+  Buffers BSD-3-Clause notice; one of them is listed, as the notice is the same in each.
+- `opentelemetry-swift`'s `DataCompression` file carries its own copyright line, which the screen lists.
 
 ## Data in this repository
 

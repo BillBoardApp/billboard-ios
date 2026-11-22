@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Local gate: the checks the repository's CI runs on a pull request
 #
-#   ./scripts/test.sh              # contract check, UI rules (and their self-test), unit tests, no build warnings
+#   ./scripts/test.sh              # contract check, open-source licenses check, UI rules (and their self-test), unit
+#                                  # tests, no build warnings
 #   ./scripts/test.sh --release    # ...and a Release build for the simulator (catches build-setting mistakes)
-#   ./scripts/test.sh --no-tests   # contract check and UI rules (and their self-test) only (no xcodebuild)
+#   ./scripts/test.sh --no-tests   # contract, licenses and UI rules checks (and the rules' self-test) only (no xcodebuild)
 #
 # Environment:
 #   DESTINATION        xcodebuild destination (default: platform=iOS Simulator,name=iPhone 17)
@@ -28,7 +29,7 @@ for arg in "$@"; do
   case "$arg" in
     --no-tests) run_tests=0 ;;
     --release) run_release=1 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -74,6 +75,8 @@ xcode() {
 }
 
 step "Contract matches the backend's contracts" "${ROOT}/scripts/syncContracts.sh" --check
+step "Open-source licenses match THIRD_PARTY_NOTICES.md and Package.resolved" \
+  "${ROOT}/scripts/generate-open-source-licenses.sh" --check
 step "UI rules" "${ROOT}/scripts/check-ui-rules.sh"
 step "UI rules self-test" "${ROOT}/scripts/check-ui-rules-selftest.sh"
 
