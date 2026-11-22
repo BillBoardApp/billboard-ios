@@ -16,7 +16,9 @@ enum CivicProfileAxis: String, CaseIterable, Codable, Hashable {
         case .individualVsCommunity: return "Individual"
         case .localVsFederal: return "Local"
         case .freeMarketVsRegulated: return "Free Market"
-        case .traditionalVsProgressive: return "Traditional"
+        // UX-40 L4a: the rubric's own meaning (keeps or restores existing institutions and practices), not a
+        // partisan-coded word. The wire key `traditionalVsProgressive` stays.
+        case .traditionalVsProgressive: return "Keep as is"
         case .interventionistVsRestrained: return "Restrained"
         case .privacyVsSecurity: return "Privacy"
         }
@@ -28,7 +30,8 @@ enum CivicProfileAxis: String, CaseIterable, Codable, Hashable {
         case .individualVsCommunity: return "Community"
         case .localVsFederal: return "Federal"
         case .freeMarketVsRegulated: return "Regulated"
-        case .traditionalVsProgressive: return "Progressive"
+        // UX-40 L4a: the rubric's own meaning (changes or modernizes them).
+        case .traditionalVsProgressive: return "Change"
         case .interventionistVsRestrained: return "Intervene"
         case .privacyVsSecurity: return "Security"
         }

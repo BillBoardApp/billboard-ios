@@ -419,6 +419,25 @@ final class CivicStoresTests: XCTestCase {
         XCTAssertEqual(RadarChartDataset(profile: .empty, label: "You").style, .solid, "one profile is the solid line")
     }
 
+    /// UX-40 L4a (feature review, accepted 2026-10-28): the fourth theme is named by the rubric's own meaning,
+    /// -1 keeps or restores existing institutions and practices and +1 changes or modernizes them, instead of the
+    /// partisan-coded "Traditional" and "Progressive". The wire key is unchanged, and only this theme is renamed.
+    func testTheFourthThemeIsNamedByWhatItMeasures() {
+        let axis = CivicProfileAxis.traditionalVsProgressive
+        XCTAssertEqual(axis.rawValue, "traditionalVsProgressive", "the wire key stays")
+        XCTAssertEqual(axis.lowLabel, "Keep as is")
+        XCTAssertEqual(axis.highLabel, "Change")
+        XCTAssertEqual(axis.explanation, "Keep as is (1) to Change (10)")
+
+        XCTAssertEqual(CivicProfileAxis.allCases.map(\.lowLabel), ["Individual", "Local", "Free Market", "Keep as is", "Restrained", "Privacy"])
+        XCTAssertEqual(CivicProfileAxis.allCases.map(\.highLabel), ["Community", "Federal", "Regulated", "Change", "Intervene", "Security"])
+        for axis in CivicProfileAxis.allCases {
+            for retired in ["Traditional", "Progressive"] {
+                XCTAssertFalse(axis.explanation.contains(retired), "\(axis): \(axis.explanation)")
+            }
+        }
+    }
+
     @MainActor
     func testRadarScoreLineSaysNotEnoughDataInsteadOfSignal() {
         XCTAssertEqual(RadarChartView.scoreText(subjectLabel: "You", score: 7), "You: 7/10")
