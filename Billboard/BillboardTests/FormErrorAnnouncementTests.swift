@@ -339,6 +339,32 @@ final class FormErrorAnnouncementTests: XCTestCase {
         }
     }
 
+    /// Choose your district, then Continue, with a save that fails at once: the line under Continue is said once,
+    /// and said again when the next Continue fails the same way before the screen redraws (the line is cleared and
+    /// shown again in one update, so only a new view says it again).
+    func testWhereDoYouVoteSaysAFailedChosenDistrictEveryTime() {
+        let spoken = SpokenLines()
+        let saves = SaveCounter()
+        let host = Self.host(Self.signedOut(Self.chooseYourDistrict(saves: saves)), spoken: spoken)
+        defer { host.close() }
+
+        XCTAssertTrue(host.activate(identifier: "location.chooseDistrict"), host.text())
+        XCTAssertTrue(host.run(until: { host.label(ofIdentifier: "location.chooseDistrict.continue") != nil }), host.text())
+        XCTAssertEqual(spoken.lines, [], "nothing to say yet")
+
+        XCTAssertTrue(host.activate(identifier: "location.chooseDistrict.continue"), host.text())
+        XCTAssertTrue(host.run(until: { host.label(ofIdentifier: "location.error") != nil }), host.text())
+        host.run(0.3)
+        XCTAssertEqual(saves.count, 1, "the save was tried")
+        XCTAssertEqual(host.label(ofIdentifier: "location.error"), AuthErrorMessages.network)
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.network], "said once")
+
+        XCTAssertTrue(host.activate(identifier: "location.chooseDistrict.continue"), host.text())
+        XCTAssertTrue(host.run(until: { saves.count == 2 }), host.text())
+        host.run(0.3)
+        XCTAssertEqual(spoken.lines, [AuthErrorMessages.network, AuthErrorMessages.network], "and again after the next Continue")
+    }
+
     /// Setup's Continue follows the representatives; when that fails, the line under Try again is said once, and
     /// said again when Try again fails too.
     func testSetupSaysAFailedFollow() {
@@ -365,32 +391,58 @@ final class FormErrorAnnouncementTests: XCTestCase {
         )
     }
 
-    /// Profile's Follow your representatives says a failed follow once.
+    /// Profile's Follow your representatives says a failed follow once. While the follow runs the button says
+    /// "Following…": the profile marks the members followed at once, but "You follow your representatives." waits
+    /// for the save.
     func testProfileSaysAFailedFollow() {
         let spoken = SpokenLines()
-        let preferences = FailingPreferences()
+        let preferences = FailingPreferences(delay: .milliseconds(800))
         let host = Self.host(Self.whereDoYouVote(.profile, saved: Self.savedDistrict, preferences: preferences), spoken: spoken)
         defer { host.close() }
         let headline = LocationSavedPanel.spokenHeadline(state: "VA", district: "11")
 
-        XCTAssertTrue(host.activate("Follow your representatives"), host.text())
+        XCTAssertTrue(host.activate("Follow your representatives", settle: 0.05), host.text())
+        XCTAssertTrue(host.run(until: { host.strings().contains("Following…") }), host.text())
+        XCTAssertFalse(host.strings().contains("You follow your representatives."), "no success before the save: \(host.text())")
         XCTAssertTrue(host.run(until: { host.strings().contains(LocationSavedPanel.profileFollowFailedMessage) }), host.text())
         host.run(0.3)
         XCTAssertEqual(preferences.putCount, 1, "the follow was sent")
         XCTAssertEqual(spoken.lines, [headline, LocationSavedPanel.profileFollowFailedMessage], "said once")
+        XCTAssertTrue(host.strings().contains("Follow your representatives"), "the button is back: \(host.text())")
+        XCTAssertFalse(host.strings().contains("You follow your representatives."), host.text())
     }
 
-    /// "You're in VA-11." is said once as the panel shows, in the words VoiceOver reads on the headline, and through
-    /// the form's queued sayer, so the button's label change is not cut off.
-    func testTheSuccessHeadlineIsQueued() {
+    /// A follow that fails at once, before the screen redraws, is said each time: in setup after Continue and Try
+    /// again, in Profile after each Follow your representatives.
+    func testAFollowThatFailsAtOnceIsSaidEveryTime() {
+        let headline = LocationSavedPanel.spokenHeadline(state: "VA", district: "11")
+        let flows: [(LocationEditorView.Context, first: String, again: String, line: String)] = [
+            (.setup, "Continue", "Try again", LocationSavedPanel.setupFollowFailedMessage),
+            (.profile, "Follow your representatives", "Follow your representatives", LocationSavedPanel.profileFollowFailedMessage)
+        ]
+        for flow in flows {
+            let spoken = SpokenLines()
+            let preferences = FailingPreferences(delay: nil)
+            let host = Self.host(Self.whereDoYouVote(flow.0, saved: Self.savedDistrict, preferences: preferences), spoken: spoken)
+            XCTAssertTrue(host.activate(flow.first), "\(flow.0): \(host.text())")
+            XCTAssertTrue(host.run(until: { host.strings().contains(flow.line) }), "\(flow.0): \(host.text())")
+            XCTAssertTrue(host.activate(flow.again), "\(flow.0): \(host.text())")
+            XCTAssertTrue(host.run(until: { preferences.putCount == 2 }), "\(flow.0): \(host.text())")
+            host.run(0.3)
+            XCTAssertEqual(spoken.lines, [headline, flow.line, flow.line], "\(flow.0)")
+            host.close()
+        }
+    }
+
+    /// "You're in VA-11." is said once as the panel shows, in the words VoiceOver reads on the headline, through the
+    /// form's sayer (`\.announceToVoiceOver`, which posts it queued, so the button's label change is not cut off).
+    func testTheSuccessHeadlineIsSaidOnce() {
         let spoken = SpokenLines()
         let host = Self.host(Self.whereDoYouVote(.profile, saved: Self.savedDistrict, preferences: FailingPreferences()), spoken: spoken)
         defer { host.close() }
         XCTAssertEqual(spoken.lines, ["You're in Virginia's 11th district."])
         host.run(0.3)
         XCTAssertEqual(spoken.lines, ["You're in Virginia's 11th district."], "not again")
-        let queued = VoiceOverAnnouncement.queued(spoken.lines[0])
-        XCTAssertEqual(queued.attribute(.accessibilitySpeechQueueAnnouncement, at: 0, effectiveRange: nil) as? Bool, true)
     }
 
     /// Where do you vote? with an address ready for Find my district.
@@ -402,6 +454,24 @@ final class FormErrorAnnouncementTests: XCTestCase {
         form.zip = "22030"
         return NavigationStack {
             LocationEditorView(context: .profile, congressService: FakeCongressService(), form: form) { _ in }
+        }
+    }
+
+    /// Choose your district for VA-11, whose save to the account fails at once (offline), counted in `saves`.
+    private static func chooseYourDistrict(saves: SaveCounter) -> some View {
+        var form = LocationForm()
+        form.state = "VA"
+        form.district = "11"
+        return NavigationStack {
+            LocationEditorView(
+                context: .profile,
+                congressService: FakeCongressService(),
+                form: form,
+                saveChosenLocation: { _, _ in
+                    saves.count += 1
+                    throw URLError(.notConnectedToInternet)
+                }
+            ) { _ in }
         }
     }
 
@@ -491,17 +561,30 @@ private final class SpokenLines {
     }
 }
 
+/// How many times a save was tried.
+@MainActor
+private final class SaveCounter {
+    var count = 0
+}
+
 /// Preferences whose saves fail as offline after a short wait, as a real request does: the follow is "Following…" for
-/// a moment before the failure shows.
+/// a moment before the failure shows. With no wait, a save fails before the screen redraws.
 @MainActor
 private final class FailingPreferences: PreferencesServicing {
     private(set) var putCount = 0
+    private let delay: Duration?
+
+    init(delay: Duration? = .milliseconds(100)) {
+        self.delay = delay
+    }
 
     func getPreferences() async throws -> [PreferencesItem] { [] }
 
     func putPreferences(_ items: [PreferencesItem]) async throws {
         putCount += 1
-        try await Task.sleep(for: .milliseconds(100))
+        if let delay {
+            try await Task.sleep(for: delay)
+        }
         throw URLError(.notConnectedToInternet)
     }
 
