@@ -56,7 +56,7 @@ struct BillBoardLoadErrorState: View {
             .accessibilityIdentifier("home.queue.retry")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // A container of its own, so the id names the notice without replacing Retry's.
+        // A container of its own, so the id names the notice without replacing Try again's.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.queue.loadError")
     }
