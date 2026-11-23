@@ -604,7 +604,7 @@ struct EmailText: View {
 struct ProfileView: View {
     let isActive: Bool
 
-    private enum Sheet: String, Identifiable {
+    enum Sheet: String, Identifiable {
         case location
         case topics
 
@@ -612,6 +612,7 @@ struct ProfileView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var userStore: UserStore
     @EnvironmentObject private var civicProfileStore: CivicProfileStore
     @EnvironmentObject private var civicScoreStore: CivicScoreStore
@@ -713,7 +714,17 @@ struct ProfileView: View {
             sheetContent(sheet)
                 .withoutTabCapsuleClearance()
         }
+        .onAppear(perform: openPendingSheet)
+        .onChange(of: appState.pendingProfileSheet) { _, _ in openPendingSheet() }
+        .onChange(of: appState.isTabsSheetUp) { _, _ in openPendingSheet() }
         .accessibilityIdentifier("profile.screen")
+    }
+
+    /// Opens the sheet another part of the app asked for (`AppState.pendingProfileSheet`) once no tab bar sheet is
+    /// up; it replaces a Profile sheet already showing.
+    private func openPendingSheet() {
+        guard let request = appState.takePendingProfileSheet() else { return }
+        activeSheet = Sheet(request)
     }
 
     @ViewBuilder

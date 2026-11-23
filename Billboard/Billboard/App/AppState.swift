@@ -10,6 +10,35 @@ final class AppState: ObservableObject {
     @Published var sessionBillboardHistoryWindow: BillboardHistoryWindow?
     @Published var isReconcilingHomeQueue: Bool = false
     @Published var hasCompletedHomeQueueReconciliation: Bool = false
+    /// A sheet Profile opens itself as soon as it can (`takePendingProfileSheet()`): Where you vote for the district
+    /// check push (REL-46). Profile's own editor, not the tab bar's, so the Where you vote line shows what it saved.
+    @Published var pendingProfileSheet: ProfileSheetRequest?
+    /// The tab bar has a sheet up (`TabsBar.activeSheet`, until it has closed). Profile cannot show a sheet over it,
+    /// so a pending Profile sheet waits.
+    @Published var isTabsSheetUp = false
+
+    /// The pending Profile sheet, now cleared, when Profile can show it; nil while the tab bar's sheet is up.
+    func takePendingProfileSheet() -> ProfileSheetRequest? {
+        guard !isTabsSheetUp, let request = pendingProfileSheet else { return nil }
+        pendingProfileSheet = nil
+        return request
+    }
+}
+
+/// A Profile sheet another part of the app asks for (`AppState.pendingProfileSheet`).
+enum ProfileSheetRequest: Equatable, Sendable {
+    /// The Where you vote editor (the district check push, REL-46).
+    case whereYouVote
+}
+
+extension ProfileView.Sheet {
+    /// The Profile sheet a request opens: Where you vote is Profile's own location editor, which puts the
+    /// verification it saved on the Where you vote line.
+    init(_ request: ProfileSheetRequest) {
+        switch request {
+        case .whereYouVote: self = .location
+        }
+    }
 }
 
 extension AppState {

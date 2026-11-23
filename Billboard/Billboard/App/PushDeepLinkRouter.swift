@@ -73,17 +73,32 @@ struct PushDeepLinkRouter: ViewModifier {
             }
     }
 
-    /// Where a tapped district check push lands (REL-46): the Profile tab at its root, with the Where you vote editor
-    /// over it (`TabsBar` presents it on `.billboardRequestLocationEditor`), which offers to follow the
-    /// representatives found once the address is checked again.
-    static func openWhereYouVote(
-        appState: AppState,
-        profilePath: inout NavigationPath,
-        notificationCenter: NotificationCenter = .default
-    ) {
+    /// Where a tapped district check push lands (REL-46): the Profile tab at its root, with Profile's own Where you
+    /// vote editor over it (`AppState.pendingProfileSheet`), which offers to follow the representatives found once
+    /// the address is checked again. Not the tab bar's copy of the editor: Profile's updates the Where you vote line
+    /// with the verification it saved.
+    static func openWhereYouVote(appState: AppState, profilePath: inout NavigationPath) {
         appState.selectedTab = TabsBar.Tab.profile.rawValue
         profilePath = NavigationPath()
-        notificationCenter.post(name: .billboardRequestLocationEditor, object: nil)
+        appState.pendingProfileSheet = .whereYouVote
+    }
+
+    /// Opens a pending push that names no bills: the Weekly Brief on Updates, the district check on Profile
+    /// (`openWhereYouVote`). False for a bill or alert push, which opens a bill.
+    static func openPendingWithoutBills(
+        _ pending: PendingPushDeepLink.Kind,
+        appState: AppState,
+        profilePath: inout NavigationPath
+    ) -> Bool {
+        switch pending {
+        case .weeklyDigest:
+            appState.selectedTab = TabsBar.Tab.updates.rawValue
+        case .districtCheck:
+            openWhereYouVote(appState: appState, profilePath: &profilePath)
+        case .digest, .alert:
+            return false
+        }
+        return true
     }
 
     private func handleBillDidChange(_ note: Notification) {
@@ -285,7 +300,8 @@ struct PushDeepLinkRouter: ViewModifier {
     }
 
     private func consumePendingDeepLinkIfAny() {
-        guard let pending = PendingPushDeepLink.consume() else { return }
+        guard let pending = PendingPushDeepLink.consume(),
+              !Self.openPendingWithoutBills(pending, appState: appState, profilePath: &profilePath) else { return }
 
         switch pending {
         case .digest(let billIds, let notificationType):
@@ -328,11 +344,9 @@ struct PushDeepLinkRouter: ViewModifier {
                 }
             }
 
-        case .weeklyDigest(_):
-            appState.selectedTab = TabsBar.Tab.updates.rawValue
-
-        case .districtCheck:
-            Self.openWhereYouVote(appState: appState, profilePath: &profilePath)
+        case .weeklyDigest, .districtCheck:
+            // Opened by `openPendingWithoutBills` above.
+            break
 
         case .alert(let alert):
             // Build a BillAlert instance and navigate to bill detail (alerts are not shown as a standalone UI).
