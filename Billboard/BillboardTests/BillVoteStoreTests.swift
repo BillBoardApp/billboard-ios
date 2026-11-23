@@ -784,6 +784,62 @@ final class BillVoteStoreTests: XCTestCase {
         XCTAssertEqual(confirmed.calls.count, 1, "once")
     }
 
+    /// A stored vote refreshes the civic score and profile once, as a confirmed one does
+    /// (`refreshCivicStatsAfterSavedVote()`).
+    @MainActor
+    func testAStoredVoteRefreshesTheCivicStatsOnce() async throws {
+        let service = FakeBillVotesService()
+        let store = makeStore(service)
+        let civic = try connectCivicStores(to: store)
+
+        let stored = await store.setVote(billId: billId, vote: .yea)
+
+        XCTAssertTrue(stored)
+        for _ in 0..<500 where civic.reads < 2 { await Task.yield() }
+        XCTAssertEqual(civic.scoreReads, 1, "the civic score is read again")
+        XCTAssertEqual(civic.profileReads, 1, "the civic profile is read again")
+    }
+
+    /// The bills store's hook (`BillsStore.connect(voteStore:)`) holds that store weakly. While it is there, a vote
+    /// confirmed another way gets one Bill row. Once it is gone (sign-out drops it with the tabs, while a reasons update
+    /// sent as a page was left can still end), a confirmed vote writes none, so none goes out under a later session.
+    @MainActor
+    func testAVoteConfirmedOnceTheBillsStoreIsGoneWritesNoBillRow() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        let preferences = FakePreferencesService()
+        let scope = "unsaved-vote-hook-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        var billsStore: BillsStore? = BillsStore(
+            bills: [],
+            cacheScope: scope,
+            service: FakeBillsService(),
+            preferencesService: preferences
+        )
+        billsStore?.connect(voteStore: store)
+        weak let releasedStore = billsStore
+
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        service.setFeedbackError = nil
+        await store.updateReasons(billId: billId, vote: .yea, reasons: [.education])
+        for _ in 0..<500 where preferences.putCalls.isEmpty { await Task.yield() }
+        XCTAssertEqual(preferences.putCalls.map { $0.map(\.preference) }, [[billId]], "the Bill row while the store is there")
+
+        let otherBill = "BILLS-119hr2ih"
+        service.setFeedbackError = URLError(.timedOut)
+        _ = await store.submitVote(billId: otherBill, vote: .nay)
+        billsStore = nil
+        XCTAssertNil(releasedStore, "precondition: nothing else holds the bills store")
+        service.setFeedbackError = nil
+        let updated = await store.updateReasons(billId: otherBill, vote: .nay, reasons: [.education])
+        for _ in 0..<200 { await Task.yield() }
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(store.unsavedVotes, [:], "the vote is confirmed")
+        XCTAssertEqual(preferences.putCalls.count, 1, "no Bill row once the bills store is gone")
+    }
+
     /// One call of `onUnsavedVoteConfirmed`.
     private struct Confirmation: Equatable {
         let guid: String
