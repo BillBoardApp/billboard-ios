@@ -377,7 +377,7 @@ final class BillVoteStoreTests: XCTestCase {
 
         let vote = Task { await store.setVote(billId: billId, vote: .yea) }
         await fulfillment(of: [started], timeout: 5)
-        store.clearVote(for: billId) // an "updated" push: the server cleared the Nay
+        store.clearVote(for: billId) // an "updated" push: the app drops its copy of the Nay
         gate.open()
         _ = await vote.value
 
@@ -682,9 +682,11 @@ final class BillVoteStoreTests: XCTestCase {
         XCTAssertEqual(confirmed.calls, [])
     }
 
-    /// An "updated" push clears the vote, a vote not saved yet included: no read confirms it afterwards.
+    /// An "updated" push drops the app's copy of the vote, but the server keeps the row: a vote not saved yet stays not
+    /// saved, and the bill's next read (its cache is "unknown" now, so the page reads it) confirms it, once, when the
+    /// server holds it.
     @MainActor
-    func testAPushThatClearsTheVoteEndsAVoteNotSavedYet() async {
+    func testAPushThatClearsTheVoteKeepsAVoteNotSavedYet() async {
         let service = FakeBillVotesService()
         service.setFeedbackError = URLError(.timedOut)
         let store = makeStore(service)
@@ -692,11 +694,94 @@ final class BillVoteStoreTests: XCTestCase {
         _ = await store.submitVote(billId: billId, vote: .yea)
 
         store.clearVote(for: billId)
+        XCTAssertEqual(store.vote(for: billId), .unknown)
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea], "the server may still hold it")
+
+        service.batchResult = .success([billId: .voted(.init(vote: .yea, votedAt: Date()))])
+        await store.fetchVotes(for: [billId])
+
+        XCTAssertEqual(service.batchRequests, [[billId]], "the bill is read again")
+        XCTAssertEqual(confirmed.calls, [.init(guid: billId, vote: .yea)])
+        XCTAssertEqual(store.unsavedVotes, [:])
+
+        await store.refreshVotes(for: [billId])
+        XCTAssertEqual(confirmed.calls.count, 1, "once")
+    }
+
+    /// A push while a newer vote is out, which the server then refuses: the refusal rolls back to "unknown" (the app's
+    /// copy is gone), and the vote not saved yet that the newer vote replaced is not saved yet again, so a read of it
+    /// still confirms it.
+    @MainActor
+    func testAPushWhileANewerVoteIsOutKeepsTheVoteItReplacedNotSavedYet() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        let confirmed = recordConfirmations(of: store)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+
+        let gate = Gate()
+        service.holdSetFeedback = gate
+        service.setFeedbackOutcomes = [backendError("VOTE_DAILY_LIMIT")]
+        let nayStarted = expectation(description: "Nay write started")
+        service.onSetFeedback = { _ in nayStarted.fulfill() }
+        let nay = Task { await store.submitVote(billId: billId, vote: .nay) }
+        await fulfillment(of: [nayStarted], timeout: 5)
+        store.clearVote(for: billId)
+        gate.open()
+        let nayResult = await nay.value
+
+        XCTAssertEqual(nayResult, .rolledBack(restored: .unknown))
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea])
+        XCTAssertEqual(confirmed.calls, [])
+
+        service.batchResult = .success([billId: .voted(.init(vote: .yea, votedAt: Date()))])
+        await store.fetchVotes(for: [billId])
+        XCTAssertEqual(confirmed.calls, [.init(guid: billId, vote: .yea)])
+        XCTAssertEqual(store.unsavedVotes, [:])
+    }
+
+    /// A reasons update for the vote not saved yet, stored while a newer vote waits behind it: the server holds that
+    /// vote now, so it is confirmed then, once, with the civic refresh. When the newer vote is refused, the rollback
+    /// restores it saved, not "not saved yet" again, and a later read of it confirms nothing more.
+    @MainActor
+    func testAReasonsUpdateStoredWhileANewerVoteWaitsConfirmsTheVoteItReplaced() async throws {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        let confirmed = recordConfirmations(of: store)
+        let civic = try connectCivicStores(to: store)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+
+        // The reasons update is out when the Nay is tapped; the Nay waits behind it, and the server refuses it.
+        service.setFeedbackError = nil
+        let gate = Gate()
+        service.holdSetFeedback = gate
+        service.setFeedbackOutcomes = [nil, backendError("VOTE_DAILY_LIMIT")]
+        let reasonsStarted = expectation(description: "reasons update started")
+        service.onSetFeedback = { call in
+            if !call.reasons.isEmpty { reasonsStarted.fulfill() }
+        }
+        let reasons = Task { await store.updateReasons(billId: billId, vote: .yea, reasons: [.education]) }
+        await fulfillment(of: [reasonsStarted], timeout: 5)
+        let nay = Task { await store.submitVote(billId: billId, vote: .nay) }
+        for _ in 0..<500 where store.unsavedVotes[billId] != nil { await Task.yield() }
+        XCTAssertEqual(store.unsavedVotes, [:], "precondition: the Nay waits, with the Yea as the row it replaces")
+        gate.open()
+        let updated = await reasons.value
+        let nayResult = await nay.value
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(nayResult, .rolledBack(restored: .voted(.yea)))
+        XCTAssertEqual(store.vote(for: billId), .voted(.yea))
+        XCTAssertEqual(confirmed.calls, [.init(guid: billId, vote: .yea)])
+        XCTAssertEqual(store.unsavedVotes, [:], "the Yea is saved")
+        for _ in 0..<500 where civic.reads < 2 { await Task.yield() }
+        XCTAssertEqual(civic.scoreReads, 1)
+        XCTAssertEqual(civic.profileReads, 1)
+
         service.batchResult = .success([billId: .voted(.init(vote: .yea, votedAt: Date()))])
         await store.refreshVotes(for: [billId])
-
-        XCTAssertEqual(store.unsavedVotes, [:])
-        XCTAssertEqual(confirmed.calls, [])
+        XCTAssertEqual(confirmed.calls.count, 1, "once")
     }
 
     /// One call of `onUnsavedVoteConfirmed`.
