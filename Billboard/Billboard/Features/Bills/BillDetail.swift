@@ -299,6 +299,7 @@ private struct BillDetailContent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.watchNotificationAccess) private var watchNotificationAccess
+    @Environment(\.voteStripAlert) private var voteStripAlert
     /// Set by the tour's "Open this bill" until a vote is saved or the user taps Not now (spec D 2.5.5).
     @AppStorage(FirstRunStorage.voteCoachMarkPendingKey) private var voteCoachMarkPending = false
 
@@ -364,7 +365,8 @@ private struct BillDetailContent: View {
     @State private var refusalText: String?
     /// The vote shown here was cast on the page and its write failed with the outcome unknown (offline, a
     /// timeout, a server error): the vote stays, and the refusal strip says "Not saved yet. Check your
-    /// connection." with Try again (UX-49), until the next vote tap.
+    /// connection." with Try again (UX-49), until the next vote tap. A vote not saved yet from before the page opened
+    /// shows the same strip from the vote store's mark (`isShownVoteMarkedUnsaved`, APPF-30 step 2).
     @State private var isVoteUnsaved = false
     /// Try again on that strip is sending the vote: the strip stays, its Try again disabled, until the result, so
     /// VoiceOver's focus on it is not lost (UX-49).
@@ -518,7 +520,22 @@ private struct BillDetailContent: View {
     }
 
     private var showsNotSavedStrip: Bool {
-        isVoteUnsaved && !isChangingVote
+        showsUnsavedVote && !isChangingVote
+    }
+
+    /// The vote shown is not saved yet: its write failed on this page (`isVoteUnsaved`), or the vote store marks it
+    /// (`isShownVoteMarkedUnsaved`).
+    private var showsUnsavedVote: Bool {
+        isVoteUnsaved || isShownVoteMarkedUnsaved
+    }
+
+    /// The vote shown is one the vote store marks as not saved yet (APPF-30 step 2): its write failed before the page
+    /// opened (on an earlier visit, or before a relaunch), on the bill's guid or wherever the group's vote went. The
+    /// strip then shows whenever the page opens, quietly: no error haptic and no VoiceOver focus, which only a write
+    /// that fails on the page brings (`voteStripShown()`). Not while a vote cast here is out: its result decides.
+    private var isShownVoteMarkedUnsaved: Bool {
+        guard voteCasts.latest == nil, let shown = barChoice?.voteType else { return false }
+        return voteErrorGuids.contains { voteStore.unsavedVote(for: $0) == shown }
     }
 
     /// The strip's Try again, only for a vote not saved yet: sends the shown vote again (UX-49).
@@ -700,12 +717,11 @@ private struct BillDetailContent: View {
         reasonSyncTask?.cancel()
         reasonSyncTask = nil
         // The next vote tap ends a refusal's strip (spec 3.10.2), and a vote not saved yet's (UX-49). Try again keeps
-        // the not-saved strip until its result (`voteWriteEnded`).
+        // the not-saved strip until its result (`voteWriteEnded`), also for a vote marked before the page opened, whose
+        // mark the vote store hides while the write is out (APPF-30 step 2).
         refusalText = nil
-        isRetryingVote = isRetry && isVoteUnsaved
-        if !isRetryingVote {
-            isVoteUnsaved = false
-        }
+        isRetryingVote = isRetry && showsUnsavedVote
+        isVoteUnsaved = isRetryingVote
         withAnimation(reduceMotion ? nil : BallotMoment.ink) {
             pendingVote = vote
             isChangingVote = false
@@ -866,6 +882,7 @@ private struct BillDetailContent: View {
     /// The refusal strip has just come up (a refusal, or a vote not saved yet): the error haptic, the page scrolls
     /// to it where it is the first row of Your vote (from xxxLarge up), and VoiceOver focus moves to it (spec 3.10.2).
     private func voteStripShown() {
+        voteStripAlert()
         refusals += 1
         if sizeClass != .regular {
             refusalScrollCount += 1
