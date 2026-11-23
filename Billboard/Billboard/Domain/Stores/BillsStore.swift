@@ -80,6 +80,7 @@ final class BillsStore: ObservableObject {
     func connect(voteStore: BillVoteStore) {
         self.voteStore = voteStore
         voteStore.onUnsavedVoteConfirmed = { [weak self] guid, _ in self?.unsavedVoteConfirmed(guid: guid) }
+        voteStore.onUnsavedVoteReplaced = { [weak self] guid, vote in self?.unsavedVoteReplaced(guid: guid, by: vote) }
     }
 
     /// Connect to UserStore so watch state syncs to backend preferences.

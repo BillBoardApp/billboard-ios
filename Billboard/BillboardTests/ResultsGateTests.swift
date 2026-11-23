@@ -484,14 +484,13 @@ final class ResultsGateTests: XCTestCase {
 
     func testRefreshAfterResultsLockedFollowsTheServersRows() async {
         let votes = FakeBillVotesService()
-        votes.setFeedbackError = URLError(.timedOut)
         let store = voteStore(votes)
         await store.fetchVoteIfNeeded(for: Self.guid)
-        let kept = await store.submitVote(billId: Self.guid, vote: .yea)
-        XCTAssertEqual(kept, .unconfirmed)
-        XCTAssertTrue(unlocks(store), "precondition: the kept vote shows")
+        let stored = await store.submitVote(billId: Self.guid, vote: .yea)
+        XCTAssertEqual(stored, .stored)
+        XCTAssertTrue(unlocks(store), "precondition: the cached vote shows")
 
-        // RESULTS_LOCKED: the server holds no row, so the screen stops counting the kept vote as a row.
+        // RESULTS_LOCKED: the server holds no row, so the screen stops counting the cached vote as a row.
         votes.batchResult = .success([Self.guid: .notVoted])
         let rows = await store.refreshVotes(for: [Self.guid, " "])
         XCTAssertEqual(votes.batchRequests, [[Self.guid]])
@@ -512,6 +511,26 @@ final class ResultsGateTests: XCTestCase {
         votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .abstain, votedAt: Date()))])
         let abstain = await store.refreshVotes(for: [Self.guid])
         XCTAssertEqual(abstain, [Self.guid: .voted(.abstain)])
+    }
+
+    /// APPF-30 step 2: a vote not saved yet is the exception. RESULTS_LOCKED's read of no row leaves it shown, with its
+    /// row and its mark, so Results keep saying "Results show once your vote is saved." with Try again and the vote
+    /// store does not split from the bills store, which keeps the vote. The read reports no row for it.
+    func testRefreshAfterResultsLockedKeepsAVoteNotSavedYet() async {
+        let votes = FakeBillVotesService()
+        votes.setFeedbackError = URLError(.timedOut)
+        let store = voteStore(votes)
+        await store.fetchVoteIfNeeded(for: Self.guid)
+        let kept = await store.submitVote(billId: Self.guid, vote: .yea)
+        XCTAssertEqual(kept, .unconfirmed)
+
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let rows = await store.refreshVotes(for: [Self.guid])
+
+        XCTAssertEqual(rows, [:], "left as it is")
+        XCTAssertEqual(store.vote(for: Self.guid), .voted(.yea))
+        XCTAssertEqual(store.unsavedVotes, [Self.guid: .yea])
+        XCTAssertTrue(unlocks(store), "Results stay unlocked, awaiting save")
     }
 }
 

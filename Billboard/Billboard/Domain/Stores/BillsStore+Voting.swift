@@ -273,6 +273,21 @@ extension BillsStore {
         Self.saveBillPreference(guid: guid, using: preferencesService)
     }
 
+    /// The vote store's `onUnsavedVoteReplaced` (set in `connect(voteStore:)`): a read found a vote cast on another
+    /// device after the vote not saved yet on `guid` was sent, and the vote store took it (APPF-30 step 2, project
+    /// decision 2026-11-23). The loaded bills with that guid take it too, so the Bills list, Search's Voted list and
+    /// bill detail's fallback agree with the vote store. Nothing is sent: the server holds that row.
+    func unsavedVoteReplaced(guid: String, by vote: VoteType) {
+        let indices = bills.indices.filter { bills[$0].guid?.trimmingCharacters(in: .whitespacesAndNewlines) == guid }
+        guard !indices.isEmpty else { return }
+        performActiveManifestBillsBatchUpdate {
+            for index in indices {
+                bills[index] = Self.bill(bills[index], holding: .voted(vote), votedAt: voteStore?.heldVoteDate(for: guid))
+            }
+        }
+        cacheBills(bills)
+    }
+
     /// A vote write recorded by `recordVote` ended. When the server refused the vote and the vote store
     /// rolled it back, the bill's vote goes back to the restored row too (APPF-27), unless a newer vote on
     /// the guid was recorded since (its own result decides). The Bills list, Updates, Search's Voted list
@@ -283,29 +298,35 @@ extension BillsStore {
         guard case .rolledBack(let restored) = result,
               let index = bills.firstIndex(where: { $0.id == billID }) else { return }
 
-        var bill = bills[index]
-        let restoredVote: UserVote?
-        if case .voted(let voteType) = restored, voteType.countsAsVote {
-            restoredVote = UserVote(voteType)
+        bills[index] = Self.bill(bills[index], holding: restored, votedAt: voteStore?.heldVoteDate(for: guid))
+        cacheBills(bills)
+    }
+
+    /// `bill` holding the vote row `row` instead of its own vote (a refused vote's restored row, or a later vote that
+    /// replaced a vote not saved yet), cast at `votedAt` (else the bill's own time): the local counts drop the bill's
+    /// vote and count the new one, as `recordVote` counts. An Abstain, or no row, is no counted vote.
+    private static func bill(_ bill: Bill, holding row: VoteState, votedAt: Date?) -> Bill {
+        var bill = bill
+        let vote: UserVote?
+        if case .voted(let voteType) = row, voteType.countsAsVote {
+            vote = UserVote(voteType)
         } else {
-            restoredVote = nil
+            vote = nil
         }
-        // Undo the refused vote's local count and count the restored vote again (as `recordVote` counts).
         switch bill.userVote {
         case .yea?: bill.userYeaCount = max(0, bill.userYeaCount - 1)
         case .nay?: bill.userNayCount = max(0, bill.userNayCount - 1)
         case .abstain?, nil: break
         }
-        switch restoredVote {
+        switch vote {
         case .yea?: bill.userYeaCount += 1
         case .nay?: bill.userNayCount += 1
         case .abstain?, nil: break
         }
-        bill.userVoted = restoredVote != nil
-        bill.userVote = restoredVote
-        bill.lastVotedAt = restoredVote == nil ? nil : (voteStore?.heldVoteDate(for: guid) ?? bill.lastVotedAt)
-        bills[index] = bill
-        cacheBills(bills)
+        bill.userVoted = vote != nil
+        bill.userVote = vote
+        bill.lastVotedAt = vote == nil ? nil : (votedAt ?? bill.lastVotedAt)
+        return bill
     }
 
     /// Cross-reference the connected BillVoteStore's persistent cache to mark
