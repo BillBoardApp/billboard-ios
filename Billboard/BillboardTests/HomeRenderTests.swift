@@ -556,6 +556,33 @@ final class HomeRenderTests: XCTestCase {
         }
     }
 
+    /// The Bills list's Try again is the secondary capsule (UX-39e), a 1.25 pt ink rule around the page's ground, not
+    /// the primary capsule's ink fill: along the capsule's middle row, a few points inside its left rule, the ground
+    /// shows.
+    func testTheBillsListTryAgainIsTheSecondaryCapsule() throws {
+        let inset = 20
+        for variant in Self.variants where variant.size == .large {
+            let dark = variant.scheme == .dark
+            let state = BillBoardLoadErrorState(message: "Can't reach Billboard right now.", isRetrying: false, onRetry: {})
+            let image = try render(state.padding(CGFloat(inset)), variant: variant)
+            attach(image, name: "bills-load-error-try-again-\(variant.name)")
+            let ink = BillboardPalette.interactive.resolved(dark: dark).rgb
+            let ground = BillboardPalette.background.resolved(dark: dark).rgb
+            func isNear(_ pixel: (red: Double, green: Double, blue: Double), _ color: (red: Double, green: Double, blue: Double), _ accuracy: Double) -> Bool {
+                abs(pixel.red - color.red) < accuracy && abs(pixel.green - color.green) < accuracy && abs(pixel.blue - color.blue) < accuracy
+            }
+            // The capsule ends the view, 44 pt tall, above the inset.
+            let middle = image.height - inset - 22
+            let rule = try XCTUnwrap(
+                try (0..<image.width / 2).first { isNear(try pixel(of: image, x: $0, y: middle), ink, 0.15) },
+                "the capsule's left rule (\(variant.name))"
+            )
+            XCTAssertLessThan(rule, inset + 4, "the capsule starts at the inset (\(variant.name))")
+            let inside = try pixel(of: image, x: rule + 6, y: middle)
+            XCTAssertTrue(isNear(inside, ground, 0.03), "the ground inside the rule, not an ink fill (\(variant.name)): \(inside)")
+        }
+    }
+
     /// The states read as record notices (spec 3.20): the stamp word, title and message as one element,
     /// the action apart with its id; R2's copy.
     func testQueueStatesSpeakAsRecordNotices() throws {
