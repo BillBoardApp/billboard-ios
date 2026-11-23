@@ -917,6 +917,219 @@ final class VoteRefusalRollbackTests: XCTestCase {
         withExtendedLifetime(voteStore) {}
     }
 
+    // MARK: - A vote not saved yet, when its page opens again (APPF-30 step 2)
+
+    /// Counts the strip's alerts (`voteStripAlert`): the error haptic and VoiceOver's focus on the strip.
+    @MainActor
+    private final class StripAlerts {
+        var count = 0
+    }
+
+    private func page(_ bill: Bill, store: BillsStore, voteStore: BillVoteStore, alerts: StripAlerts) -> some View {
+        page(bill, store: store, voteStore: voteStore, size: .large)
+            .environment(\.voteStripAlert, { alerts.count += 1 })
+    }
+
+    /// A write's result, set from the task that waits for it.
+    @MainActor
+    private final class WriteOutcome {
+        var result: VoteWriteResult?
+    }
+
+    /// Runs the main run loop until `condition` holds (5 s at most): the hosted page needs it, which an async test holds.
+    private func spin(until condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition(), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// A vote cache saved in a throwaway defaults suite: one made again on it is the next launch's.
+    private func savedVoteCache() throws -> @MainActor () -> BillVoteCache {
+        let suiteName = "VoteRefusalRollbackTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suiteName) }
+        let key = "BillVoteCache.v1.not-saved-relaunch-\(UUID().uuidString)"
+        return { BillVoteCache(config: BillVoteCache.Config(persistenceKey: key), defaults: defaults) }
+    }
+
+    /// A Yea whose write failed offline, then the page is left and opened again: the stamp shows with the strip "Not
+    /// saved yet. Check your connection." and Try again, read again on open, quietly: the write that failed on the page
+    /// brought the error haptic and VoiceOver's focus, the page opened again brings neither.
+    func testAPageReopenedOnAVoteNotSavedYetShowsTheStripQuietly() {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        votes.setFeedbackError = URLError(.notConnectedToInternet)
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes)
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let failedHere = StripAlerts()
+            do {
+                let host = AccessibilityTreeText.Host(
+                    page(bill, store: store, voteStore: voteStore, alerts: failedHere),
+                    size: CGSize(width: 390, height: 9000),
+                    settle: 0.6
+                )
+                defer { host.close() }
+                XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+                XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+                XCTAssertTrue(host.run(until: { failedHere.count == 1 }), "the failure on the page alerts")
+            }
+            XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea], "precondition")
+            let readsBefore = votes.singleRequests.count
+
+            let reopened = StripAlerts()
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, alerts: reopened),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "Try again")
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp shows the vote")
+            XCTAssertTrue(host.run(until: { votes.singleRequests.count > readsBefore }), "the vote is read again on open")
+            host.run(0.6)
+            XCTAssertEqual(reopened.count, 0, "no error haptic and no VoiceOver focus on open")
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "the read that found no vote keeps it")
+            XCTAssertEqual(votes.setFeedbackCalls.count, 1, "nothing is sent on open")
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
+    /// A relaunch (fresh stores on the same saved cache) after a Yea whose write failed: the page shows the stamp with the
+    /// strip and Try again, quietly. Try again that the server stores ends the strip, clears the mark on disk, and writes
+    /// the Bill row once, so the server follows the bill for this voter.
+    func testARelaunchKeepsTheVoteNotSavedYetAndTryAgainSavesIt() throws {
+        let openCache = try savedVoteCache()
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        votes.setFeedbackError = URLError(.notConnectedToInternet)
+        let bill = pageBill()
+
+        // The launch that voted, with no page: the write fails.
+        let (earlierStore, _) = pageStores(bill, votes: votes)
+        let earlierVotes = BillVoteStore(cache: openCache(), service: votes)
+        earlierStore.connect(voteStore: earlierVotes)
+        let outcome = WriteOutcome()
+        Task { outcome.result = await earlierStore.submitVote(billID: bill.id, vote: .yea, watch: nil)?.value }
+        spin(until: { outcome.result != nil })
+        XCTAssertEqual(outcome.result, .unconfirmed, "precondition")
+        let votedBill = try XCTUnwrap(earlierStore.bill(for: bill.id))
+
+        // The next launch.
+        let preferences = FakePreferencesService()
+        let (store, _) = pageStores(votedBill, votes: votes, preferences: preferences)
+        let voteStore = BillVoteStore(cache: openCache(), service: votes)
+        store.connect(voteStore: voteStore)
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea], "kept across the relaunch")
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let alerts = StripAlerts()
+            let host = AccessibilityTreeText.Host(
+                page(votedBill, store: store, voteStore: voteStore, alerts: alerts),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier))
+            host.run(0.6)
+            XCTAssertEqual(alerts.count, 0, "no error haptic and no VoiceOver focus on open")
+            XCTAssertEqual(preferences.putCalls, [])
+
+            votes.setFeedbackError = nil
+            XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier, settle: 1.2), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea, .yea])
+            XCTAssertEqual(voteStore.unsavedVotes, [:])
+            XCTAssertEqual(openCache().unsavedVotes, [:], "cleared on disk")
+            assertOneBillRow(preferences, guid: Self.guid, host: host)
+            XCTAssertEqual(alerts.count, 0)
+        }
+        withExtendedLifetime((earlierVotes, voteStore)) {}
+    }
+
+    /// A companion group whose vote row sits on a member's legacy text-version guid: a change made on the group that
+    /// failed is marked under that guid, and after a relaunch the group's page shows the strip and Try again quietly.
+    /// Try again goes to that guid, and once stored the Bill row goes there too.
+    func testARelaunchKeepsAGroupVoteNotSavedYetOnTheLegacyGuid() throws {
+        let house = "BILLS-119hr900"
+        let legacy = "BILLS-119s456is"
+        let group = BillCompanionGroup(primaryGuid: house, memberGuids: [house, "BILLS-119s456"], relationship: "identical")
+        let houseBill = Bill(
+            id: UUID.deterministic(from: house),
+            title: "Bill \(house)",
+            category: "Other",
+            soWhat: "",
+            storedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60 * 60)),
+            link: "https://www.govinfo.gov/app/details/BILLS-119hr900ih",
+            billStatus: .new,
+            guid: house,
+            userVoted: false,
+            isPriority: true
+        )
+        let openCache = try savedVoteCache()
+        let votes = FakeBillVotesService()
+        votes.setFeedbackError = URLError(.timedOut)
+        func launch(_ bills: [Bill], preferences: FakePreferencesService) -> (BillsStore, BillVoteStore) {
+            let scope = "legacy-guid-relaunch-tests-\(UUID().uuidString)"
+            addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+            let service = FakeBillsService()
+            service.cachedGroups = [group]
+            service.cachedManifest = []
+            let store = BillsStore(bills: bills, cacheScope: scope, service: service, preferencesService: preferences)
+            let voteStore = BillVoteStore(cache: openCache(), service: votes)
+            store.connect(voteStore: voteStore)
+            Task { await store.restoreCachedStateIfNeeded() }
+            spin(until: { store.companionVote(forBillID: houseBill.id) != nil })
+            return (store, voteStore)
+        }
+
+        // The launch that changed the Nay to a Yea: it goes to the legacy guid, and fails.
+        let (earlierStore, earlierVotes) = launch([houseBill, companionTestBill(legacy, userVote: .nay)], preferences: FakePreferencesService())
+        XCTAssertEqual(earlierStore.companionVote(forBillID: houseBill.id)?.targetGuid, legacy, "precondition")
+        let outcome = WriteOutcome()
+        Task { outcome.result = await earlierStore.submitVote(billID: houseBill.id, vote: .yea, watch: nil)?.value }
+        spin(until: { outcome.result != nil })
+        XCTAssertEqual(outcome.result, .unconfirmed, "precondition")
+        XCTAssertEqual(earlierVotes.unsavedVotes, [legacy: .yea])
+
+        // The next launch.
+        let preferences = FakePreferencesService()
+        let (store, voteStore) = launch([houseBill, companionTestBill(legacy, userVote: .yea)], preferences: preferences)
+        XCTAssertEqual(voteStore.unsavedVotes, [legacy: .yea])
+        let transport = RecordingTransport()
+        transport.failure = { _ in URLError(.notConnectedToInternet) }
+        APIClient.$current.withValue(transport.client) {
+            let alerts = StripAlerts()
+            let host = AccessibilityTreeText.Host(
+                page(houseBill, store: store, voteStore: voteStore, alerts: alerts),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+            XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+            host.run(0.6)
+            XCTAssertEqual(alerts.count, 0, "quiet on open")
+
+            votes.setFeedbackError = nil
+            XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier, settle: 1.2), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            XCTAssertEqual(votes.setFeedbackCalls.map(\.billId), [legacy, legacy], "Try again went where the vote is")
+            XCTAssertEqual(voteStore.unsavedVotes, [:])
+            assertOneBillRow(preferences, guid: legacy, host: host)
+        }
+        withExtendedLifetime((earlierVotes, voteStore)) {}
+    }
+
     /// Exactly one `PUT /preferences` once the page has run a little longer: the Bill row for `guid` (type "bill",
     /// category "", the backend contract), which makes the server follow the bill for this voter.
     private func assertOneBillRow(
