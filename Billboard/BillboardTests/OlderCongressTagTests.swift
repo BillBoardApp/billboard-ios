@@ -96,6 +96,13 @@ final class OlderCongressTagTests: XCTestCase {
         )
         let row = UpdatesActionRow(alert: alert, billNumber: "H.R. 77", congressTag: old.olderCongressTag(at: Self.noon), now: Self.noon)
         XCTAssertTrue(row.accessibilityText.contains("House bill 77, 119th Congress."), row.accessibilityText)
+        // Updates builds the row from the loaded bill (`NotificationsView.actionRow`).
+        let fromBill = UpdatesActionRow(alert: alert, bill: old, now: Self.noon)
+        XCTAssertEqual(fromBill.billNumber, "H.R. 77")
+        XCTAssertEqual(fromBill.congressTag, "119th")
+        XCTAssertTrue(fromBill.accessibilityText.contains("House bill 77, 119th Congress."), fromBill.accessibilityText)
+        XCTAssertNil(UpdatesActionRow(alert: alert, bill: old, now: Self.beforeNoon).congressTag)
+        XCTAssertNil(UpdatesActionRow(alert: alert, bill: nil, now: Self.noon).billNumber, "not loaded: the date alone")
 
         let item = WeeklyDigestItem(
             id: "bill|BILLS-119hr77", kind: .bill, title: "A bill", eyebrow: "Passed Jan 8", summary: "A summary.",
@@ -135,5 +142,18 @@ final class OlderCongressTagTests: XCTestCase {
         let words = [bill("BILLS-119hr2", title: "Rural broadband"), bill("BILLS-119hr3", title: "Broadband maps"), bill("BILLS-120hr4", title: "Broadband grants")]
         XCTAssertEqual(search("broadband", in: words, currentCongress: 120), ["BILLS-120hr4", "BILLS-119hr2", "BILLS-119hr3"], "stable within each Congress")
         XCTAssertEqual(search("broadband", in: words, currentCongress: 119), ["BILLS-119hr2", "BILLS-119hr3", "BILLS-120hr4"])
+    }
+
+    /// The index's last result is kept per Congress too: the same bills and query re-sort once a new Congress meets.
+    func testTheSearchIndexReSortsWhenTheCongressTurnsOver() throws {
+        let index = BillsSearchIndex()
+        let query = try XCTUnwrap(BillsSearch.Query("H.R. 1"))
+        let version = BillsStore.SearchVersion(bills: 1, manifest: 1)
+        let bills = [bill("BILLS-119hr1", title: "Older bill one"), bill("BILLS-120hr1", title: "Newer bill one")]
+        func results(_ congress: Int) -> [String] {
+            index.results(for: query, version: version, companions: .empty, currentCongress: congress) { bills }.compactMap(\.guid)
+        }
+        XCTAssertEqual(results(119), ["BILLS-119hr1", "BILLS-120hr1"])
+        XCTAssertEqual(results(120), ["BILLS-120hr1", "BILLS-119hr1"], "not the 119th's cached order")
     }
 }
