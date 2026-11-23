@@ -269,6 +269,9 @@ extension BillsStore {
                 existingStoredAt: existing.storedAt
             ),
             vetoed: mergedVetoed(incoming: incoming, existing: existing, source: source),
+            // Unknown only while neither copy has a status the app reads; an unknown one is New, so it never wins over
+            // a known status above.
+            statusIsUnknown: incoming.statusIsUnknown == true && existing.statusIsUnknown == true ? true : nil,
             guid: incoming.guid ?? existing.guid,
             congress: incoming.congress ?? existing.congress,
             billType: incoming.billType ?? existing.billType,

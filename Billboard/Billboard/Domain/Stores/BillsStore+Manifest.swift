@@ -366,6 +366,8 @@ extension BillsStore {
 
         let sponsorMemberID = sponsors.first.map { UUID.deterministic(from: $0) }
         let relatedMemberIDs = memberIDs(from: sponsors + cosponsors)
+        // An item with no status, or one the app does not know, reads New and gets no ended note (REL-46).
+        let status = BillStatus(rawValue: item.billStatus ?? "")
 
         return Bill(
             id: id,
@@ -376,8 +378,9 @@ extension BillsStore {
             soWhat: "",
             storedAt: item.updatedAt,
             lifeAreas: lifeAreas,
-            billStatus: BillStatus(rawValue: item.billStatus ?? "") ?? .new,
+            billStatus: status ?? .new,
             vetoed: item.vetoed == true ? true : nil,
+            statusIsUnknown: status == nil ? true : nil,
             guid: item.guid,
             congress: item.congress,
             billType: item.billType,
