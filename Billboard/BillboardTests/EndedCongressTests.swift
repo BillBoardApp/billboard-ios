@@ -292,6 +292,47 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertEqual(passedSlip.stamp, .companionLead(number: "S. 12", status: .passed), "the lead's outcome, not the bill's own end")
     }
 
+    /// A group's page takes the note and the one-chamber line from its status lead, as the stamp does: a Senate
+    /// member that became law leaves no "did not become law" beside S. 12 BECAME LAW, and a lead that passed waits for
+    /// February 1 though the House bill on the page has no actions.
+    func testACompanionGroupsPageTakesTheNoteFromItsStatusLead() {
+        let house = "BILLS-119hr12"
+        let senate = "BILLS-119s12"
+        let group = BillCompanionGroup(primaryGuid: house, memberGuids: [house, senate], relationship: "identical")
+        let index = CompanionGroupIndex(groups: [group])
+        let page = bill("hr", .new)
+        func frontMatter(_ members: [Bill], at now: Date) -> BillFrontMatter.Content {
+            let lead = index.statusLead(for: group, memberBills: members, now: now)
+            return BillFrontMatter.Content(bill: page, companion: BillCompanionDisplay(group: group, statusLead: lead), now: now)
+        }
+        XCTAssertEqual(BillFrontMatter.Content(bill: page, now: Self.noon).endedNote, Self.billNote, "on its own, the House bill gets the note")
+
+        let becameLaw = bill("s", .finalized, actions: [senatePassage, housePassage, signed, law])
+        for now in [Self.noon, Self.februaryFirst] {
+            let content = frontMatter([page, becameLaw], at: now)
+            XCTAssertEqual(content.status, .finalized)
+            XCTAssertEqual(content.companionLead, "S. 12")
+            XCTAssertNil(content.endedCongress)
+            XCTAssertNil(content.endedNote, "S. 12 became law")
+            XCTAssertTrue(content.endedLines.isEmpty)
+            let text = AccessibilityTreeText.text(of: BillFrontMatter(content))
+            XCTAssertTrue(text.contains("Senate bill 12 became law"), text)
+            XCTAssertFalse(text.contains("did not become law"), text)
+        }
+
+        // A lead that passed the Senate: held until February 1, then its own note and how far it got.
+        let senateOnly = bill("s", .passed, actions: [senatePassage])
+        let atNoon = frontMatter([page, senateOnly], at: Self.noon)
+        XCTAssertEqual(atNoon.companionLead, "S. 12")
+        XCTAssertTrue(atNoon.endedLines.isEmpty, "a passed lead waits for February 1")
+        XCTAssertEqual(frontMatter([page, senateOnly], at: Self.februaryFirst).endedLines, ["Passed the Senate only.", Self.billNote])
+
+        // Each member passed its own chamber: the group got further than the lead's one chamber, so no line.
+        let houseOnly = bill("hr", .passed, actions: [housePassage])
+        let both = frontMatter([houseOnly, senateOnly], at: Self.februaryFirst)
+        XCTAssertEqual(both.endedLines, [Self.billNote])
+    }
+
     // MARK: - The bill page's note and one-chamber line
 
     func testTheBillPageShowsTheNoteWithHowFarAPassedBillGot() {

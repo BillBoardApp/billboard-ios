@@ -74,11 +74,15 @@ struct BillFrontMatter: View {
             self.endedNote = endedNote
         }
 
-        /// `now` decides whether the bill's Congress has ended (REL-46). The note is the page's bill's own.
+        /// `now` decides whether the bill's Congress has ended (REL-46). The stamp, the ended note and the one-chamber
+        /// line come from one bill: a group's status lead, else the page's bill. So a group whose Senate member became
+        /// law reads S. 12 BECAME LAW with no "did not become law" note, and a group whose lead passed waits for
+        /// February 1 as that bill would.
         init(bill: Bill, companion: BillCompanionDisplay? = nil, now: Date = CongressCalendar.now()) {
             let lead = companion?.statusLead
             let reason = bill.priorityReason?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let note = bill.endedNote(at: now)
+            let note = lead.map(\.endedNote) ?? bill.endedNote(at: now)
+            let oneChamberLine = lead.map(\.oneChamberLine) ?? bill.oneChamberLine(at: now)
             self.init(
                 numbers: companion?.numbers ?? bill.officialBillNumber.map { [$0] } ?? [],
                 status: lead?.status ?? bill.billStatus,
@@ -91,7 +95,7 @@ struct BillFrontMatter: View {
                 isInTheNews: bill.hasActivePriority,
                 newsReason: bill.hasActivePriority && reason?.isEmpty == false ? reason : nil,
                 lastUpdated: FlexibleISO8601.parse(bill.storedAt),
-                oneChamberLine: note == nil ? nil : bill.oneChamberLine(at: now),
+                oneChamberLine: note == nil ? nil : oneChamberLine,
                 endedNote: note
             )
         }

@@ -112,6 +112,12 @@ nonisolated struct CompanionStatusLead: Equatable, Sendable {
     /// The Congress the lead member ended with, when it has no outcome (`Bill.endedCongress(at:)`, REL-46): the
     /// group's members share the Congress, so the whole group ended.
     var endedCongress: Int?
+    /// The lead member's ended note (`Bill.endedNote(at:)`, REL-46). A group's page shows the lead's note, not the
+    /// page bill's, so it agrees with the stamp: a group led by a member that became law has none.
+    var endedNote: String?
+    /// The lead member's "Passed the Senate only." (`Bill.oneChamberLine(at:)`); nil when another member's actions
+    /// show a passage, since the group then got further than the lead's one chamber.
+    var oneChamberLine: String?
     let isPrimary: Bool
     /// The lead member's official number, e.g. "S. 456".
     let billNumber: String
@@ -342,8 +348,8 @@ nonisolated struct CompanionGroupIndex: Sendable, Equatable {
     /// The member with the highest rank (Finalized 5 > vetoed 4 > Passed 3 > Failed 2 > Updated 1 > New or
     /// not loaded 0, `statusRank(for:)`); ties go to the later `storedAt`, then to the primary. `memberBills`
     /// are the loaded members' bills (any order; legacy text-version bills count for their member). `now`
-    /// decides whether the lead's Congress has ended (REL-46); a lead with no loaded bill is read from its guid, as
-    /// New.
+    /// decides whether the lead's Congress has ended (REL-46); the ended stamp, note and one-chamber line all come
+    /// from the lead, and a lead with no loaded bill is read from its guid, as New.
     func statusLead(for group: BillCompanionGroup, memberBills: [Bill], now: Date = CongressCalendar.now()) -> CompanionStatusLead {
         var best: (guid: String, bill: Bill?, rank: Int, date: Date)?
         for member in group.memberGuids {
@@ -367,11 +373,14 @@ nonisolated struct CompanionGroupIndex: Sendable, Equatable {
             typeCode: BillDisplayFormatting.billTypeCode(billType: nil, billNumber: nil, guid: guid),
             status: .new
         )
+        let partnerPassed = memberBills.contains { memberGuid(for: $0) != guid && EndedCongress.actionsShowPassage($0.actions) }
         return CompanionStatusLead(
             guid: guid,
             status: bill?.billStatus ?? .new,
             vetoed: bill?.isVetoed ?? false,
             endedCongress: EndedCongress.stampCongress(for: record, at: now),
+            endedNote: EndedCongress.note(for: record, at: now),
+            oneChamberLine: partnerPassed ? nil : EndedCongress.oneChamberLine(for: record, at: now),
             isPrimary: guid == group.primaryGuid,
             billNumber: Self.billNumber(forGUID: guid)
         )
