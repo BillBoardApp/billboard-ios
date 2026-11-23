@@ -10,6 +10,10 @@ import Foundation
 /// and 1.2 shows a held Abstain as "You abstained" with Results open. The first time 1.2 opens a persisted
 /// cache it drops those rows (`droppedAbstainIds`) and the vote store reads them from the server again, which
 /// holds the user's own Abstains and leaves the dismissals out.
+///
+/// APPF-30 step 2: beside the rows, a persisted map of the votes not saved yet (`UnsavedVote`, under
+/// `<persistenceKey>.unconfirmed`), so a vote whose write failed with its outcome unknown is still known as not saved
+/// after the page is left or the app relaunches. The rows' format is unchanged, so a 1.2 cache loads as it is.
 final class BillVoteCache {
     struct Config {
         static let legacyPersistenceKey = "BillVoteCache.v1"
@@ -30,9 +34,27 @@ final class BillVoteCache {
         }
     }
 
+    /// A vote sent from this device that the server has not confirmed (APPF-30 step 2): its write is still out, or
+    /// failed with its outcome unknown (offline, a timeout, a server error without a code). `BillVoteStore` keeps the
+    /// map; the row itself stays an ordinary `.voted` entry.
+    nonisolated struct UnsavedVote: Codable, Equatable, Sendable {
+        var vote: VoteType
+        /// When this device sent the vote: the optimistic row's `votedAt`. A server row cast after it is a later vote
+        /// (from another device); one cast before it is the vote this one replaced.
+        var sentAt: Date
+        /// The reasons sent with the vote (their raw values), sent again with it.
+        var reasons: [String]
+        /// The one automatic resend once the phone is back online has been used (project decision 2026-11-23).
+        var autoResent: Bool
+    }
+
     private let config: Config
     private let defaults: UserDefaults
     private var entries: [String: Entry] = [:]
+
+    /// The votes not saved yet, by the guid each was sent to (`UnsavedVote`). Persisted with the rows; cleared with
+    /// them at sign-out (`clearPersistence`). A mark goes when its row is pruned, or after the rows' TTL.
+    private(set) var unsavedVotes: [String: UnsavedVote] = [:]
 
     /// The bills whose Abstain row this cache dropped when it was created: the rows an earlier build left
     /// (INT-11, see the type's comment). Empty from the second launch of 1.2 on, and for a cache that is not
@@ -56,6 +78,7 @@ final class BillVoteCache {
             if isRunningTests && defaults === UserDefaults.standard {
                 defaults.removeObject(forKey: key)
                 defaults.removeObject(forKey: Self.earlierAbstainsDroppedKey(for: key))
+                defaults.removeObject(forKey: Self.unsavedVotesKey(for: key))
                 Self.clearLegacyPersistence(defaults: defaults)
             }
             #endif
@@ -63,6 +86,7 @@ final class BillVoteCache {
                 Self.clearLegacyPersistence(defaults: defaults)
             }
             self.entries = Self.load(from: key, defaults: defaults)
+            self.unsavedVotes = Self.loadUnsavedVotes(from: Self.unsavedVotesKey(for: key), defaults: defaults)
             prune(now: Date())
             droppedAbstainIds = dropEarlierAbstains(key: key)
         }
@@ -99,20 +123,36 @@ final class BillVoteCache {
         persistIfNeeded()
     }
 
+    /// Removes the row only. A vote not saved yet keeps its mark: an "updated" push drops the app's copy of the vote,
+    /// but the server keeps its row, so a later read can still confirm the vote (UX-49b).
     func remove(billId: String) {
         entries.removeValue(forKey: billId)
         persistIfNeeded()
     }
 
-    /// Remove expired entries and cap size to maxEntries.
+    /// The vote not saved yet on `billId`, or nil.
+    func unsavedVote(for billId: String) -> UnsavedVote? {
+        unsavedVotes[billId]
+    }
+
+    /// Marks the vote on `billId` as not saved yet, or (nil) clears its mark, and saves the map.
+    func setUnsavedVote(_ unsaved: UnsavedVote?, for billId: String) {
+        guard unsavedVotes[billId] != unsaved else { return }
+        unsavedVotes[billId] = unsaved
+        persistUnsavedVotesIfNeeded()
+    }
+
+    /// Remove expired entries and cap size to maxEntries. A vote not saved yet whose row goes loses its mark, and so
+    /// does one sent longer ago than the TTL (its row went with a push, `remove(billId:)`, and was never read again).
     func prune(now: Date = Date()) {
-        if entries.isEmpty { return }
+        var prunedKeys: [String] = []
 
         // 1) TTL prune
         let expiredKeys = entries.compactMap { (key, entry) in
             isExpired(entry, now: now) ? key : nil
         }
         for key in expiredKeys { entries.removeValue(forKey: key) }
+        prunedKeys += expiredKeys
 
         // 2) Bounded eviction (oldest cachedAt)
         if entries.count > config.maxEntries {
@@ -122,7 +162,17 @@ final class BillVoteCache {
                 .prefix(overflow)
                 .map { $0.key }
             for key in keysByOldest { entries.removeValue(forKey: key) }
+            prunedKeys += keysByOldest
         }
+
+        // 3) The marks of the rows that went, and old marks.
+        let staleMarks = Set(prunedKeys).union(unsavedVotes.compactMap { billId, unsaved in
+            now.timeIntervalSince(unsaved.sentAt) > config.ttl ? billId : nil
+        })
+        let droppedMarks = staleMarks.filter { unsavedVotes[$0] != nil }
+        guard !droppedMarks.isEmpty else { return }
+        for billId in droppedMarks { unsavedVotes.removeValue(forKey: billId) }
+        persistUnsavedVotesIfNeeded()
     }
 
     func snapshotStates(now: Date = Date()) -> [String: VoteState] {
@@ -166,6 +216,23 @@ final class BillVoteCache {
         Self.save(entries, to: key, defaults: defaults)
     }
 
+    private func persistUnsavedVotesIfNeeded() {
+        guard let key = config.persistenceKey else { return }
+        let marksKey = Self.unsavedVotesKey(for: key)
+        guard !unsavedVotes.isEmpty else {
+            defaults.removeObject(forKey: marksKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(unsavedVotes) {
+            defaults.set(data, forKey: marksKey)
+        }
+    }
+
+    private static func loadUnsavedVotes(from key: String, defaults: UserDefaults) -> [String: UnsavedVote] {
+        guard let data = defaults.data(forKey: key) else { return [:] }
+        return (try? JSONDecoder.usingDefaultKeys().decode([String: UnsavedVote].self, from: data)) ?? [:]
+    }
+
     private static func load(from key: String, defaults: UserDefaults) -> [String: Entry] {
         guard let data = defaults.data(forKey: key) else { return [:] }
         return (try? JSONDecoder.usingDefaultKeys().decode([String: Entry].self, from: data)) ?? [:]
@@ -186,10 +253,17 @@ final class BillVoteCache {
         "\(persistenceKey).earlierAbstainsDropped"
     }
 
+    /// Where the votes not saved yet of the cache saved under `persistenceKey` are saved (APPF-30 step 2).
+    static func unsavedVotesKey(for persistenceKey: String) -> String {
+        "\(persistenceKey).unconfirmed"
+    }
+
+    /// Sign-out and account deletion: the rows and the votes not saved yet go, so no mark reaches another account.
     static func clearPersistence(scope: String?, defaults: UserDefaults = .standard) {
         let key = persistenceKey(scope: scope)
         defaults.removeObject(forKey: key)
         defaults.removeObject(forKey: earlierAbstainsDroppedKey(for: key))
+        defaults.removeObject(forKey: unsavedVotesKey(for: key))
         if ScopedStorageKey.normalizedScope(scope) != nil {
             clearLegacyPersistence(defaults: defaults)
         }
@@ -197,5 +271,15 @@ final class BillVoteCache {
 
     static func clearLegacyPersistence(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: Config.legacyPersistenceKey)
+        defaults.removeObject(forKey: unsavedVotesKey(for: Config.legacyPersistenceKey))
+    }
+
+    /// A sign-out that does not know the account: every account's votes not saved yet go (APPF-30 step 2).
+    static func clearAllUnsavedVotes(defaults: UserDefaults = .standard) {
+        let prefix = Config.legacyPersistenceKey
+        let suffix = unsavedVotesKey(for: "")
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) && key.hasSuffix(suffix) {
+            defaults.removeObject(forKey: key)
+        }
     }
 }
