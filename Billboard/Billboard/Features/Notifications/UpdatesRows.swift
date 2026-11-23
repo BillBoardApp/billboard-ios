@@ -137,7 +137,9 @@ struct UpdatesActionRow: View {
 
 extension UpdatesActionRow {
     /// The row for `alert` with its bill's number, and an older bill's Congress, when the bill is loaded.
-    init(alert: BillAlert, bill: Bill?, now: Date = Date()) {
+    /// `now` defaults to the past-Congress rules' clock (`CongressCalendar.now()`), which the tests pin, so the tag and
+    /// the rest of the app agree on which Congress is current.
+    init(alert: BillAlert, bill: Bill?, now: Date = CongressCalendar.now()) {
         self.init(alert: alert, billNumber: bill?.officialBillNumber, congressTag: bill?.olderCongressTag(at: now), now: now)
     }
 }
