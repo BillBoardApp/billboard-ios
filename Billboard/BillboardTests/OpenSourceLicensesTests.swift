@@ -53,6 +53,35 @@ final class OpenSourceLicensesTests: XCTestCase {
         XCTAssertTrue(try component("swift-protobuf").licenses.contains { licenses.text(of: $0).contains("Runtime Library Exception") })
     }
 
+    /// A short text that only points to its licence ("Please obtain a copy of the License at ...") sits beside that
+    /// licence's full text (D91). aws-c-cal's Darwin header is one: Apple's APSL 2.0 notice, followed on the page by
+    /// the whole APSL 2.0, read from the repository's licenses/APSL-2.0.txt.
+    func testATextThatPointsToItsLicenseSitsBesideTheFullText() throws {
+        let licenses = try bundled()
+        for component in licenses.components {
+            for license in component.licenses {
+                let text = licenses.text(of: license)
+                guard text.count < 2_000, text.contains("obtain a copy of the License") else { continue }
+                // Apache License 2.0 and APSL 2.0 each run to more than 10,000 characters.
+                let full = component.licenses.filter { $0 != license && $0.spdx == license.spdx && $0.parts == license.parts }
+                XCTAssertTrue(
+                    full.contains { licenses.text(of: $0).count > 10_000 },
+                    "\(component.name) \(license.parts) \(license.files): the full \(license.spdx) text beside a text that only points to it"
+                )
+            }
+        }
+
+        let apsl = try component("aws-crt-swift").licenses.filter { $0.spdx == "APSL-2.0" }
+        XCTAssertEqual(apsl.map(\.parts), [["aws-c-cal"], ["aws-c-cal"]])
+        XCTAssertEqual(apsl.map(\.files), [["aws-common-runtime/aws-c-cal/source/darwin/common_cryptor_spi.h"], ["licenses/APSL-2.0.txt"]])
+        XCTAssertEqual(apsl.map(\.sourceLine), ["APSL-2.0 · common_cryptor_spi.h", "APSL-2.0 · APSL-2.0.txt"])
+        let text = licenses.text(of: try XCTUnwrap(apsl.last))
+        XCTAssertTrue(text.hasPrefix("APPLE PUBLIC SOURCE LICENSE\nVersion 2.0 - August 6, 2003\n"), String(text.prefix(80)))
+        for section in ["1. General; Definitions.", "13.7 Entire Agreement; Governing Law.", "EXHIBIT A."] {
+            XCTAssertTrue(text.contains(section), section)
+        }
+    }
+
     /// The packages that ship a NOTICE file show it whole (Apache-2.0 section 4(d)); aws-crt-swift also shows each
     /// bundled C library's.
     func testPackagesWithANoticeShowIt() throws {
@@ -226,6 +255,7 @@ final class OpenSourceLicensesTests: XCTestCase {
         XCTAssertTrue(parts(crt).contains("aws-c-auth"), "\(parts(crt))")
         XCTAssertTrue(sources(crt).contains("BSD-3-Clause · time.c"), "\(sources(crt))")
         XCTAssertTrue(sources(crt).contains("BSD-3-Clause AND MIT · THIRD-PARTY-LICENSES.txt"), "\(sources(crt))")
+        XCTAssertTrue(sources(crt).contains("APSL-2.0 · APSL-2.0.txt"), "\(sources(crt))")
         XCTAssertTrue(crt.contains(.source(text: "BSD-3-Clause · time.c", spoken: "BSD 3-Clause License, time.c")))
 
         // Every paragraph of every text is on the page.

@@ -18,7 +18,9 @@ nonisolated struct OpenSourceLicenses: Decodable, Equatable, Sendable {
     }
 
     /// One licence text and the parts of the package under it: the package itself and any bundled libraries with
-    /// the same text. `text` is the key of the text in `texts`.
+    /// the same text. `text` is the key of the text in `texts`. `files` are paths in the package, or in the
+    /// repository's `licenses/` folder for the full text of a licence the package only points to (aws-c-cal's
+    /// APSL 2.0).
     nonisolated struct License: Decodable, Equatable, Hashable, Sendable {
         let parts: [String]
         let spdx: String
