@@ -59,6 +59,15 @@ enum YourMemberRole: Equatable {
         }
     }
 
+    /// The chamber whose roll calls can carry the tag: a senator's only a Senate roll call, a House member's only
+    /// a House one.
+    var chamber: CongressChamber {
+        switch self {
+        case .senator: return .senate
+        case .representative: return .house
+        }
+    }
+
     /// The user's members by upper-cased bioguide ID; empty without a state.
     static func roles(state: String, district: String, manifest: [CongressMemberManifestItem]) -> [String: YourMemberRole] {
         var roles: [String: YourMemberRole] = [:]
@@ -66,6 +75,62 @@ enum YourMemberRole: Equatable {
             roles[member.id.uppercased()] = member.chamberNormalized == CongressChamber.senate.rawValue ? .senator : .representative
         }
         return roles
+    }
+}
+
+/// Which rows of a bill's roll calls are the user's own members (UX-39a), for How Congress voted's tags.
+///
+/// The roles come from today's members manifest, so a row is tagged only on its own chamber's roll call: "Your
+/// senator" only on a Senate roll call, "Your representative" only on a House one. The manifest changes Congress
+/// while older bills stay open (from January 3, 2027 it lists the 120th Congress beside 119th bills): a 119th House
+/// member who is now one of the user's senators is not tagged on the House roll call, and a member who has left
+/// Congress has no role at all.
+///
+/// Once the bill's Congress has ended, the row must also show the member in the user's seat, as far as the roll call
+/// records it: the user's state and, on a House row that gives a district, the user's district. A member who sat for
+/// another district then is not tagged. During the bill's own Congress the manifest lists that Congress's members,
+/// so their seat there is the row's.
+struct YourMembersOnRollCalls {
+    private let roles: [String: YourMemberRole]
+    private let state: String
+    private let district: String
+    /// The bill is from an earlier Congress than the one in office at `now` (or its Congress is not known).
+    let isFromEndedCongress: Bool
+
+    /// - Parameters:
+    ///   - billCongress: the bill's Congress, such as 119; nil when not known, which checks the seat too.
+    ///   - now: when the page is drawn, which says the Congress in office (`CongressCalendar`).
+    init(state: String, district: String, manifest: [CongressMemberManifestItem], billCongress: Int?, now: Date) {
+        roles = YourMemberRole.roles(state: state, district: district, manifest: manifest)
+        self.state = state.uppercasedTrimmed
+        self.district = district
+        let inOffice = CongressCalendar.session(on: now).congress
+        isFromEndedCongress = billCongress.map { $0 < inOffice } ?? true
+    }
+
+    /// The tag on `member`'s row in `chamber`'s roll call, or nil.
+    func role(of member: Bill.OfficialVoteMember, in chamber: CongressChamber) -> YourMemberRole? {
+        guard let role = roles[member.bioguideId.uppercased()], role.chamber == chamber else { return nil }
+        guard isFromEndedCongress else { return role }
+        if let rowState = member.state?.uppercasedTrimmed, !rowState.isEmpty, rowState != state {
+            return nil
+        }
+        if chamber == .house, let rowDistrict = member.district?.trimmedNonEmpty,
+           !CongressTabModel.isUsersDistrict(rowDistrict, userDistrict: district, state: state) {
+            return nil
+        }
+        return role
+    }
+
+    /// The tags on `members`, rows of `chamber`'s roll call, by upper-cased bioguide ID.
+    func roles(of members: [Bill.OfficialVoteMember], in chamber: CongressChamber) -> [String: YourMemberRole] {
+        var tagged: [String: YourMemberRole] = [:]
+        for member in members {
+            if let role = role(of: member, in: chamber) {
+                tagged[member.bioguideId.uppercased()] = role
+            }
+        }
+        return tagged
     }
 }
 
@@ -117,6 +182,15 @@ enum CongressTabModel {
 
     private static func normalizedDistrict(of member: CongressMemberManifestItem, state: String) -> String? {
         DistrictNormalization.normalize(member.district ?? "", userState: state)
+    }
+
+    /// Whether a House district as a record gives it ("7", "07", "0", "At-Large") is the user's district, matched as
+    /// `representatives` matches the House member: the same number, or both at-large style.
+    static func isUsersDistrict(_ rawDistrict: String, userDistrict rawUserDistrict: String, state rawState: String) -> Bool {
+        let state = rawState.uppercasedTrimmed
+        guard let target = DistrictNormalization.normalize(rawUserDistrict, userState: state) else { return false }
+        let district = DistrictNormalization.normalize(rawDistrict, userState: state)
+        return district == target || (isAtLargeLike(target) && isAtLargeLike(district))
     }
 
     /// At-large seats and non-voting delegates: no district number, "0"/"00" (normalized to

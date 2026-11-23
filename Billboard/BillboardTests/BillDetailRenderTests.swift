@@ -1888,13 +1888,18 @@ final class BillDetailRenderTests: XCTestCase {
         return bill
     }
 
-    /// How Congress voted for a TX-7 voter, in a navigation stack, with the members manifest.
-    private func yourMembersVotes(_ manifest: [CongressMemberManifestItem]) -> some View {
+    /// How Congress voted on `bill` (the document bill with a Senate roll call unless given) for a TX-7 voter, in a
+    /// navigation stack, with the members manifest; `now` is the device clock unless given.
+    private func yourMembersVotes(
+        _ manifest: [CongressMemberManifestItem],
+        bill: Bill? = nil,
+        now: Date? = nil
+    ) -> some View {
         let service = FakeCongressService()
         service.cachedManifest = manifest
         return NavigationStack {
             ScrollView {
-                onDocument(BillOfficialVotesSection(bill: Self.billWithBothChambers(), userStateCode: "TX", userDistrictValue: "7"))
+                onDocument(BillOfficialVotesSection(bill: bill ?? Self.billWithBothChambers(), userStateCode: "TX", userDistrictValue: "7", now: now))
             }
         }
         .environmentObject(CongressMembersManifestStore(service: service))
@@ -1984,6 +1989,245 @@ final class BillDetailRenderTests: XCTestCase {
         XCTAssertEqual(YourMemberRole.roles(state: "", district: "7", manifest: manifest), [:], "no state, nobody")
         XCTAssertEqual(YourMemberRole.senator.tagTitle, "Your senator")
         XCTAssertEqual(YourMemberRole.representative.tagTitle, "Your representative")
+    }
+
+    // MARK: How Congress voted across the changeover to the 120th Congress (UX-39a)
+
+    /// December 15, 2026: the 119th Congress is in office.
+    private static let before120th = Date(timeIntervalSince1970: 1_797_354_000)
+    /// January 10, 2027: the 120th Congress is in office, and 119th bills stay open.
+    private static let after120th = Date(timeIntervalSince1970: 1_799_600_400)
+
+    /// A 119th bill with both chambers' roll calls: in the House TX-7's Jordan Ellis, TX-8's Morgan Fry and CA-12's
+    /// Jane Doe; in the Senate Texas's Avery Stone and Riley Hart, and Ohio's Casey Moore.
+    private static func bill119() -> Bill {
+        rollCallBill(
+            congress: 119,
+            house: [
+                member("E000001", "Jordan Ellis", "R", "TX", "7", "Yea"),
+                member("E000002", "Morgan Fry", "D", "TX", "8", "Nay"),
+                member("D000002", "Jane Doe", "D", "CA", "12", "Yea")
+            ],
+            senate: [
+                member("T000010", "Avery Stone", "R", "TX", nil, "Yea"),
+                member("T000011", "Riley Hart", "R", "TX", nil, "Nay"),
+                member("M000020", "Casey Moore", "D", "OH", nil, "Yea")
+            ]
+        )
+    }
+
+    /// A 120th bill: in the House TX-7's Morgan Fry and CA-12's Jane Doe; in the Senate Texas's Jordan Ellis and
+    /// Avery Stone, and Ohio's Casey Moore.
+    private static func bill120() -> Bill {
+        rollCallBill(
+            congress: 120,
+            house: [
+                member("E000002", "Morgan Fry", "D", "TX", "7", "Nay"),
+                member("D000002", "Jane Doe", "D", "CA", "12", "Yea")
+            ],
+            senate: [
+                member("E000001", "Jordan Ellis", "R", "TX", nil, "Yea"),
+                member("T000010", "Avery Stone", "R", "TX", nil, "Yea"),
+                member("M000020", "Casey Moore", "D", "OH", nil, "Nay")
+            ]
+        )
+    }
+
+    private static func rollCallBill(congress: Int, house: [Bill.OfficialVoteMember], senate: [Bill.OfficialVoteMember]) -> Bill {
+        func vote(_ members: [Bill.OfficialVoteMember]) -> Bill.OfficialChamberVote {
+            let yea = members.filter { CongressMemberVoteRow.position($0.votePosition).choice == .yea }.count
+            return Bill.OfficialChamberVote(
+                yea: yea, nay: members.count - yea, present: 0, notVoting: 0, totalCounted: members.count,
+                actionCode: nil, actionDate: "2026-10-13", resultText: "Passed", memberDataAvailable: true,
+                members: members
+            )
+        }
+        var bill = documentBill()
+        bill.guid = "BILLS-\(congress)hr1234"
+        bill.officialVotes = Bill.OfficialVotesBreakdown(house: vote(house), senate: vote(senate), lastSyncedAt: nil, source: nil, completeness: nil)
+        return bill
+    }
+
+    /// The 119th Congress's roster: TX-7 is Jordan Ellis's, TX-8 Morgan Fry's, and Avery Stone and Riley Hart are
+    /// Texas's senators.
+    private static func roster119() throws -> [CongressMemberManifestItem] {
+        [
+            try manifestMember("E000001", "Jordan Ellis", chamber: "House of Representatives", state: "TX", district: 7, party: "R"),
+            try manifestMember("E000002", "Morgan Fry", chamber: "House of Representatives", state: "TX", district: 8, party: "D"),
+            try manifestMember("D000002", "Jane Doe", chamber: "House of Representatives", state: "CA", district: 12, party: "D"),
+            try manifestMember("T000010", "Avery Stone", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("T000011", "Riley Hart", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("M000020", "Casey Moore", chamber: "Senate", state: "OH", party: "D")
+        ]
+    }
+
+    /// The 120th Congress's roster: Jordan Ellis won Riley Hart's Senate seat, Riley Hart has left Congress, and after
+    /// redistricting Morgan Fry sits for TX-7.
+    private static func roster120() throws -> [CongressMemberManifestItem] {
+        [
+            try manifestMember("E000001", "Jordan Ellis", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("E000002", "Morgan Fry", chamber: "House of Representatives", state: "TX", district: 7, party: "D"),
+            try manifestMember("D000002", "Jane Doe", chamber: "House of Representatives", state: "CA", district: 12, party: "D"),
+            try manifestMember("T000010", "Avery Stone", chamber: "Senate", state: "TX", party: "R"),
+            try manifestMember("M000020", "Casey Moore", chamber: "Senate", state: "OH", party: "D")
+        ]
+    }
+
+    /// The rule itself on both sides of the changeover, with the date given: a tag only in its own chamber's roll call,
+    /// whatever the date; once the bill's Congress has ended, only for a row that shows the member in the user's seat.
+    func testYourMembersOnRollCallsAcrossTheChangeover() throws {
+        let ellis = Self.member("E000001", "Jordan Ellis", "R", "TX", "7", "Yea")
+        let fryFor8 = Self.member("E000002", "Morgan Fry", "D", "TX", "8", "Nay")
+        let fryFor7 = Self.member("E000002", "Morgan Fry", "D", "TX", "07", "Nay")
+        let fryNoDistrict = Self.member("E000002", "Morgan Fry", "D", "TX", nil, "Nay")
+        let stone = Self.member("t000010", "Avery Stone", "R", "TX", nil, "Yea")
+        let stoneForOhio = Self.member("T000010", "Avery Stone", "R", "OH", nil, "Yea")
+        let hart = Self.member("T000011", "Riley Hart", "R", "TX", nil, "Nay")
+        let senatorEllis = Self.member("E000001", "Jordan Ellis", "R", "TX", nil, "Yea")
+        func yours(_ manifest: [CongressMemberManifestItem], congress: Int?, now: Date) -> YourMembersOnRollCalls {
+            YourMembersOnRollCalls(state: "TX", district: "7", manifest: manifest, billCongress: congress, now: now)
+        }
+
+        // In the 119th Congress, on a 119th bill.
+        let during = yours(try Self.roster119(), congress: 119, now: Self.before120th)
+        XCTAssertFalse(during.isFromEndedCongress)
+        XCTAssertEqual(during.role(of: ellis, in: .house), .representative)
+        XCTAssertNil(during.role(of: ellis, in: .senate), "a House member is never tagged on a Senate roll call")
+        XCTAssertEqual(during.role(of: stone, in: .senate), .senator, "the ID in any case")
+        XCTAssertNil(during.role(of: stone, in: .house), "a senator is never tagged on a House roll call")
+        XCTAssertEqual(during.role(of: hart, in: .senate), .senator)
+        XCTAssertNil(during.role(of: fryFor8, in: .house), "TX-8's member is not a TX-7 voter's")
+
+        // Jordan Ellis appointed to Riley Hart's seat mid-Congress: the roster lists him as a senator, so his votes on
+        // the House roll calls before that are not tagged.
+        let senatorEllisItem = try Self.manifestMember("E000001", "Jordan Ellis", chamber: "Senate", state: "TX", party: "R")
+        let appointedRoster = try Self.roster119().filter { !["E000001", "T000011"].contains($0.id) } + [senatorEllisItem]
+        let appointed = yours(appointedRoster, congress: 119, now: Self.before120th)
+        XCTAssertNil(appointed.role(of: ellis, in: .house), "a senator is never tagged on a House roll call")
+        XCTAssertEqual(appointed.role(of: senatorEllis, in: .senate), .senator)
+
+        // In the 120th Congress, on the same 119th bill, with the 120th roster.
+        let after = yours(try Self.roster120(), congress: 119, now: Self.after120th)
+        XCTAssertTrue(after.isFromEndedCongress)
+        XCTAssertNil(after.role(of: ellis, in: .house), "now a senator: not tagged on his House roll call")
+        XCTAssertEqual(after.role(of: stone, in: .senate), .senator, "still Texas's senator")
+        XCTAssertNil(after.role(of: stoneForOhio, in: .senate), "a row for another state")
+        XCTAssertNil(after.role(of: hart, in: .senate), "left Congress")
+        XCTAssertNil(after.role(of: fryFor8, in: .house), "TX-7's member now, but he voted for TX-8")
+        XCTAssertEqual(after.role(of: fryFor7, in: .house), .representative, "the same seat then and now")
+        XCTAssertEqual(after.role(of: fryNoDistrict, in: .house), .representative, "a row with no district: the state and chamber agree")
+        XCTAssertEqual(
+            after.roles(of: [fryFor8, stone, hart], in: .senate),
+            ["T000010": .senator],
+            "only senators on a Senate roll call, by upper-cased ID"
+        )
+
+        // The changeover is January 3 at midnight in Washington (`CongressCalendar`).
+        let lastMinute119 = try XCTUnwrap(ISO8601DateFormatter().date(from: "2027-01-03T04:59:00Z"))
+        let first120 = try XCTUnwrap(ISO8601DateFormatter().date(from: "2027-01-03T05:00:00Z"))
+        XCTAssertFalse(yours(try Self.roster120(), congress: 119, now: lastMinute119).isFromEndedCongress)
+        XCTAssertTrue(yours(try Self.roster120(), congress: 119, now: first120).isFromEndedCongress)
+        XCTAssertFalse(yours(try Self.roster120(), congress: 120, now: first120).isFromEndedCongress)
+
+        // A 120th bill in the 120th Congress: the roster's seats are the rows'.
+        let current = yours(try Self.roster120(), congress: 120, now: Self.after120th)
+        XCTAssertEqual(current.role(of: senatorEllis, in: .senate), .senator)
+        XCTAssertEqual(current.role(of: fryFor7, in: .house), .representative)
+
+        // An at-large seat, as each record writes it; and a bill whose Congress is not known checks the seat.
+        let alaska = [try Self.manifestMember("A000003", "Sky Cedar", chamber: "House of Representatives", state: "AK", district: 0, party: "R")]
+        let atLarge = YourMembersOnRollCalls(state: "AK", district: "At-Large", manifest: alaska, billCongress: nil, now: Self.after120th)
+        XCTAssertTrue(atLarge.isFromEndedCongress)
+        for district in ["0", "00", "At-Large", nil] as [String?] {
+            let cedar = Self.member("A000003", "Sky Cedar", "R", "AK", district, "Yea")
+            XCTAssertEqual(atLarge.role(of: cedar, in: .house), .representative, "\(district ?? "no district")")
+        }
+        XCTAssertNil(atLarge.role(of: Self.member("A000003", "Sky Cedar", "R", "AK", "2", "Yea"), in: .house))
+
+        var fromField = Self.bill119()
+        fromField.congress = " 120 "
+        XCTAssertEqual(BillOfficialVotesSection.congress(of: fromField), 120, "the bill's congress field first")
+        XCTAssertEqual(BillOfficialVotesSection.congress(of: Self.bill119()), 119, "else its guid")
+    }
+
+    /// Before the changeover, a 119th bill tags the 119th Congress's members: TX-7's House member on the House roll
+    /// call, Texas's senators on the Senate's.
+    func testHowCongressVotedTagsYourMembersBeforeThe120thCongress() throws {
+        let host = AccessibilityTreeText.Host(
+            yourMembersVotes(try Self.roster119(), bill: Self.bill119(), now: Self.before120th),
+            size: CGSize(width: 375, height: 2400)
+        )
+        defer { host.close() }
+        let strings = host.strings()
+        assertInOrder([
+            "Representative Jordan Ellis, Republican, Texas's 7th district, your representative, Yea",
+            "Representative Jane Doe, Democrat, California's 12th district, Yea",
+            "Representative Morgan Fry, Democrat, Texas's 8th district, Nay",
+            "Senator Avery Stone, Republican, Texas, your senator, Yea",
+            "Senator Riley Hart, Republican, Texas, your senator, Nay",
+            "Senator Casey Moore, Democrat, Ohio, Yea"
+        ], in: strings, "your members first in each chamber, tagged")
+    }
+
+    /// After the changeover, the same 119th bill with the 120th roster: Jordan Ellis, now a senator, is not tagged on
+    /// the House roll call (nor sorted first); Morgan Fry, TX-7's member now, voted for TX-8 and is not tagged; Riley
+    /// Hart has left and is a plain row; Avery Stone is still tagged. A 120th bill then tags the 120th members.
+    func testHowCongressVotedAfterThe120thCongressStartsTagsNobodyWrongly() throws {
+        let host = AccessibilityTreeText.Host(
+            yourMembersVotes(try Self.roster120(), bill: Self.bill119(), now: Self.after120th),
+            size: CGSize(width: 375, height: 2400)
+        )
+        let strings = host.strings()
+        let ellis = "Representative Jordan Ellis, Republican, Texas's 7th district, Yea"
+        let hart = "Senator Riley Hart, Republican, Texas, Nay"
+        assertInOrder([
+            "Representative Jane Doe, Democrat, California's 12th district, Yea",
+            ellis,
+            "Representative Morgan Fry, Democrat, Texas's 8th district, Nay",
+            "Senator Avery Stone, Republican, Texas, your senator, Yea",
+            "Senator Casey Moore, Democrat, Ohio, Yea",
+            hart
+        ], in: strings, "nobody tagged in the House; only Avery Stone in the Senate")
+        XCTAssertEqual(strings.filter { $0.contains("your representative") }, [], "\(strings)")
+        XCTAssertEqual(strings.filter { $0.contains("your senator") }, ["Senator Avery Stone, Republican, Texas, your senator, Yea"], "\(strings)")
+        XCTAssertEqual(host.traits(of: ellis)?.contains(.button), true, "still in Congress: his page opens")
+        XCTAssertEqual(host.traits(of: hart)?.contains(.button), false, "left Congress: \(host.text())")
+        host.close()
+
+        let current = AccessibilityTreeText.Host(
+            yourMembersVotes(try Self.roster120(), bill: Self.bill120(), now: Self.after120th),
+            size: CGSize(width: 375, height: 2400)
+        )
+        defer { current.close() }
+        assertInOrder([
+            "Representative Morgan Fry, Democrat, Texas's 7th district, your representative, Nay",
+            "Representative Jane Doe, Democrat, California's 12th district, Yea",
+            "Senator Avery Stone, Republican, Texas, your senator, Yea",
+            "Senator Jordan Ellis, Republican, Texas, your senator, Yea",
+            "Senator Casey Moore, Democrat, Ohio, Nay"
+        ], in: current.strings(), "the 120th members, tagged")
+    }
+
+    /// The tag is laid out in the row, under the name, at the default size and at AX5 on a 375 pt phone: the row is
+    /// taller by at least the tag, and no wider than the column. (The row is one VoiceOver element, so the tag's words
+    /// are not in the tree; its spoken form is.)
+    func testYourMemberTagIsLaidOutInTheRow() {
+        let column: CGFloat = 375 - 2 * BillboardStyle.Space.xl
+        let member = Self.member("E000001", "Jordan Ellis", "R", "TX", "7", "Yea")
+        func size<Content: View>(_ view: Content, at dynamicTypeSize: DynamicTypeSize) -> CGSize {
+            let controller = UIHostingController(rootView: view.environment(\.dynamicTypeSize, dynamicTypeSize))
+            return controller.sizeThatFits(in: CGSize(width: column, height: .greatestFiniteMagnitude))
+        }
+        for dynamicTypeSize in [DynamicTypeSize.large, .accessibility5] {
+            let plain = size(CongressMemberVoteRow(member: member, chamber: .house), at: dynamicTypeSize)
+            for role in [YourMemberRole.senator, .representative] {
+                let tag = size(IndexTag(title: role.tagTitle, systemImage: "person"), at: dynamicTypeSize)
+                let tagged = size(CongressMemberVoteRow(member: member, chamber: .house, yourRole: role, opensPage: true), at: dynamicTypeSize)
+                XCTAssertGreaterThanOrEqual(tagged.height - plain.height, tag.height - 0.5, "\(role.tagTitle) at \(dynamicTypeSize)")
+                XCTAssertLessThanOrEqual(tagged.width, column + 0.5, "\(role.tagTitle) at \(dynamicTypeSize)")
+                XCTAssertLessThanOrEqual(tag.width, column + 0.5, "\(role.tagTitle) at \(dynamicTypeSize)")
+            }
+        }
     }
 
     /// The tags render in light and dark, at the default size and AX3, and at AX5 on a 375 pt phone, where each word of

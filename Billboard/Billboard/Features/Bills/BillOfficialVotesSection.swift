@@ -8,13 +8,16 @@ import SwiftUI
 
 /// How Congress voted (spec 4.45): each chamber's roll call as a tally in the TallySheet style, then how
 /// its members voted, the user's representatives first, tagged "Your senator" or "Your representative"
-/// (UX-39a). A member in the members manifest opens their page; one who has left Congress stays a plain row.
-/// Official Congress data, so never sealed (INT-11 gates only other Billboard users' votes).
+/// (UX-39a), each only in their own chamber's roll call (`YourMembersOnRollCalls`). A member in the members
+/// manifest opens their page; one who has left Congress stays a plain row. Official Congress data, so never
+/// sealed (INT-11 gates only other Billboard users' votes).
 struct BillOfficialVotesSection: View {
     let bill: Bill
     let userStateCode: String
     let userDistrictValue: String
     var showsRule = true
+    /// When the page is drawn, which says whether the bill's Congress has ended; nil is now. Tests pin it.
+    var now: Date?
 
     static let title = "How Congress voted"
 
@@ -27,9 +30,21 @@ struct BillOfficialVotesSection: View {
         !CongressChamberTally.tallies(for: bill).isEmpty
     }
 
-    /// The user's senators and House member, by upper-cased bioguide ID.
-    private var yourMemberRoles: [String: YourMemberRole] {
-        YourMemberRole.roles(state: userStateCode, district: userDistrictValue, manifest: congressManifestStore.items)
+    /// The user's senators and House member on this bill's roll calls.
+    private var yourMembers: YourMembersOnRollCalls {
+        YourMembersOnRollCalls(
+            state: userStateCode,
+            district: userDistrictValue,
+            manifest: congressManifestStore.items,
+            billCongress: Self.congress(of: bill),
+            now: now ?? Date()
+        )
+    }
+
+    /// The bill's Congress, from its `congress` field, else its guid ("BILLS-119hr1234" is the 119th).
+    static func congress(of bill: Bill) -> Int? {
+        if let congress = bill.congress?.trimmedNonEmpty.flatMap({ Int($0) }) { return congress }
+        return bill.guid.flatMap { BillsService.deriveLocator(from: $0) }.flatMap { Int($0.congress) }
     }
 
     /// The members manifest by upper-cased bioguide ID: who has a member page to open.
@@ -80,14 +95,14 @@ struct BillOfficialVotesSection: View {
     var body: some View {
         let tallies = CongressChamberTally.tallies(for: bill)
         if !tallies.isEmpty {
-            let roles = yourMemberRoles
+            let yours = yourMembers
             let pages = manifestByID
             RecordSection(Self.title, showsRule: showsRule) {
                 VStack(alignment: .leading, spacing: BillboardStyle.Space.xxl) {
                     ForEach(tallies, id: \.chamber) { tally in
                         VStack(alignment: .leading, spacing: BillboardStyle.Space.m) {
                             CongressChamberTallyView(tally: tally)
-                            memberVotes(for: tally.chamber, roles: roles, pages: pages)
+                            memberVotes(for: tally.chamber, yours: yours, pages: pages)
                         }
                     }
                 }
@@ -100,9 +115,11 @@ struct BillOfficialVotesSection: View {
     @ViewBuilder
     private func memberVotes(
         for chamber: CongressChamber,
-        roles: [String: YourMemberRole],
+        yours: YourMembersOnRollCalls,
         pages: [String: CongressMemberManifestItem]
     ) -> some View {
+        // The tags on this chamber's rows only: a senator is never tagged on the House roll call.
+        let roles = yours.roles(of: chamberVote(chamber)?.members ?? [], in: chamber)
         let members = prioritizedMembers(for: chamberVote(chamber), roles: roles)
         if !members.isEmpty {
             let showAll = showAll(for: chamber)
