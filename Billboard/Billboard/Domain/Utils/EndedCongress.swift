@@ -6,6 +6,7 @@ import Foundation
 /// say the same about every bill; keep them in step.
 ///
 /// The note is held when in doubt, because a wrong "did not become law" on a bill that was signed is a factual error:
+/// - for a status the app does not know (none sent, or one it cannot read), which reads New;
 /// - before the Congress ends (noon Eastern on January 3, `CongressCalendar.endTime(ofCongress:)`), for a bill that
 ///   became law or whose actions say so, and for a Congress before the 74th (they ended on March 4);
 /// - for a Passed bill, or one whose actions show a passage or the President, until February 1 of the end year: the
@@ -23,6 +24,8 @@ nonisolated enum EndedCongress {
         /// "hr", "s", "hjres", "sjres", "hres", "sres", "hconres" or "sconres".
         var typeCode: String?
         var status: BillStatus
+        /// The server sent a status the app knows (`Bill.statusIsUnknown`): an unknown one reads New, and gets no note.
+        var statusIsKnown = true
         /// The bill is vetoed and did not become law (`Bill.isVetoed`): an outcome, so never stamped ENDED.
         var isVetoed = false
         var actions: [Bill.BillAction] = []
@@ -59,7 +62,9 @@ nonisolated enum EndedCongress {
     static func note(for record: Record, at now: Date) -> String? {
         guard let congress = record.congress, congress >= CongressCalendar.firstJanuaryCongress,
               let type = record.typeCode, isKnownType(type) else { return nil }
-        guard noteStatuses.contains(record.status), CongressCalendar.hasEnded(congress, at: now) else { return nil }
+        guard record.statusIsKnown, noteStatuses.contains(record.status), CongressCalendar.hasEnded(congress, at: now) else {
+            return nil
+        }
         guard !actionsShowLaw(record.actions) else { return nil }
 
         let passed = record.status == .passed || actionsShowPassage(record.actions)
@@ -149,6 +154,7 @@ extension Bill {
             congress: congressNumber,
             typeCode: billTypeCode,
             status: billStatus,
+            statusIsKnown: statusIsUnknown != true,
             isVetoed: isVetoed,
             actions: actions,
             titles: "\(officialTitle ?? "") \(title)"

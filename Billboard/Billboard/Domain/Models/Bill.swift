@@ -182,6 +182,10 @@ struct Bill: Identifiable, Codable, Sendable {
     /// The status keeps its value (Passed, or Failed once an override fails), so lists follow it as before;
     /// only the outcome shown changes (`isVetoed`). Optional, so a bill cached without the key decodes.
     var vetoed: Bool?
+    /// True when the server sent no status, or one the app does not know, so `billStatus` only defaults to New. Such
+    /// a bill gets no ended note or stamp (REL-46), as on the shared-bill page, which holds the note for a status it
+    /// does not know. Nil otherwise, and for a bill cached without the key.
+    var statusIsUnknown: Bool?
     // Source metadata (used to re-fetch processed bill details on demand)
     var guid: String?
     var congress: String?
@@ -265,6 +269,7 @@ struct Bill: Identifiable, Codable, Sendable {
         lifeAreas: [String] = [],
         billStatus: BillStatus,
         vetoed: Bool? = nil,
+        statusIsUnknown: Bool? = nil,
         guid: String? = nil,
         congress: String? = nil,
         billType: String? = nil,
@@ -307,6 +312,7 @@ struct Bill: Identifiable, Codable, Sendable {
         self.lifeAreas = lifeAreas
         self.billStatus = billStatus
         self.vetoed = vetoed
+        self.statusIsUnknown = statusIsUnknown
         self.guid = guid
         self.congress = congress
         self.billType = billType
@@ -455,6 +461,7 @@ extension Bill {
             lifeAreas: lifeAreas,
             billStatus: billStatus,
             vetoed: vetoed,
+            statusIsUnknown: statusIsUnknown,
             guid: guid,
             congress: congress,
             billType: billType,

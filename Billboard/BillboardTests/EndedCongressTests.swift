@@ -333,6 +333,34 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertEqual(both.endedLines, [Self.billNote])
     }
 
+    /// A status the app cannot read (none sent, or an unknown word) defaults to New, but gets no note or stamp, as on
+    /// the shared-bill page, which holds the note for a status it does not know.
+    func testAStatusTheAppDoesNotKnowGetsNoNoteOrStamp() {
+        func row(_ status: String?) -> Bill {
+            BillsStore.placeholderBill(from: BillsManifestItem(
+                guid: "BILLS-119hr12", congress: "119", billType: "hr", billID: "12", subCategories: [], lifeAreas: [],
+                sponsors: [], cosponsors: [], title: "A bill", billStatus: status
+            ))
+        }
+        for status in [nil, "", "Enrolled"] {
+            let unknown = row(status)
+            XCTAssertEqual(unknown.billStatus, .new, "\(status ?? "nil")")
+            XCTAssertEqual(unknown.statusIsUnknown, true)
+            XCTAssertNil(unknown.endedNote(at: Self.februaryFirst), "\(status ?? "nil")")
+            XCTAssertNil(unknown.endedCongress(at: Self.februaryFirst), "\(status ?? "nil")")
+        }
+        let known = row("New")
+        XCTAssertNil(known.statusIsUnknown)
+        XCTAssertEqual(known.endedNote(at: Self.noon), Self.billNote)
+        XCTAssertEqual(known.endedCongress(at: Self.noon), 119)
+
+        // Merging keeps a known status: unknown only while both copies are.
+        let merged = BillsStore.mergedBillPreservingExistingContext(incoming: row(nil), existing: known)
+        XCTAssertNil(merged.statusIsUnknown)
+        XCTAssertEqual(merged.endedNote(at: Self.noon), Self.billNote)
+        XCTAssertEqual(BillsStore.mergedBillPreservingExistingContext(incoming: row(nil), existing: row("Bogus")).statusIsUnknown, true)
+    }
+
     // MARK: - The bill page's note and one-chamber line
 
     func testTheBillPageShowsTheNoteWithHowFarAPassedBillGot() {

@@ -208,6 +208,7 @@ extension BillsService {
     private static func processedBill(from dto: UserAPIContractsV1.ProcessedBill) -> Bill {
         let subCategories = SubscriptionsConfig.canonicalTopics(dto.subCategories)
         let subCategory = subCategories.first
+        let status = processedBillStatus(dto.billStatus)
 
         return Bill(
             id: UUID.deterministic(from: dto.guid),
@@ -223,8 +224,9 @@ extension BillsService {
             actions: dto.actions?.map(Bill.BillAction.init(dto:)) ?? [],
             committees: dto.committees?.map(Bill.BillCommittee.init(dto:)) ?? [],
             lifeAreas: dto.lifeAreas,
-            billStatus: processedBillStatus(dto.billStatus),
+            billStatus: status ?? .new,
             vetoed: dto.vetoed == true ? true : nil,
+            statusIsUnknown: status == nil ? true : nil,
             sponsorMemberID: dto.sponsors.first.map { UUID.deterministic(from: $0) },
             relatedMemberIDs: processedBillMemberIDs(sponsors: dto.sponsors, cosponsors: dto.cosponsors),
             userVoted: false,
@@ -255,14 +257,16 @@ extension BillsService {
         return mappedCategory ?? (subCategory ?? "Other")
     }
 
-    private static func processedBillStatus(_ rawStatus: String?) -> BillStatus {
+    /// The status in a processed-bill payload, or nil when it has none the app can read (the bill then reads New,
+    /// `Bill.statusIsUnknown`).
+    private static func processedBillStatus(_ rawStatus: String?) -> BillStatus? {
         let raw = (rawStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if raw.contains("final") { return .finalized }
         if raw.contains("fail") { return .failed }
         if raw.contains("pass") { return .passed }
         if raw.contains("update") { return .updated }
         if raw.contains("new") { return .new }
-        return .new
+        return nil
     }
 
     private static func processedBillMemberIDs(sponsors: [String], cosponsors: [String]) -> [UUID]? {

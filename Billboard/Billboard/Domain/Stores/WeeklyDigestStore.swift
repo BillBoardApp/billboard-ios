@@ -1075,6 +1075,7 @@ private enum LocalWeeklyDigestBuilder {
                 guard let subCategory else { return false }
                 return group.value.contains(subCategory)
             })?.key
+        let status = BillStatus(rawValue: item.billStatus ?? "")
 
         return Bill(
             id: id,
@@ -1087,8 +1088,9 @@ private enum LocalWeeklyDigestBuilder {
             actions: [],
             committees: [],
             lifeAreas: item.lifeAreas,
-            billStatus: BillStatus(rawValue: item.billStatus ?? "") ?? .new,
+            billStatus: status ?? .new,
             vetoed: item.vetoed == true ? true : nil,
+            statusIsUnknown: status == nil ? true : nil,
             guid: item.guid,
             congress: item.congress,
             billType: item.billType,
