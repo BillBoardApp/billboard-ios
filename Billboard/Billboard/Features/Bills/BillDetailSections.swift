@@ -831,6 +831,8 @@ struct BillCompanionMemberRow: View {
     let isUnavailable: Bool
     /// The member bill's sponsor, when the members manifest has them (`sponsor(for:)`).
     var sponsor: BillSponsorRow.Content? = nil
+    /// Decides whether the member's Congress has ended and is older than the one in office (REL-46).
+    var now: Date = CongressCalendar.now()
 
     static let loadingText = "Loading details…"
     static let unavailableText = "Details unavailable"
@@ -854,10 +856,10 @@ struct BillCompanionMemberRow: View {
                 number: number,
                 status: bill?.billStatus,
                 vetoed: bill?.isVetoed ?? false,
-                endedCongress: bill?.endedCongress(),
+                endedCongress: bill?.endedCongress(at: now),
                 congressTag: BillDisplayFormatting.olderCongressTag(
                     congress: bill?.congressNumber ?? BillDisplayFormatting.congress(fromGuid: memberGuid),
-                    currentCongress: CongressCalendar.currentCongress()
+                    currentCongress: CongressCalendar.currentCongress(at: now)
                 )
             )
 

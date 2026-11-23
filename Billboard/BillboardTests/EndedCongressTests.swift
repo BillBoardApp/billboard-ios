@@ -361,6 +361,20 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertEqual(BillsStore.mergedBillPreservingExistingContext(incoming: row(nil), existing: row("Bogus")).statusIsUnknown, true)
     }
 
+    /// A member row on a group's page reads its Congress from the member's guid when its bill is not loaded, and the
+    /// ended stamp from its bill when it is.
+    func testACompanionMemberRowSaysItsCongressAndWhetherItEnded() {
+        let notLoaded = BillCompanionMemberRow(memberGuid: "BILLS-119s12", bill: nil, isHydrated: false, isUnavailable: false, now: Self.noon)
+        let text = AccessibilityTreeText.text(of: notLoaded)
+        XCTAssertTrue(text.contains("Senate bill 12, 119th Congress."), text)
+        let before = BillCompanionMemberRow(memberGuid: "BILLS-119s12", bill: nil, isHydrated: false, isUnavailable: false, now: Self.beforeNoon)
+        XCTAssertFalse(AccessibilityTreeText.text(of: before).contains("119th Congress"), "the 119th is still in office")
+
+        let loaded = BillCompanionMemberRow(memberGuid: "BILLS-119s12", bill: bill("s", .updated), isHydrated: false, isUnavailable: false, now: Self.noon)
+        let loadedText = AccessibilityTreeText.text(of: loaded)
+        XCTAssertTrue(loadedText.contains("Senate bill 12, 119th Congress. Ended with the 119th Congress."), loadedText)
+    }
+
     // MARK: - The bill page's note and one-chamber line
 
     func testTheBillPageShowsTheNoteWithHowFarAPassedBillGot() {

@@ -135,6 +135,13 @@ struct UpdatesActionRow: View {
     }
 }
 
+extension UpdatesActionRow {
+    /// The row for `alert` with its bill's number, and an older bill's Congress, when the bill is loaded.
+    init(alert: BillAlert, bill: Bill?, now: Date = Date()) {
+        self.init(alert: alert, billNumber: bill?.officialBillNumber, congressTag: bill?.olderCongressTag(at: now), now: now)
+    }
+}
+
 /// A Passed or Failed bills row (spec 4.53): the docket line with the PASSED, FAILED, VETOED or BECAME LAW
 /// stamp (no seal icon; the stamp replaces R2's "Became law" caption), the title (2 lines), the summary (3
 /// lines) and the topic, over a hairline. It opens the bill with the vote panel (project decision 1).
