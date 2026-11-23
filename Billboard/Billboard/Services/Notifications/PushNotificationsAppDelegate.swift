@@ -130,7 +130,7 @@ final class PushNotificationsAppDelegate: NSObject, UIApplicationDelegate, UNUse
         let legacyEventText = payload.legacyEvent.isEmpty ? "(none)" : payload.legacyEvent
         logger.info("Received push domain=\(domainText, privacy: .public) type=\(notifText, privacy: .public) billId=\(guidText, privacy: .public) updatedAt=\(updatedAtText, privacy: .public) legacyEvent=\(legacyEventText, privacy: .public) userTap=\(wasUserInteraction, privacy: .public)")
 
-        if handlePushWithoutBills(payload, wasUserInteraction: wasUserInteraction) {
+        if Self.handlePushWithoutBills(payload, wasUserInteraction: wasUserInteraction) {
             return
         }
 
@@ -212,7 +212,12 @@ final class PushNotificationsAppDelegate: NSObject, UIApplicationDelegate, UNUse
     /// The pushes that carry no bills: the Weekly Brief, and "Your district may have changed" (REL-46), which opens
     /// Profile with Where you vote (`PushDeepLinkRouter.openWhereYouVote`). A tap waits like any other until
     /// navigation is allowed. True when `payload` is one of them, so there are no bills to handle.
-    private func handlePushWithoutBills(_ payload: PushNotificationPayload, wasUserInteraction: Bool) -> Bool {
+    static func handlePushWithoutBills(
+        _ payload: PushNotificationPayload,
+        wasUserInteraction: Bool,
+        defaults: UserDefaults = .standard,
+        notificationCenter: NotificationCenter = .default
+    ) -> Bool {
         let pending: PendingPushDeepLink.Kind
         if payload.isWeeklyDigestRelevant {
             pending = .weeklyDigest(digestId: payload.normalizedDigestID)
@@ -222,8 +227,8 @@ final class PushNotificationsAppDelegate: NSObject, UIApplicationDelegate, UNUse
             return false
         }
         if wasUserInteraction {
-            PendingPushDeepLink.save(pending)
-            NotificationCenter.default.post(name: .billboardDidSavePendingPushDeepLink, object: nil)
+            PendingPushDeepLink.save(pending, defaults: defaults)
+            notificationCenter.post(name: .billboardDidSavePendingPushDeepLink, object: nil)
         }
         return true
     }

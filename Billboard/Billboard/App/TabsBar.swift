@@ -670,8 +670,12 @@ struct TabsBar: View {
                 openFirstBill: openFirstBillsCard
             )
         )
-        .sheet(item: $activeSheet) { sheet in
+        // Profile waits for this sheet to close before it opens one of its own (`AppState.pendingProfileSheet`).
+        .sheet(item: $activeSheet, onDismiss: { appState.isTabsSheetUp = false }) { sheet in
             sheetContent(sheet)
+        }
+        .onChange(of: activeSheet) { _, sheet in
+            if sheet != nil { appState.isTabsSheetUp = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .billboardRequestTopicPicker)) { _ in
             guard isInteractive else { return }
