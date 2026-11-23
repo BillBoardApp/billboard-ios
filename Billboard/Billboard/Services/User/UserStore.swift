@@ -1110,6 +1110,8 @@ enum UserLocalDataPurge {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(AccountComplianceStorage.cachedAdultStatusKeyPrefix) {
             defaults.removeObject(forKey: key)
         }
+        // A vote not saved yet is sent again on its own (APPF-30 step 2): none may wait for the next account.
+        BillVoteCache.clearAllUnsavedVotes(defaults: defaults)
         clearLegacyUserData(defaults: defaults)
     }
 }
