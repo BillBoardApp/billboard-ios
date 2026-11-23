@@ -8,7 +8,9 @@
 # It writes Billboard/Billboard/Resources/OpenSourceLicenses.json: for each package in the "In the app" table, its
 # NOTICE files, the copyright lines at the top of its linked sources and its licence texts (stored once each), read
 # from the package at the revision pinned in Package.resolved, plus the repository's own NOTICE and LICENSE. The file
-# is checked in, so a build needs no network and no build script.
+# is checked in, so a build needs no network and no build script. When a package only points to a licence instead of
+# carrying its text (aws-c-cal's APSL 2.0 header), the table links the full text from this repository's licenses/
+# folder, and the generator reads it from there.
 #
 # Regenerating needs the package checkouts, which Xcode makes when it resolves packages (any build). They are found in
 # --packages, else SOURCE_PACKAGES_PATH, else DERIVED_DATA_PATH/SourcePackages, else the newest
@@ -16,8 +18,9 @@
 #
 # --check (run by scripts/test.sh) reads no checkouts. It fails when THIRD_PARTY_NOTICES.md's package table no longer
 # matches Package.resolved, when the bundled file was not regenerated after a change to the "In the app" table, to a
-# pin of a package in it, to the package products the app's targets link (project.pbxproj), or to NOTICE or LICENSE,
-# and when the bundled file was edited by hand (it records a hash of its own content).
+# pin of a package in it, to the package products the app's targets link (project.pbxproj), to NOTICE or LICENSE, or
+# to a licence file in licenses/ that the table links, and when the bundled file was edited by hand (it records a hash
+# of its own content).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export OSL_ROOT="${ROOT}"
@@ -37,6 +40,8 @@ OUT_REL = os.path.relpath(OUT, ROOT)
 REPO_NOTICE = os.path.join(ROOT, "NOTICE")
 REPO_LICENSE = os.path.join(ROOT, "LICENSE")
 PROJECT = os.path.join(ROOT, "Billboard", "Billboard.xcodeproj", "project.pbxproj")
+# Full licence texts kept in this repository, for parts whose package only points to its licence.
+REPO_LICENSES = "licenses"
 FORMAT_VERSION = 1
 BEGIN, END = "<!-- open-source-licenses:begin -->", "<!-- open-source-licenses:end -->"
 SOURCE_EXTENSIONS = (".swift", ".c", ".h", ".m", ".inl", ".def", ".s", ".S")
@@ -77,6 +82,21 @@ def ticked(cell):
     return re.findall(r"`([^`]+)`", cell)
 
 
+def linked(cell):
+    """The targets of the Markdown links in a cell: files in this repository, as GitHub opens them."""
+    return re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", cell)
+
+
+def repository_licence(path, line):
+    """A link in the "Licence text" column: a file directly in this repository's licenses/ folder, which must exist."""
+    folder, _, name = path.partition("/")
+    if folder != REPO_LICENSES or not name or "/" in name or name.startswith("."):
+        fail(f"'In the app' links {path}: a licence text from this repository must be a file in {REPO_LICENSES}/: {line}")
+    if not os.path.isfile(os.path.join(ROOT, path)):
+        fail(f"'In the app' links {path}, which is not in this repository: {line}")
+    return path
+
+
 def package_table(md):
     """{identity: (version, spdx, source)} from the "Swift packages" table."""
     section = md.split("## Swift packages", 1)
@@ -112,14 +132,21 @@ def app_table(md):
             "spdx": spdx,
             "notices": ticked(notice),
             "licenses": ticked(licence),
+            "repositoryLicenses": [repository_licence(path, line) for path in linked(licence)],
             "copyrightFrom": ticked(copyright_from),
         })
     if not rows:
         fail("the 'In the app' table has no rows")
     for row in rows:
-        if not row["licenses"]:
+        if not row["licenses"] and not row["repositoryLicenses"]:
             fail(f"{row['package']} / {row['part']}: no licence text listed")
     return raw, rows
+
+
+def repository_licences(rows):
+    """{path: text} of the licence files in licenses/ that the table links."""
+    paths = sorted({path for row in rows for path in row["repositoryLicenses"]})
+    return {path: normalized(read(os.path.join(ROOT, path))) for path in paths}
 
 
 def pins():
@@ -147,11 +174,12 @@ def billboard_copyright(notice):
     return lines[0]
 
 
-def inputs(raw_table):
+def inputs(raw_table, rows):
     return {
         "table": sha(raw_table),
         "notice": sha(normalized(read(REPO_NOTICE))),
         "license": sha(normalized(read(REPO_LICENSE))),
+        "licenseFiles": {path: sha(text) for path, text in repository_licences(rows).items()},
         "products": linked_products(),
     }
 
@@ -433,6 +461,7 @@ def licence_text(folder, path):
 # ---------------------------------------------------------------- the bundled file
 def generate(rows, packages, pinned, folders, raw_table):
     texts = {}
+    own_licences = repository_licences(rows)
 
     def store(text):
         key = "sha256:" + sha(text)[:16]
@@ -455,8 +484,13 @@ def generate(rows, packages, pinned, folders, raw_table):
                 if not text:
                     fail(f"{full} is empty")
                 notices.append({"part": row["part"], "file": path, "text": text})
-            for path in row["licenses"]:
-                key = store(licence_text(folder, path))
+            # The package's own files, then any full text from licenses/ that the package only points to.
+            sources = [(path, licence_text(folder, path)) for path in row["licenses"]]
+            sources += [(path, own_licences[path]) for path in row["repositoryLicenses"]]
+            for path, text in sources:
+                if not text:
+                    fail(f"{package} / {row['part']}: {path} is empty")
+                key = store(text)
                 same = next((entry for entry in licenses if entry["text"] == key), None)
                 if same is None:
                     licenses.append({"parts": [row["part"]], "spdx": row["spdx"], "files": [path], "text": key})
@@ -484,7 +518,7 @@ def generate(rows, packages, pinned, folders, raw_table):
     data = {
         "about": "Generated by scripts/generate-open-source-licenses.sh from THIRD_PARTY_NOTICES.md. Do not edit.",
         "formatVersion": FORMAT_VERSION,
-        "inputs": inputs(raw_table),
+        "inputs": inputs(raw_table, rows),
         "billboard": {
             "copyright": billboard_copyright(notice),
             "notice": notice,
@@ -518,11 +552,20 @@ def check_bundled(raw_table, rows, pinned):
         recorded = {}
     if recorded.get("content") != content_hash(data):
         problems.append(f"{OUT_REL} was edited by hand (its content no longer matches the hash it was generated with)")
-    expected = inputs(raw_table)
+    expected = inputs(raw_table, rows)
     names = {"table": "THIRD_PARTY_NOTICES.md's 'In the app' table", "notice": "NOTICE", "license": "LICENSE"}
     for key, name in names.items():
         if recorded.get(key) != expected[key]:
             problems.append(f"{name} changed since {OUT_REL} was generated")
+    was = recorded.get("licenseFiles") if isinstance(recorded.get("licenseFiles"), dict) else {}
+    now = expected["licenseFiles"]
+    for path in sorted(set(was) | set(now)):
+        if path not in now:
+            problems.append(f"the table no longer links {path}, which {OUT_REL} was generated with")
+        elif path not in was:
+            problems.append(f"the table links {path}, which {OUT_REL} was generated without")
+        elif was[path] != now[path]:
+            problems.append(f"{path} changed since {OUT_REL} was generated")
     if recorded.get("products") != expected["products"]:
         was = set(recorded.get("products") or [])
         now = set(expected["products"])
