@@ -73,10 +73,11 @@ final class BillVoteStore: ObservableObject {
 
     /// The votes not saved yet, by the guid each was sent to: the bill's latest vote write ended `.unconfirmed`, so
     /// the server may hold the vote or not, and bill detail shows it with "Not saved yet." (UX-49). Cleared by the
-    /// next vote on the bill (a refusal of that vote rolls back to this one, which is then still not saved), a push
-    /// that clears the vote, or once the server confirms the vote another way (`onUnsavedVoteConfirmed`). It lives in
-    /// memory in this account's store, which sign-out ends, so it never reaches another account. (APPF-30 step 2 is
-    /// to keep it across a relaunch.)
+    /// next vote on the bill (a refusal of that vote rolls back to this one, which is then still not saved), or once
+    /// the server confirms the vote another way (`onUnsavedVoteConfirmed`). An "updated" push keeps it: the app drops
+    /// its copy of the vote, but the server keeps the row, so the next read of the bill can still confirm it. It lives
+    /// in memory in this account's store, which sign-out ends, so it never reaches another account. (APPF-30 step 2
+    /// is to keep it across a relaunch.)
     private(set) var unsavedVotes: [String: VoteType] = [:]
 
     /// Runs once when the server confirms a vote in `unsavedVotes` some other way than its own write: a reasons
@@ -185,11 +186,17 @@ final class BillVoteStore: ObservableObject {
         guard !cleaned.isEmpty else { return }
         cache.remove(billId: cleaned)
         statesByBillId.removeValue(forKey: cleaned)
-        // The server cleared the vote, a vote not saved yet included: no read can confirm that vote now.
-        unsavedVotes[cleaned] = nil
-        // The server cleared the vote: a refused vote still in flight rolls back to "unknown", not to it.
+        // Only the app's copy goes: the server keeps the vote row, so a vote not saved yet stays in `unsavedVotes`, and
+        // the next read of the bill (its cache is "unknown" now) confirms it when the server holds it (UX-49b).
+        // A refused vote still in flight rolls back to "unknown", not to the dropped copy, so a read decides; a vote
+        // not saved yet that it replaced comes back with it, still not saved.
         if let pending = unconfirmedVotes[cleaned] {
-            unconfirmedVotes[cleaned] = UnconfirmedVote(baseline: .unknown, baselineVotedAt: nil, latest: pending.latest)
+            unconfirmedVotes[cleaned] = UnconfirmedVote(
+                baseline: .unknown,
+                baselineVotedAt: nil,
+                baselineUnsaved: pending.baselineUnsaved,
+                latest: pending.latest
+            )
         }
     }
 
@@ -444,11 +451,18 @@ final class BillVoteStore: ObservableObject {
     }
 
     /// The server holds `vote` on `billId`. When that is the vote not saved yet (`unsavedVotes`), it is saved now:
-    /// it leaves `unsavedVotes`, and `onUnsavedVoteConfirmed` and the civic refresh run, once (UX-49b). Another
-    /// vote leaves it not saved yet.
+    /// it leaves `unsavedVotes`, and `onUnsavedVoteConfirmed` and the civic refresh run, once (UX-49b). The same holds
+    /// while a newer vote waits behind it (a reasons update for it, queued before the newer vote, was stored): it then
+    /// leaves the newer vote's rollback record (`baselineUnsaved`), so a refusal of the newer vote restores it as
+    /// saved. Another vote leaves it not saved yet.
     private func confirmUnsavedVote(billId: String, vote: VoteType) {
-        guard unsavedVotes[billId] == vote else { return }
-        unsavedVotes[billId] = nil
+        if unsavedVotes[billId] == vote {
+            unsavedVotes[billId] = nil
+        } else if unconfirmedVotes[billId]?.baselineUnsaved == vote {
+            unconfirmedVotes[billId]?.baselineUnsaved = nil
+        } else {
+            return
+        }
         onUnsavedVoteConfirmed?(billId, vote)
         refreshCivicStatsAfterSavedVote()
     }
