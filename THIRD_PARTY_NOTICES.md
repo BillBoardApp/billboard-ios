@@ -59,17 +59,19 @@ linked packages are not in the app either: aws-crt-swift's command-line tools, a
 bundled inside aws-crt-swift, which are built only on Linux (see the notes under the table).
 
 The table below drives the screen. `scripts/generate-open-source-licenses.sh` reads it and, for each row, the listed
-files from the package at its pinned revision, and writes them to `Billboard/Billboard/Resources/OpenSourceLicenses.json`,
-which the app bundles. That file is checked in, so a build needs no network and no build script.
-`./scripts/generate-open-source-licenses.sh --check` (a step of `scripts/test.sh`) needs no package checkouts: it fails
-when the file was not regenerated after a change to this table, to a pin of a package in it, to the package products
-the app target links (in `project.pbxproj`), or to the repository's `NOTICE` or `LICENSE`, and when the file was
-edited by hand.
+files from the package at its pinned revision (and any linked file from `licenses/`), and writes them to
+`Billboard/Billboard/Resources/OpenSourceLicenses.json`, which the app bundles. That file is checked in, so a build
+needs no network and no build script. `./scripts/generate-open-source-licenses.sh --check` (a step of
+`scripts/test.sh`) needs no package checkouts: it fails when the file was not regenerated after a change to this
+table, to a pin of a package in it, to the package products the app target links (in `project.pbxproj`), to the
+repository's `NOTICE` or `LICENSE`, or to a file in `licenses/` that the table links, and when the file was edited by
+hand.
 
 - **Part**: a library bundled inside the package (empty for the package itself).
 - **Notice**: NOTICE files, shown whole.
 - **Licence text**: licence files, shown whole. A source file here means the licence comment at its top (a block with
-  a copyright line, other than a one-line SPDX header).
+  a copyright line, other than a one-line SPDX header). A link is a file in this repository's `licenses/` folder: the
+  full text of a licence that the package names but does not include.
 - **Copyright lines from**: the source folders of the targets the app links; the screen lists each distinct copyright
   line found at the top of their files.
 
