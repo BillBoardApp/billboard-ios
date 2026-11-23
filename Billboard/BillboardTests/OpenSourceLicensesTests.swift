@@ -72,6 +72,10 @@ final class OpenSourceLicensesTests: XCTestCase {
         XCTAssertTrue(crt.licenses.contains { $0.files.contains("aws-common-runtime/aws-c-common/THIRD-PARTY-LICENSES.txt") })
         XCTAssertTrue(try component("amplify-swift").licenses.contains { $0.parts == ["libtommath"] && $0.spdx == "Unlicense" })
         XCTAssertTrue(try component("opentelemetry-swift").copyrights.contains { $0.hasPrefix("Copyright 2016,") }, "DataCompression's own line")
+        XCTAssertTrue(
+            try component("amplify-swift").copyrights.contains("Modifications Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved."),
+            "libtommath's sources' line, with a word before Copyright"
+        )
     }
 
     /// Billboard's section reads its copyright line from the bundled NOTICE (approved D2), never typed, and shows the
