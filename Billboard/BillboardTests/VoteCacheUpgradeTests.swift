@@ -286,6 +286,40 @@ final class VoteCacheUpgradeTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "BillVoteCache.v1.\(scope)"))
     }
 
+    // MARK: - 1.3: votes not saved yet (APPF-30 step 2)
+
+    /// The first launch of 1.3 opens the cache 1.2 left, which has no map of votes not saved yet: every row loads as it
+    /// was, Yea, Nay and Abstain alike, no vote shows as not saved, nothing is read again at launch, and no vote is sent
+    /// on its own once the phone is back online.
+    func testThe12CacheLoadsIn13WithNoVoteNotSavedYet() async {
+        let cache = openCache()
+        let earlier = Date().addingTimeInterval(-5 * 24 * 60 * 60)
+        cache.setVoted(billId: Self.yea, vote: .yea, votedAt: earlier, now: earlier)
+        cache.setVoted(billId: Self.ownAbstain, vote: .abstain, votedAt: earlier, now: earlier)
+        cache.setNotVoted(billId: Self.notVoted, now: earlier)
+        XCTAssertNil(defaults.object(forKey: BillVoteCache.unsavedVotesKey(for: key)), "precondition: 1.2 wrote no map")
+
+        let service = FakeBillVotesService()
+        let store = voteStore(openCache(), service)
+        let scope = "upgrade-13-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let bills = BillsStore(bills: [], cacheScope: scope, service: FakeBillsService(), preferencesService: FakePreferencesService())
+        bills.connect(voteStore: store)
+
+        XCTAssertEqual(store.unsavedVotes, [:])
+        XCTAssertEqual(store.vote(for: Self.yea), .voted(.yea))
+        XCTAssertEqual(store.heldVote(for: Self.ownAbstain), .abstain)
+        XCTAssertEqual(store.vote(for: Self.notVoted), .notVoted)
+        let read = await store.recheckUnsavedVotes()
+        let sent = await bills.resendUnsavedVotesOnce()
+        XCTAssertTrue(read)
+        XCTAssertEqual(sent, [:])
+        XCTAssertTrue(service.batchRequests.isEmpty && service.singleRequests.isEmpty && service.setFeedbackCalls.isEmpty)
+        // A cached vote row is still not read again on open.
+        await store.fetchVoteIfNeeded(for: Self.yea, revalidateNotVoted: true)
+        XCTAssertTrue(service.singleRequests.isEmpty)
+    }
+
     func testACacheThatIsNotSavedHasNothingToDrop() {
         let cache = BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil), defaults: defaults)
         cache.setVoted(billId: Self.dismissed, vote: .abstain, votedAt: Date(), now: Date())

@@ -554,6 +554,9 @@ struct TabsBar: View {
                 guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
                 await billVoteStore.recheckEarlierAbstains()
             }
+            // APPF-30 step 2: read the votes not saved yet again now and on a return to the app, and send each once
+            // more once the phone is back online.
+            .rechecksUnsavedVotes(billsStore: billsStore, voteStore: billVoteStore)
             .task {
                 // UX-51: once after the update, after Home's startup reconciliation. Cancelled when the view
                 // goes (sign-out), which leaves it to a later launch.
