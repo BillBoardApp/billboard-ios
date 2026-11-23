@@ -173,7 +173,8 @@ fields:
 The app shows the licences of the packages it links on its Open-source licenses screen (About Billboard), from
 `Billboard/Billboard/Resources/OpenSourceLicenses.json`. That file is generated from
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the package checkouts. When you add, remove or update a package
-(a change to `Package.resolved`), in the same pull request:
+(a change to `Package.resolved`), or add a package product to the app target or remove one (a change to
+`project.pbxproj`), in the same pull request:
 
 1. Update both tables in `THIRD_PARTY_NOTICES.md`: the version in "Swift packages", and in "In the app" any package,
    bundled library or licence file that the app now links or no longer links.
@@ -184,7 +185,7 @@ The app shows the licences of the packages it links on its Open-source licenses 
 ./scripts/generate-open-source-licenses.sh --check   # what the gate runs: exit 1 when the file is out of date
 ```
 
-Do not edit the JSON file by hand.
+Do not edit the JSON file by hand: it records a hash of its own content, and `--check` fails on a hand edit.
 
 ## Staying neutral
 

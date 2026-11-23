@@ -4,7 +4,13 @@
   "inputs": {
     "table": "5a7e9d5444914115265af06fb73d5c3cf3c26355f731c0e5ad5ac6a1bd6710f9",
     "notice": "ca5965947e6d2d8c7d5d9310d9350ae6aae38ac7a70a9a229c72611ca41ca9c6",
-    "license": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    "license": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+    "products": [
+      "Billboard: https://github.com/aws-amplify/amplify-swift AWSAPIPlugin",
+      "Billboard: https://github.com/aws-amplify/amplify-swift AWSCognitoAuthPlugin",
+      "Billboard: https://github.com/aws-amplify/amplify-swift Amplify"
+    ],
+    "content": "e0361710c21fd459d294fb5c37f330e22c93626c7e23e8485110f42c1ba83fff"
   },
   "billboard": {
     "copyright": "Copyright 2025-2027 The Billboard Authors",
@@ -27,6 +33,7 @@
       ],
       "copyrights": [
         "Copyright Amazon.com Inc. or its affiliates.",
+        "Modifications Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
         "Copyright (c) 2014, Ashley Mills"
       ],
       "licenses": [

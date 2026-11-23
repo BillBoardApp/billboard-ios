@@ -61,8 +61,9 @@ The table below drives the screen. `scripts/generate-open-source-licenses.sh` re
 files from the package at its pinned revision, and writes them to `Billboard/Billboard/Resources/OpenSourceLicenses.json`,
 which the app bundles. That file is checked in, so a build needs no network and no build script.
 `./scripts/generate-open-source-licenses.sh --check` (a step of `scripts/test.sh`) needs no package checkouts: it fails
-when the file was not regenerated after a change to this table, to a pin in `Package.resolved`, or to the repository's
-`NOTICE` or `LICENSE`.
+when the file was not regenerated after a change to this table, to a pin of a package in it, to the package products
+the app target links (in `project.pbxproj`), or to the repository's `NOTICE` or `LICENSE`, and when the file was
+edited by hand.
 
 - **Part**: a library bundled inside the package (empty for the package itself).
 - **Notice**: NOTICE files, shown whole.
@@ -73,8 +74,9 @@ when the file was not regenerated after a change to this table, to a pin in `Pac
 
 The set was worked out from the package manifests at the pinned revisions: the targets that the app's three Amplify
 products depend on when built for iOS. It matches the package objects a simulator build links (the app target's
-`Billboard.LinkFileList`, checked on 2026-11-22). When a pin changes, check that set again (that file, or a Release
-build with `LD_GENERATE_MAP_FILE=YES`), update this table and the one above, and run the generator.
+`Billboard.LinkFileList`, checked on 2026-11-22). When a pin changes, or a package product is added to or removed
+from the app target, check that set again (that file, or a Release build with `LD_GENERATE_MAP_FILE=YES`), update this
+table and the one above, and run the generator.
 
 <!-- open-source-licenses:begin -->
 | Package | Part | Licence (SPDX) | Notice | Licence text | Copyright lines from |

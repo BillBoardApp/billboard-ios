@@ -15,8 +15,9 @@
 # ~/Library/Developer/Xcode/DerivedData/BillBoard-*/SourcePackages. Each checkout must be at its pinned revision.
 #
 # --check (run by scripts/test.sh) reads no checkouts. It fails when THIRD_PARTY_NOTICES.md's package table no longer
-# matches Package.resolved, or when the bundled file was not regenerated after a change to the "In the app" table, to
-# a pin of a package in it, or to NOTICE or LICENSE.
+# matches Package.resolved, when the bundled file was not regenerated after a change to the "In the app" table, to a
+# pin of a package in it, to the package products the app's targets link (project.pbxproj), or to NOTICE or LICENSE,
+# and when the bundled file was edited by hand (it records a hash of its own content).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export OSL_ROOT="${ROOT}"
@@ -35,6 +36,7 @@ OUT = os.path.join(ROOT, "Billboard", "Billboard", "Resources", "OpenSourceLicen
 OUT_REL = os.path.relpath(OUT, ROOT)
 REPO_NOTICE = os.path.join(ROOT, "NOTICE")
 REPO_LICENSE = os.path.join(ROOT, "LICENSE")
+PROJECT = os.path.join(ROOT, "Billboard", "Billboard.xcodeproj", "project.pbxproj")
 FORMAT_VERSION = 1
 BEGIN, END = "<!-- open-source-licenses:begin -->", "<!-- open-source-licenses:end -->"
 SOURCE_EXTENSIONS = (".swift", ".c", ".h", ".m", ".inl", ".def", ".s", ".S")
@@ -150,7 +152,117 @@ def inputs(raw_table):
         "table": sha(raw_table),
         "notice": sha(normalized(read(REPO_NOTICE))),
         "license": sha(normalized(read(REPO_LICENSE))),
+        "products": linked_products(),
     }
+
+
+# ---------------------------------------------------------------- project.pbxproj
+def openstep(text):
+    """The old-style property list Xcode writes project.pbxproj in, as dicts, lists and strings."""
+    bare = re.compile(r"[A-Za-z0-9_$+/:.\-]+")
+    escapes = {"n": "\n", "t": "\t", "r": "\r"}
+    position = 0
+
+    def skip():
+        nonlocal position
+        while position < len(text):
+            if text[position].isspace():
+                position += 1
+            elif text.startswith("//", position):
+                end = text.find("\n", position)
+                position = len(text) if end < 0 else end
+            elif text.startswith("/*", position):
+                end = text.find("*/", position + 2)
+                if end < 0:
+                    fail("project.pbxproj: a comment is not closed")
+                position = end + 2
+            else:
+                return
+
+    def expect(character):
+        nonlocal position
+        skip()
+        if not text.startswith(character, position):
+            fail(f"project.pbxproj: expected '{character}' at offset {position}")
+        position += 1
+
+    def value():
+        nonlocal position
+        skip()
+        if position >= len(text):
+            fail("project.pbxproj ends early")
+        character = text[position]
+        if character == "{":
+            position += 1
+            out = {}
+            while True:
+                skip()
+                if text.startswith("}", position):
+                    position += 1
+                    return out
+                key = value()
+                expect("=")
+                out[key] = value()
+                expect(";")
+        if character == "(":
+            position += 1
+            out = []
+            while True:
+                skip()
+                if text.startswith(")", position):
+                    position += 1
+                    return out
+                out.append(value())
+                skip()
+                if text.startswith(",", position):
+                    position += 1
+        if character == '"':
+            position += 1
+            out = []
+            while position < len(text) and text[position] != '"':
+                if text[position] == "\\" and position + 1 < len(text):
+                    position += 1
+                    out.append(escapes.get(text[position], text[position]))
+                else:
+                    out.append(text[position])
+                position += 1
+            position += 1
+            return "".join(out)
+        match = bare.match(text, position)
+        if not match:
+            fail(f"project.pbxproj: unexpected '{character}' at offset {position}")
+        position = match.end()
+        return match.group(0)
+
+    return value()
+
+
+def linked_products():
+    """Each Swift package product a target that ships links, as "<target>: <package> <product>", sorted. Test bundles
+    are left out: they are not in the app."""
+    objects = openstep(read(PROJECT)).get("objects", {})
+    out = []
+    for target in objects.values():
+        if target.get("isa") != "PBXNativeTarget" or "test" in target.get("productType", ""):
+            continue
+        for reference in target.get("packageProductDependencies", []):
+            product = objects.get(reference, {})
+            package = objects.get(product.get("package", ""), {})
+            source = package.get("repositoryURL") or package.get("relativePath") or "(no package)"
+            out.append(f"{target.get('name')}: {source} {product.get('productName')}")
+    if not out:
+        fail("project.pbxproj: no target links a Swift package product")
+    return sorted(out)
+
+
+def content_hash(data):
+    """A hash of the bundled file's content: everything but this hash, in a canonical form, so formatting does not
+    count but any edited value does."""
+    rest = dict(data)
+    recorded = data.get("inputs")
+    if isinstance(recorded, dict):
+        rest["inputs"] = {key: value for key, value in recorded.items() if key != "content"}
+    return sha(json.dumps(rest, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
 
 
 def check_package_table(packages, pinned):
@@ -227,7 +339,8 @@ def checkout_paths(source_packages, pinned, needed):
 
 
 # ---------------------------------------------------------------- reading a package
-COPYRIGHT = re.compile(r"^[\s/*#;!-]*((?:Copyright\b|\(c\)\s*\d|©).*?)\s*(?:\*/)?\s*$")
+# "Copyright ...", "(c) 2019 ...", "© ...", and "Modifications Copyright ..." or "Portions Copyright ...".
+COPYRIGHT = re.compile(r"^[\s/*#;!-]*((?:(?:Modifications|Portions)\s+)?(?:Copyright\b|\(c\)\s*\d|©).*?)\s*(?:\*/)?\s*$")
 NOT_A_COPYRIGHT = re.compile(r"[\[{]yyyy|^Copyright\s+(notice|owner|holders?|license|licence|statement)\b")
 
 
@@ -368,7 +481,7 @@ def generate(rows, packages, pinned, folders, raw_table):
         })
 
     notice = normalized(read(REPO_NOTICE))
-    return {
+    data = {
         "about": "Generated by scripts/generate-open-source-licenses.sh from THIRD_PARTY_NOTICES.md. Do not edit.",
         "formatVersion": FORMAT_VERSION,
         "inputs": inputs(raw_table),
@@ -380,6 +493,8 @@ def generate(rows, packages, pinned, folders, raw_table):
         "components": components,
         "texts": dict(sorted(texts.items())),
     }
+    data["inputs"]["content"] = content_hash(data)
+    return data
 
 
 def encoded(data):
@@ -394,14 +509,26 @@ def check_bundled(raw_table, rows, pinned):
         data = json.loads(read(OUT))
     except ValueError as error:
         return [f"{OUT_REL} is not valid JSON: {error}"]
+    if not isinstance(data, dict):
+        return [f"{OUT_REL} is not a JSON object"]
     if data.get("formatVersion") != FORMAT_VERSION:
         problems.append(f"{OUT_REL} has format {data.get('formatVersion')}, not {FORMAT_VERSION}")
     recorded = data.get("inputs", {})
+    if not isinstance(recorded, dict):
+        recorded = {}
+    if recorded.get("content") != content_hash(data):
+        problems.append(f"{OUT_REL} was edited by hand (its content no longer matches the hash it was generated with)")
     expected = inputs(raw_table)
     names = {"table": "THIRD_PARTY_NOTICES.md's 'In the app' table", "notice": "NOTICE", "license": "LICENSE"}
     for key, name in names.items():
         if recorded.get(key) != expected[key]:
             problems.append(f"{name} changed since {OUT_REL} was generated")
+    if recorded.get("products") != expected["products"]:
+        was = set(recorded.get("products") or [])
+        now = set(expected["products"])
+        change = [f"now links {product}" for product in sorted(now - was)] + [f"no longer links {product}" for product in sorted(was - now)]
+        problems.append(f"the app's package products changed since {OUT_REL} was generated ({'; '.join(change) or 'reordered'}): "
+                        "check the 'In the app' table covers the targets they need")
     components = data.get("components", [])
     if [component.get("name") for component in components] != ordered_packages(rows):
         problems.append(f"{OUT_REL} lists {[c.get('name') for c in components]}, the table {ordered_packages(rows)}")
@@ -439,7 +566,7 @@ def main(argv):
         for problem in problems + stale:
             print(f"  {problem}", file=sys.stderr)
         if stale:
-            fail(f"{OUT_REL} is out of date: update THIRD_PARTY_NOTICES.md if a pin changed, then run "
+            fail(f"{OUT_REL} is out of date: update THIRD_PARTY_NOTICES.md if a pin or a linked product changed, then run "
                  "./scripts/generate-open-source-licenses.sh (it needs the package checkouts: build once first)")
         if problems:
             fail("THIRD_PARTY_NOTICES.md no longer matches Package.resolved: update its package tables")
