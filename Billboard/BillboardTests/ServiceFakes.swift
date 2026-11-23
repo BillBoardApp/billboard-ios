@@ -104,11 +104,16 @@ final class FakeBillVotesService: BillVotesServicing {
 
     var batchResult: Result<[String: BillVotesService.RemoteVoteState], Error> = .success([:])
     private(set) var batchRequests: [[String]] = []
+    /// When set, a batch read suspends until the gate opens, then answers `batchResult`.
+    var holdBatchFetch: Gate?
     var singleResult: Result<BillVotesService.RemoteVoteState, Error> = .success(.notVoted)
     private(set) var singleRequests: [String] = []
 
     func fetchFeedback(billIds: [String]) async throws -> [String: BillVotesService.RemoteVoteState] {
         batchRequests.append(billIds)
+        if let gate = holdBatchFetch {
+            await gate.wait()
+        }
         return try batchResult.get()
     }
 

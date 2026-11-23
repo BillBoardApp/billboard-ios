@@ -564,8 +564,9 @@ final class BillVoteStoreTests: XCTestCase {
         XCTAssertEqual(confirmed.calls.count, 1, "once")
     }
 
-    /// A read that returns another vote (the vote before a change whose write failed) or no vote does not confirm the
-    /// vote not saved yet, which stays not saved: a later read of that vote still confirms it.
+    /// A read that returns another vote cast before this one was sent (the vote before a change whose write failed) or
+    /// no vote does not confirm the vote not saved yet, which stays not saved: a later read of that vote still confirms
+    /// it. (A different vote cast after it was sent replaces it, APPF-30 step 2.)
     @MainActor
     func testAReadOfAnotherVoteOrNoVoteLeavesTheVoteNotSavedYet() async {
         let service = FakeBillVotesService()
@@ -574,7 +575,7 @@ final class BillVoteStoreTests: XCTestCase {
         let confirmed = recordConfirmations(of: store)
         _ = await store.submitVote(billId: billId, vote: .yea)
 
-        service.batchResult = .success([billId: .voted(.init(vote: .nay, votedAt: Date()))])
+        service.batchResult = .success([billId: .voted(.init(vote: .nay, votedAt: Date().addingTimeInterval(-60)))])
         await store.refreshVotes(for: [billId])
         service.batchResult = .success([billId: .notVoted])
         await store.refreshVotes(for: [billId])
@@ -840,6 +841,239 @@ final class BillVoteStoreTests: XCTestCase {
         XCTAssertEqual(preferences.putCalls.count, 1, "no Bill row once the bills store is gone")
     }
 
+    // MARK: - A vote not saved yet, kept per account across a relaunch (APPF-30 step 2)
+
+    /// A vote store on a cache saved in `defaults` under `key`: a new one on the same defaults is the next launch.
+    @MainActor
+    private func makeSavedStore(_ service: FakeBillVotesService, defaults: UserDefaults, key: String) -> BillVoteStore {
+        BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: key), defaults: defaults), service: service)
+    }
+
+    /// A throwaway defaults suite and a cache key, removed in teardown.
+    private func savedDefaults() throws -> (defaults: UserDefaults, key: String) {
+        let suiteName = "BillVoteStoreTests.saved.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suiteName) }
+        return (defaults, "BillVoteCache.v1.saved-tests-\(UUID().uuidString)")
+    }
+
+    /// The mark's life: set when the write fails with its outcome unknown, kept by the next launch (a new store on the
+    /// same defaults), which shows the vote with its row and reads it again; cleared when Try again is stored, and the
+    /// launch after that finds nothing.
+    @MainActor
+    func testAVoteNotSavedYetIsKeptAcrossARelaunchUntilItIsStored() async throws {
+        let (defaults, key) = try savedDefaults()
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.notConnectedToInternet)
+        let first = makeSavedStore(service, defaults: defaults, key: key)
+        let result = await first.submitVote(billId: billId, vote: .yea, reasons: [.education])
+        XCTAssertEqual(result, .unconfirmed)
+
+        let relaunch = makeSavedStore(service, defaults: defaults, key: key)
+        XCTAssertEqual(relaunch.unsavedVotes, [billId: .yea])
+        XCTAssertEqual(relaunch.unsavedVote(for: " \(billId) "), .yea)
+        XCTAssertEqual(relaunch.vote(for: billId), .voted(.yea), "the vote still shows")
+
+        service.setFeedbackError = nil
+        let stored = await relaunch.submitVote(billId: billId, vote: .yea)
+        XCTAssertEqual(stored, .stored)
+        XCTAssertEqual(relaunch.unsavedVotes, [:])
+        XCTAssertEqual(makeSavedStore(service, defaults: defaults, key: key).unsavedVotes, [:], "saved: gone after a relaunch too")
+    }
+
+    /// A vote whose write is still out is marked on disk too, so when the app ends mid-write the next launch shows it as
+    /// not saved yet. While the write is out, this launch does not show it as not saved: its result decides.
+    @MainActor
+    func testAVoteWhoseWriteTheAppEndedIsNotSavedYetAtTheNextLaunch() async throws {
+        let (defaults, key) = try savedDefaults()
+        let service = FakeBillVotesService()
+        let gate = Gate()
+        service.holdSetFeedback = gate
+        let started = expectation(description: "write started")
+        service.onSetFeedback = { _ in started.fulfill() }
+        let first = makeSavedStore(service, defaults: defaults, key: key)
+        let write = Task { await first.submitVote(billId: billId, vote: .nay) }
+        await fulfillment(of: [started], timeout: 5)
+
+        XCTAssertEqual(first.unsavedVotes, [:], "the write is out")
+        XCTAssertEqual(makeSavedStore(FakeBillVotesService(), defaults: defaults, key: key).unsavedVotes, [billId: .nay])
+
+        gate.open()
+        let result = await write.value
+        XCTAssertEqual(result, .stored)
+        XCTAssertEqual(makeSavedStore(FakeBillVotesService(), defaults: defaults, key: key).unsavedVotes, [:])
+    }
+
+    /// A refused vote rolls back with its mark: a first vote leaves none, and a refused change after a vote not saved
+    /// yet puts that vote's mark back, with its own send time. A same-vote read clears it, on disk too.
+    @MainActor
+    func testARefusalRollsTheMarkBackAndASameVoteReadClearsIt() async throws {
+        let (defaults, key) = try savedDefaults()
+        let service = FakeBillVotesService()
+        service.setFeedbackError = backendError("VOTE_DAILY_LIMIT")
+        let store = makeSavedStore(service, defaults: defaults, key: key)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        XCTAssertEqual(makeSavedStore(service, defaults: defaults, key: key).unsavedVotes, [:], "a refused first vote leaves no mark")
+
+        service.setFeedbackError = URLError(.timedOut)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        let sentAt = try XCTUnwrap(store.heldVoteDate(for: billId))
+        service.setFeedbackError = backendError("VOTE_DAILY_LIMIT")
+        let refused = await store.submitVote(billId: billId, vote: .nay)
+        XCTAssertEqual(refused, .rolledBack(restored: .voted(.yea)))
+        let relaunch = makeSavedStore(service, defaults: defaults, key: key)
+        XCTAssertEqual(relaunch.unsavedVotes, [billId: .yea])
+        XCTAssertEqual(relaunch.heldVoteDate(for: billId), sentAt)
+
+        service.batchResult = .success([billId: .voted(.init(vote: .yea, votedAt: sentAt))])
+        await relaunch.refreshVotes(for: [billId])
+        XCTAssertEqual(relaunch.unsavedVotes, [:])
+        XCTAssertEqual(makeSavedStore(service, defaults: defaults, key: key).unsavedVotes, [:])
+    }
+
+    /// A vote not saved yet is read again when its bill opens, although its row is cached as a vote (a cached vote is
+    /// otherwise never read again), and a read that keeps it reads it again next time.
+    @MainActor
+    func testABillWithAVoteNotSavedYetIsReadAgainWhenItOpens() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        service.singleResult = .success(.notVoted)
+
+        await store.fetchVoteIfNeeded(for: billId, reportError: false, revalidateNotVoted: true)
+        await store.fetchVoteIfNeeded(for: billId, reportError: false, revalidateNotVoted: true)
+        await store.fetchVotes(for: [billId])
+
+        XCTAssertEqual(service.singleRequests, [billId, billId])
+        XCTAssertEqual(service.batchRequests, [[billId]])
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea])
+    }
+
+    /// The server holds no vote, or an older different one (the Nay a change to Yea replaced): the Yea stays shown and not
+    /// saved, with its row, so the stores do not split; the read returns no row for it. Nothing is confirmed or replaced.
+    @MainActor
+    func testAReadOfNoVoteOrAnOlderVoteKeepsTheVoteNotSavedYetShown() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.notConnectedToInternet)
+        let store = makeStore(service)
+        let confirmed = recordConfirmations(of: store)
+        let replaced = recordReplacements(of: store)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+
+        service.batchResult = .success([billId: .notVoted])
+        let none = await store.refreshVotes(for: [billId])
+        service.batchResult = .success([billId: .voted(.init(vote: .nay, votedAt: Date().addingTimeInterval(-60)))])
+        let older = await store.refreshVotes(for: [billId])
+
+        XCTAssertEqual(none, [:])
+        XCTAssertEqual(older, [:])
+        XCTAssertEqual(store.vote(for: billId), .voted(.yea))
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea])
+        XCTAssertEqual(confirmed.calls, [])
+        XCTAssertEqual(replaced.calls, [])
+    }
+
+    /// The server holds a different vote cast after this one was sent (on another device): it is a later choice, so the
+    /// store takes it, the mark goes, and the bills store is told (`onUnsavedVoteReplaced`). The vote not saved yet is
+    /// not confirmed.
+    @MainActor
+    func testAReadOfALaterVoteFromAnotherDeviceReplacesTheVoteNotSavedYet() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.notConnectedToInternet)
+        let store = makeStore(service)
+        let confirmed = recordConfirmations(of: store)
+        let replaced = recordReplacements(of: store)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        let later = Date().addingTimeInterval(60)
+
+        service.batchResult = .success([billId: .voted(.init(vote: .abstain, votedAt: later))])
+        let rows = await store.refreshVotes(for: [billId])
+
+        XCTAssertEqual(rows, [billId: .voted(.abstain)])
+        XCTAssertEqual(store.heldVote(for: billId), .abstain)
+        XCTAssertEqual(store.heldVoteDate(for: billId), later)
+        XCTAssertEqual(store.unsavedVotes, [:])
+        XCTAssertEqual(replaced.calls, [.init(guid: billId, vote: .abstain)])
+        XCTAssertEqual(confirmed.calls, [])
+    }
+
+    /// After an "updated" push dropped the app's copy of a vote not saved yet, a read of no vote or another vote means the
+    /// vote never reached the server: the server's row is stored and the mark goes.
+    @MainActor
+    func testAfterAPushAReadOfAnotherRowDropsTheMark() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        store.clearVote(for: billId)
+
+        service.batchResult = .success([billId: .notVoted])
+        let rows = await store.refreshVotes(for: [billId])
+
+        XCTAssertEqual(rows, [billId: .notVoted])
+        XCTAssertEqual(store.vote(for: billId), .notVoted)
+        XCTAssertEqual(store.unsavedVotes, [:])
+    }
+
+    /// The launch and return-to-app read: one batched request for the votes not saved yet only, which confirms the ones the
+    /// server holds (the hook once) and keeps the others. It fails quietly (no app-wide error), and a second call while it
+    /// is out joins it instead of asking again. With nothing marked it asks nothing.
+    @MainActor
+    func testTheRecheckReadsTheVotesNotSavedYetInOneQuietRequest() async {
+        let service = FakeBillVotesService()
+        let store = makeStore(service)
+        let confirmed = recordConfirmations(of: store)
+        let nothing = await store.recheckUnsavedVotes()
+        XCTAssertTrue(nothing)
+        XCTAssertEqual(service.batchRequests, [], "nothing marked, nothing asked")
+
+        let other = "BILLS-119hr2ih"
+        await store.setVote(billId: "BILLS-119hr3ih", vote: .yea)
+        service.setFeedbackError = URLError(.notConnectedToInternet)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        _ = await store.submitVote(billId: other, vote: .nay)
+
+        service.batchResult = .failure(URLError(.notConnectedToInternet))
+        let failed = await store.recheckUnsavedVotes()
+        XCTAssertFalse(failed)
+        XCTAssertNil(store.lastError, "quiet")
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea, other: .nay])
+
+        service.batchResult = .success([billId: .voted(.init(vote: .yea, votedAt: Date())), other: .notVoted])
+        let gate = Gate()
+        service.holdBatchFetch = gate
+        let first = Task { await store.recheckUnsavedVotes() }
+        for _ in 0..<500 where service.batchRequests.count < 2 { await Task.yield() }
+        let second = Task { await store.recheckUnsavedVotes() }
+        for _ in 0..<50 { await Task.yield() }
+        gate.open()
+        let results = await [first.value, second.value]
+
+        XCTAssertEqual(results, [true, true])
+        XCTAssertEqual(service.batchRequests, [[billId, other].sorted(), [billId, other].sorted()], "one request per recheck, the second joined")
+        XCTAssertEqual(confirmed.calls, [.init(guid: billId, vote: .yea)])
+        XCTAssertEqual(store.unsavedVotes, [other: .nay])
+    }
+
+    /// Reasons picked after a vote not saved yet go with it when it is sent again on its own.
+    @MainActor
+    func testReasonsPickedAfterAVoteNotSavedYetAreKeptWithIt() async {
+        let service = FakeBillVotesService()
+        service.setFeedbackError = URLError(.timedOut)
+        let store = makeStore(service)
+        _ = await store.submitVote(billId: billId, vote: .nay, reasons: [.education])
+        XCTAssertEqual(store.votesAwaitingAutomaticResend().map { $0.reasons }, [[.education]])
+
+        await store.updateReasons(billId: billId, vote: .nay, reasons: [.healthcare, .economicImpact])
+
+        XCTAssertEqual(store.votesAwaitingAutomaticResend().map { $0.guid }, [billId])
+        XCTAssertEqual(store.votesAwaitingAutomaticResend().map { $0.reasons }, [[.healthcare, .economicImpact]])
+        store.spendAutomaticResend(for: billId)
+        XCTAssertTrue(store.votesAwaitingAutomaticResend().isEmpty)
+        XCTAssertEqual(store.unsavedVotes, [billId: .nay], "still not saved")
+    }
+
     /// One call of `onUnsavedVoteConfirmed`.
     private struct Confirmation: Equatable {
         let guid: String
@@ -856,6 +1090,14 @@ final class BillVoteStoreTests: XCTestCase {
     private func recordConfirmations(of store: BillVoteStore) -> ConfirmationLog {
         let log = ConfirmationLog()
         store.onUnsavedVoteConfirmed = { guid, vote in log.calls.append(Confirmation(guid: guid, vote: vote)) }
+        return log
+    }
+
+    /// The calls of `onUnsavedVoteReplaced`, as confirmations.
+    @MainActor
+    private func recordReplacements(of store: BillVoteStore) -> ConfirmationLog {
+        let log = ConfirmationLog()
+        store.onUnsavedVoteReplaced = { guid, vote in log.calls.append(Confirmation(guid: guid, vote: vote)) }
         return log
     }
 

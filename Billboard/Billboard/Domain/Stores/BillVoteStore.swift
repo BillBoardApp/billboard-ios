@@ -51,11 +51,11 @@ final class BillVoteStore: ObservableObject {
 
     /// A bill with a vote write the server has not confirmed: the vote row as it was before the first
     /// such write (`baseline`, what a refused vote rolls back to, with its `votedAt` when it is a vote, and
-    /// `baselineUnsaved` when that row was a vote not saved yet) and the latest vote's token.
+    /// `baselineUnsaved`, its mark, when that row was a vote not saved yet) and the latest vote's token.
     private struct UnconfirmedVote {
         var baseline: VoteState
         var baselineVotedAt: Date?
-        var baselineUnsaved: VoteType?
+        var baselineUnsaved: BillVoteCache.UnsavedVote?
         var latest: UUID
     }
 
@@ -71,14 +71,17 @@ final class BillVoteStore: ObservableObject {
     /// queued writes have all run, only the latest vote's refusal is kept: later updates belong to that vote.
     private var refusedVotes: [String: Set<UUID>] = [:]
 
-    /// The votes not saved yet, by the guid each was sent to: the bill's latest vote write ended `.unconfirmed`, so
-    /// the server may hold the vote or not, and bill detail shows it with "Not saved yet." (UX-49). Cleared by the
-    /// next vote on the bill (a refusal of that vote rolls back to this one, which is then still not saved), or once
-    /// the server confirms the vote another way (`onUnsavedVoteConfirmed`). An "updated" push keeps it: the app drops
-    /// its copy of the vote, but the server keeps the row, so the next read of the bill can still confirm it. It lives
-    /// in memory in this account's store, which sign-out ends, so it never reaches another account. (APPF-30 step 2
-    /// is to keep it across a relaunch.)
-    private(set) var unsavedVotes: [String: VoteType] = [:]
+    /// The votes not saved yet, by the guid each was sent to: the bill's latest vote write ended `.unconfirmed`, so the
+    /// server may hold the vote or not, and bill detail shows it with "Not saved yet." and Try again (UX-49), whenever
+    /// the page opens (APPF-30 step 2). Cleared by the next vote on the bill (a refusal of that vote rolls back to this
+    /// one, which is then still not saved), once the server confirms the vote another way (`onUnsavedVoteConfirmed`),
+    /// or when a read finds a later vote from another device (`onUnsavedVoteReplaced`). An "updated" push keeps it: the
+    /// app drops its copy of the vote, but the server keeps the row, so the next read of the bill can still confirm it.
+    ///
+    /// The record is the cache's (`BillVoteCache.UnsavedVote`), kept per account across a relaunch and cleared at
+    /// sign-out. It also marks a vote while its write is out, so one the app ended mid-write is not saved yet after a
+    /// relaunch; this map leaves those out until the write ends.
+    @Published private(set) var unsavedVotes: [String: VoteType] = [:]
 
     /// Runs once when the server confirms a vote in `unsavedVotes` some other way than its own write: a reasons
     /// update that sends the same vote was stored, or a read of the bill's row returned that vote (UX-49b). The
@@ -87,6 +90,14 @@ final class BillVoteStore: ObservableObject {
     /// score and profile. It lives here, not on the bill page, because a reasons update sent as the page is left
     /// can end after the page is gone.
     var onUnsavedVoteConfirmed: (@MainActor (_ guid: String, _ vote: VoteType) -> Void)?
+
+    /// Runs when a read of a bill's row finds a vote cast after the vote not saved yet was sent (from another device),
+    /// which replaces it here (APPF-30 step 2, project decision 2026-11-23): the bills store's copy of the bill follows
+    /// the new row, so the two stores do not split.
+    var onUnsavedVoteReplaced: (@MainActor (_ guid: String, _ vote: VoteType) -> Void)?
+
+    /// The read of the votes not saved yet that is running (`recheckUnsavedVotes()`), which a second caller joins.
+    private var unsavedRecheck: Task<Bool, Never>?
 
     /// Weak references for post-vote refresh.
     private weak var civicScoreStore: CivicScoreStore?
@@ -108,6 +119,8 @@ final class BillVoteStore: ObservableObject {
         self.earlierAbstainIds = cache.droppedAbstainIds
         // Seed published state from persisted cache snapshot.
         self.statesByBillId = Self.normalizeStates(self.cache.snapshotStates())
+        // No write is out yet: every vote the cache marks is not saved yet, also one whose write the app ended.
+        self.unsavedVotes = cache.unsavedVotes.mapValues(\.vote)
     }
 
     /// Cheap, non-blocking lookup used by views.
@@ -127,9 +140,15 @@ final class BillVoteStore: ObservableObject {
         return Self.normalizeState(cache.getState(for: cleaned))
     }
 
+    /// The vote not saved yet on `billId` (`unsavedVotes`): its latest write failed with its outcome unknown, on this
+    /// launch or an earlier one, and no write is out for it now. Nil otherwise.
+    func unsavedVote(for billId: String) -> VoteType? {
+        BillsStore.trimmedOrNil(billId).flatMap { unsavedVotes[$0] }
+    }
+
     /// Batch fetch vote states for a set of billIds.
     ///
-    /// - Uses cache immediately; only fetches missing/expired.
+    /// - Uses cache immediately; only fetches missing/expired, and a vote not saved yet (APPF-30 step 2).
     /// - Single network call (no N+1) assuming backend supports batch endpoint.
     /// - `revalidateNotVoted` (bill detail, INT-11) also fetches a bill cached as not voted, so a vote
     ///   made on another device, or before a reinstall, unlocks Results on open. A cached vote row,
@@ -152,7 +171,7 @@ final class BillVoteStore: ObservableObject {
         for id in cleaned {
             let cached = cache.getState(for: id)
             statesByBillId[id] = Self.normalizeState(cached)
-            if Self.needsFetch(cached, revalidateNotVoted: revalidateNotVoted), unconfirmedVotes[id] == nil {
+            if Self.needsFetch(cached, revalidateNotVoted: revalidateNotVoted) || unsavedVotes[id] != nil, unconfirmedVotes[id] == nil {
                 missing.append(id)
             }
         }
@@ -201,7 +220,7 @@ final class BillVoteStore: ObservableObject {
     }
 
     /// Detail-screen helper: fetch a single bill only if missing/expired, or also when cached as not
-    /// voted with `revalidateNotVoted` (`fetchVotes(for:revalidateNotVoted:)`).
+    /// voted with `revalidateNotVoted` (`fetchVotes(for:revalidateNotVoted:)`), or holding a vote not saved yet.
     @discardableResult
     func fetchVoteIfNeeded(for billId: String, reportError: Bool = true, revalidateNotVoted: Bool = false) async -> String? {
         let cleaned = billId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -209,7 +228,8 @@ final class BillVoteStore: ObservableObject {
 
         let cached = cache.getState(for: cleaned)
         statesByBillId[cleaned] = Self.normalizeState(cached)
-        guard Self.needsFetch(cached, revalidateNotVoted: revalidateNotVoted), unconfirmedVotes[cleaned] == nil else { return nil }
+        guard Self.needsFetch(cached, revalidateNotVoted: revalidateNotVoted) || unsavedVotes[cleaned] != nil,
+              unconfirmedVotes[cleaned] == nil else { return nil }
 
         #if DEBUG
         print(">>> [BillVoteStore] fetchVoteIfNeeded -> fetching billId=\(cleaned)")
@@ -243,6 +263,11 @@ final class BillVoteStore: ObservableObject {
     /// failed, and without a bill the server left out or that was left as it is.
     @discardableResult
     func refreshVotes(for billIds: [String]) async -> [String: VoteState] {
+        await readRows(billIds) ?? [:]
+    }
+
+    /// `refreshVotes(for:)`, which returns nil when the read failed.
+    private func readRows(_ billIds: [String]) async -> [String: VoteState]? {
         let ids = Array(Set(billIds.compactMap { BillsStore.trimmedOrNil($0) }))
             .filter { unconfirmedVotes[$0] == nil }
             .sorted()
@@ -257,8 +282,43 @@ final class BillVoteStore: ObservableObject {
                 print(">>> [BillVoteStore] refreshVotes failed: \(APIErrorDebug.debugString(for: error))")
             }
             #endif
-            return [:]
+            return nil
         }
+    }
+
+    /// APPF-30 step 2, at launch and when the app comes back: reads the rows of the votes not saved yet
+    /// (`unsavedVotes`) again, in one request. A row with the same vote confirms it, a vote cast later on another
+    /// device replaces it, and an older row or none leaves it not saved (`applyRemote`). Failures stay quiet. A read
+    /// already running is joined, not repeated. Returns false when the read failed (true with nothing to read).
+    @discardableResult
+    func recheckUnsavedVotes() async -> Bool {
+        if let running = unsavedRecheck { return await running.value }
+        let ids = unsavedVotes.keys.sorted()
+        guard !ids.isEmpty else { return true }
+        let read = Task { [weak self] () -> Bool in
+            await self?.readRows(ids) != nil
+        }
+        unsavedRecheck = read
+        let succeeded = await read.value
+        unsavedRecheck = nil
+        return succeeded
+    }
+
+    /// The votes not saved yet that have not had their one automatic resend (project decision 2026-11-23), with the
+    /// reasons they were sent with, by guid.
+    func votesAwaitingAutomaticResend() -> [(guid: String, vote: VoteType, reasons: [VoteReason])] {
+        unsavedVotes.keys.sorted().compactMap { guid in
+            guard let unsaved = cache.unsavedVote(for: guid), !unsaved.autoResent else { return nil }
+            return (guid, unsaved.vote, unsaved.reasons.compactMap(VoteReason.init(rawValue:)))
+        }
+    }
+
+    /// Uses up the one automatic resend of the vote not saved yet on `billId`, before it is sent: it is not sent on
+    /// its own again, also after a relaunch, whatever that send ends with. A new vote on the bill gets its own.
+    func spendAutomaticResend(for billId: String) {
+        guard var unsaved = cache.unsavedVote(for: billId), !unsaved.autoResent else { return }
+        unsaved.autoResent = true
+        cache.setUnsavedVote(unsaved, for: billId)
     }
 
     /// INT-11, once on the first launch of 1.2: reads the server's rows for the Abstains the cache dropped
@@ -291,8 +351,13 @@ final class BillVoteStore: ObservableObject {
 
     /// Stores the server's rows for `ids`. An id the server left out stays as it is (never assumed not
     /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken. Returns
-    /// the rows it stored (an Abstain row as `.voted(.abstain)`). A row that is a vote not saved yet confirms it
-    /// (`confirmUnsavedVote`); another row, or none, leaves it not saved.
+    /// the rows it stored (an Abstain row as `.voted(.abstain)`).
+    ///
+    /// A vote not saved yet (APPF-30 step 2, project decision 2026-11-23): a row with the same vote confirms it
+    /// (`confirmUnsavedVote`). A different vote cast after it was sent is a later choice (another device) and replaces
+    /// it (`onUnsavedVoteReplaced`). An older different vote (the one a change replaced) or no vote leaves the vote
+    /// shown and not saved, its row as it is, so the stores never split; unless a push dropped that row, when the
+    /// server's row is stored and the mark goes, as the vote did not reach the server.
     @discardableResult
     private func applyRemote(
         _ remote: [String: BillVotesService.RemoteVoteState],
@@ -301,10 +366,24 @@ final class BillVoteStore: ObservableObject {
     ) -> [String: VoteState] {
         let now = Date()
         var stored: [String: VoteState] = [:]
+        var replaced: [(guid: String, vote: VoteType)] = []
         for id in ids {
             guard let state = remote[id],
                   unconfirmedVotes[id] == nil,
                   latestVotes[id] == writes[id] else { continue }
+            if let unsaved = cache.unsavedVote(for: id) {
+                switch Self.readOutcome(state, for: unsaved, holdsItsRow: cache.votedRow(for: id)?.vote == unsaved.vote) {
+                case .confirms:
+                    break
+                case .keeps:
+                    continue
+                case .replaces(let vote):
+                    cache.setUnsavedVote(nil, for: id)
+                    replaced.append((id, vote))
+                case .drops:
+                    cache.setUnsavedVote(nil, for: id)
+                }
+            }
             switch state {
             case .voted(let rv):
                 cache.setVoted(billId: id, vote: rv.vote, votedAt: rv.votedAt, now: now)
@@ -317,7 +396,45 @@ final class BillVoteStore: ObservableObject {
                 stored[id] = .notVoted
             }
         }
+        publishUnsavedVotes()
+        for (guid, vote) in replaced {
+            onUnsavedVoteReplaced?(guid, vote)
+        }
         return stored
+    }
+
+    /// What a read of the server's row does to a vote not saved yet (`applyRemote`).
+    private enum UnsavedVoteReadOutcome: Equatable {
+        /// The server holds the vote: it is saved.
+        case confirms
+        /// The server holds a vote cast after this one was sent, which replaces it.
+        case replaces(VoteType)
+        /// The vote stays shown and not saved.
+        case keeps
+        /// The app's copy of the vote is gone (a push): the server's row is stored and the mark goes.
+        case drops
+    }
+
+    private static func readOutcome(
+        _ state: BillVotesService.RemoteVoteState,
+        for unsaved: BillVoteCache.UnsavedVote,
+        holdsItsRow: Bool
+    ) -> UnsavedVoteReadOutcome {
+        if case .voted(let row) = state {
+            if row.vote == unsaved.vote { return .confirms }
+            if row.votedAt > unsaved.sentAt { return .replaces(row.vote) }
+        }
+        return holdsItsRow ? .keeps : .drops
+    }
+
+    /// Publishes the votes the cache marks as not saved yet, but for those with a write out (`unsavedVotes`).
+    private func publishUnsavedVotes() {
+        let shown = cache.unsavedVotes
+            .filter { unconfirmedVotes[$0.key] == nil }
+            .mapValues(\.vote)
+        if shown != unsavedVotes {
+            unsavedVotes = shown
+        }
     }
 
     /// Optimistic voting write flow.
@@ -326,11 +443,11 @@ final class BillVoteStore: ObservableObject {
     /// - Updates cache immediately.
     /// - Calls server idempotently (overwrite existing vote).
     ///
-    /// A failed write keeps the optimistic vote and ends `.unconfirmed` (nothing retries it; bill detail offers
-    /// Try again, UX-49; the vote stays in `unsavedVotes` until the server confirms it, UX-49b), except a vote the
-    /// server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT` and the other coded refusals, sent before the server
-    /// stores anything), which rolls the bill back to its vote before this one (spec D 2.8.4, APPF-27) and sets
-    /// `lastError`. Server codes get their own copy.
+    /// A failed write keeps the optimistic vote and ends `.unconfirmed` (bill detail offers Try again, UX-49; the vote
+    /// stays in `unsavedVotes` until the server confirms it, UX-49b, and the bills store sends it once more when the
+    /// phone is back online, APPF-30 step 2), except a vote the server refused (`voteFailure(for:)`: `VOTE_DAILY_LIMIT`
+    /// and the other coded refusals, sent before the server stores anything), which rolls the bill back to its vote
+    /// before this one (spec D 2.8.4, APPF-27) and sets `lastError`. Server codes get their own copy.
     ///
     /// Returns true once the server has stored the vote.
     @discardableResult
@@ -352,6 +469,7 @@ final class BillVoteStore: ObservableObject {
         // write's own result now decides.
         let voteToken = UUID()
         latestVotes[cleaned] = voteToken
+        let earlierMark = cache.unsavedVote(for: cleaned)
         if var pending = unconfirmedVotes[cleaned] {
             pending.latest = voteToken
             unconfirmedVotes[cleaned] = pending
@@ -359,18 +477,30 @@ final class BillVoteStore: ObservableObject {
             unconfirmedVotes[cleaned] = UnconfirmedVote(
                 baseline: cache.getState(for: cleaned),
                 baselineVotedAt: cache.votedRow(for: cleaned)?.votedAt,
-                baselineUnsaved: unsavedVotes[cleaned],
+                baselineUnsaved: earlierMark,
                 latest: voteToken
             )
         }
-        unsavedVotes[cleaned] = nil
 
         // Optimistic update. We don't know `votedAt` from server yet; use `now`.
         let now = Date()
+        let reasonKeys = reasons.map(\.rawValue)
+        // Not saved until the server says so (APPF-30 step 2): marked while the write is out too, so a vote whose write
+        // the app ended (quit mid-write) is not saved yet at the next launch. The same vote sent again keeps a spent
+        // automatic resend spent.
+        cache.setUnsavedVote(
+            BillVoteCache.UnsavedVote(
+                vote: vote,
+                sentAt: now,
+                reasons: reasonKeys,
+                autoResent: earlierMark?.vote == vote && earlierMark?.autoResent == true
+            ),
+            for: cleaned
+        )
         cache.setVoted(billId: cleaned, vote: vote, votedAt: now, now: now)
         statesByBillId[cleaned] = vote.countsAsVote ? .voted(vote) : .notVoted
+        publishUnsavedVotes()
 
-        let reasonKeys = reasons.map(\.rawValue)
         let service = service
         return await enqueueWrite(billId: cleaned) { [weak self] in
             do {
@@ -379,13 +509,13 @@ final class BillVoteStore: ObservableObject {
                     feedback: vote,
                     reasons: reasonKeys
                 )
-                self?.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: vote, votedAt: now)
+                self?.voteWriteFinished(billId: cleaned, token: voteToken, end: .stored(vote, votedAt: now))
                 self?.refreshCivicStatsAfterSavedVote()
                 return .stored
             } catch {
                 guard let self else { return .notSaved }
                 if APIErrorResponse.isCancellation(error) {
-                    self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
+                    self.voteWriteFinished(billId: cleaned, token: voteToken, end: .cancelled)
                     return .notSaved
                 }
                 #if DEBUG
@@ -395,12 +525,9 @@ final class BillVoteStore: ObservableObject {
                 guard failure.rollsBack else {
                     // Keep the optimistic state: bill detail says the vote is not saved yet, with Try again
                     // (UX-49). No `lastError`: a page that was left says nothing, so it never shows on another bill.
-                    // The latest vote is kept as not saved yet, for the server to confirm another way (UX-49b); an
-                    // earlier one is not, as the newer vote's own result decides.
-                    if self.latestVotes[cleaned] == voteToken {
-                        self.unsavedVotes[cleaned] = vote
-                    }
-                    self.voteWriteFinished(billId: cleaned, token: voteToken, storedVote: nil, votedAt: nil)
+                    // The latest vote stays marked as not saved yet, for the server to confirm another way (UX-49b);
+                    // an earlier one's result says nothing, as the newer vote's own result decides.
+                    self.voteWriteFinished(billId: cleaned, token: voteToken, end: .unconfirmed)
                     return .unconfirmed
                 }
                 // Also when a newer vote decides: reasons queued for this one must not send it again.
@@ -415,15 +542,28 @@ final class BillVoteStore: ObservableObject {
         }
     }
 
-    /// A vote write ended without a rollback. `storedVote` is the vote the server now holds (cast at
-    /// `votedAt`), or nil when it is unknown (a failure that keeps the optimistic state). The bill's rollback
-    /// record ends with its latest vote; while a newer vote waits, a stored vote becomes the row a refusal
-    /// of that newer vote restores.
-    private func voteWriteFinished(billId: String, token: UUID, storedVote: VoteType?, votedAt: Date?) {
+    /// How a vote write ended without a rollback (`voteWriteFinished`).
+    private enum WriteEnd {
+        /// The server holds the vote, cast at `votedAt`.
+        case stored(VoteType, votedAt: Date)
+        /// The outcome is unknown, and the optimistic state stays.
+        case unconfirmed
+        /// The write was cancelled: the vote stays as sent, with nothing to say.
+        case cancelled
+    }
+
+    /// A vote write ended without a rollback. The bill's rollback record ends with its latest vote, whose mark stays
+    /// only while its outcome is unknown (APPF-30 step 2); while a newer vote waits, a stored vote becomes the row a
+    /// refusal of that newer vote restores.
+    private func voteWriteFinished(billId: String, token: UUID, end: WriteEnd) {
         guard let pending = unconfirmedVotes[billId] else { return }
         if pending.latest == token {
             unconfirmedVotes[billId] = nil
-        } else if let storedVote {
+            if case .unconfirmed = end {} else {
+                cache.setUnsavedVote(nil, for: billId)
+            }
+            publishUnsavedVotes()
+        } else if case .stored(let storedVote, let votedAt) = end {
             unconfirmedVotes[billId] = UnconfirmedVote(baseline: .voted(storedVote), baselineVotedAt: votedAt, latest: pending.latest)
         }
     }
@@ -434,7 +574,8 @@ final class BillVoteStore: ObservableObject {
     private func rollBackRefusedVote(billId: String, token: UUID) -> VoteState? {
         guard let pending = unconfirmedVotes[billId], pending.latest == token else { return nil }
         unconfirmedVotes[billId] = nil
-        unsavedVotes[billId] = pending.baselineUnsaved
+        cache.setUnsavedVote(pending.baselineUnsaved, for: billId)
+        defer { publishUnsavedVotes() }
         switch pending.baseline {
         case .unknown:
             cache.remove(billId: billId)
@@ -456,9 +597,10 @@ final class BillVoteStore: ObservableObject {
     /// leaves the newer vote's rollback record (`baselineUnsaved`), so a refusal of the newer vote restores it as
     /// saved. Another vote leaves it not saved yet.
     private func confirmUnsavedVote(billId: String, vote: VoteType) {
-        if unsavedVotes[billId] == vote {
-            unsavedVotes[billId] = nil
-        } else if unconfirmedVotes[billId]?.baselineUnsaved == vote {
+        if unconfirmedVotes[billId] == nil, cache.unsavedVote(for: billId)?.vote == vote {
+            cache.setUnsavedVote(nil, for: billId)
+            publishUnsavedVotes()
+        } else if unconfirmedVotes[billId]?.baselineUnsaved?.vote == vote {
             unconfirmedVotes[billId]?.baselineUnsaved = nil
         } else {
             return
@@ -508,6 +650,11 @@ final class BillVoteStore: ObservableObject {
         #endif
 
         let reasonKeys = reasons.map(\.rawValue)
+        // A vote not saved yet is sent again with the reasons picked last (APPF-30 step 2).
+        if var unsaved = cache.unsavedVote(for: cleaned), unsaved.vote == vote {
+            unsaved.reasons = reasonKeys
+            cache.setUnsavedVote(unsaved, for: cleaned)
+        }
         let service = service
         let voteToken = latestVotes[cleaned]
         let result = await enqueueWrite(billId: cleaned) { [weak self] () -> VoteWriteResult in
