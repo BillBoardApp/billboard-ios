@@ -66,11 +66,13 @@ enum LicensePageBlock: Hashable {
     }
 }
 
-/// "Open-source licenses" (APPF-32), from About Billboard: a settings list per Civic Record spec 3.25. The intro,
-/// "Included software" with a row per linked package (its name, and its licence's SPDX id on the trailing side) that
-/// opens the package's notices and licence texts, "Map data", "Billboard" (the copyright line read from the bundled
-/// NOTICE and a row to the full Apache License 2.0) and the Apple fonts footer. Everything comes from the bundled
-/// `OpenSourceLicenses.json`, generated from THIRD_PARTY_NOTICES.md.
+/// "Open-source licenses" (APPF-32), from About Billboard: a settings list per Civic Record spec 3.25, in the approved
+/// D2 order. The intro, "Included software" with a row per linked package (its name, and its licence's SPDX id on the
+/// trailing side) that opens the package's notices and licence texts, "Map data" with the Apple fonts footer, and
+/// "Billboard" (the copyright line read from the bundled NOTICE and a row to the full Apache License 2.0). The
+/// packages and Billboard's section come from the bundled `OpenSourceLicenses.json`, generated from
+/// THIRD_PARTY_NOTICES.md; "Map data" and the footer do not need it. Without the file (which the tests and the gate
+/// rule out) the intro, which promises the list below, is left out too.
 struct OpenSourceLicensesView: View {
     let licenses: OpenSourceLicenses?
 
@@ -80,16 +82,16 @@ struct OpenSourceLicensesView: View {
 
     var body: some View {
         List {
-            Section {
-                Text(OpenSourceLicensesCopy.intro)
-                    .textRole(.body)
-                    .foregroundStyle(BillboardColors.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("licenses.intro")
-            }
-            .recordListRows()
-
             if let licenses, !licenses.components.isEmpty {
+                Section {
+                    Text(OpenSourceLicensesCopy.intro)
+                        .textRole(.body)
+                        .foregroundStyle(BillboardColors.primaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("licenses.intro")
+                }
+                .recordListRows()
+
                 Section {
                     ForEach(licenses.components) { component in
                         NavigationLink {
@@ -113,6 +115,9 @@ struct OpenSourceLicensesView: View {
                     .accessibilityIdentifier("licenses.mapData")
             } header: {
                 RecordListHeader(OpenSourceLicensesCopy.mapDataHeader)
+            } footer: {
+                RecordListFooter(OpenSourceLicensesCopy.fontsFooter)
+                    .accessibilityIdentifier("licenses.fontsFooter")
             }
             .recordListRows()
 
@@ -132,8 +137,6 @@ struct OpenSourceLicensesView: View {
                     .accessibilityIdentifier("licenses.billboardLicense")
                 } header: {
                     RecordListHeader(OpenSourceLicensesCopy.billboardHeader)
-                } footer: {
-                    RecordListFooter(OpenSourceLicensesCopy.fontsFooter)
                 }
                 .recordListRows()
             }

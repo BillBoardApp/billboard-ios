@@ -263,6 +263,24 @@ final class OpenSourceLicensesTests: XCTestCase {
         for element in host.elements() {
             XCTAssertFalse(element.label.trimmingCharacters(in: .whitespaces).isEmpty, "an element without a label: \(element.identifier)")
         }
+        // The fonts footer closes "Map data", as in the approved D2 order, above the Billboard section.
+        let mapData = try XCTUnwrap(host.frame(of: OpenSourceLicensesCopy.mapData), text)
+        let footer = try XCTUnwrap(host.frame(of: OpenSourceLicensesCopy.fontsFooter), text)
+        let billboard = try XCTUnwrap(host.frame(of: licenses.billboardStatement), text)
+        XCTAssertGreaterThan(footer.minY, mapData.minY)
+        XCTAssertLessThan(footer.minY, billboard.minY)
+    }
+
+    /// Without the bundled file (which the tests above and the gate rule out), the screen still shows what does not
+    /// come from it, the map data and the Apple fonts footer, and leaves out the intro that promises a list below.
+    func testWithoutTheBundledFileTheScreenShowsOnlyWhatDoesNotComeFromIt() {
+        let host = AccessibilityTreeText.Host(NavigationStack { OpenSourceLicensesView(licenses: nil) }, size: CGSize(width: 390, height: 1200), settle: 0.4)
+        defer { host.close() }
+        let text = host.text()
+        XCTAssertTrue(text.contains(OpenSourceLicensesCopy.mapData), text)
+        XCTAssertTrue(text.contains(OpenSourceLicensesCopy.fontsFooter), text)
+        XCTAssertFalse(text.contains(OpenSourceLicensesCopy.intro), text)
+        XCTAssertFalse(text.contains(OpenSourceLicensesCopy.apacheLicense), text)
     }
 
     /// A package's page: each heading and part name is a heading, the source lines are read by licence name, and
