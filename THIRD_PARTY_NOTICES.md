@@ -90,7 +90,7 @@ table and the one above, and run the generator.
 | `aws-crt-swift` | | Apache-2.0 | `NOTICE` | `LICENSE` | `Source/AwsCommonRuntimeKit` |
 | `aws-crt-swift` | aws-c-auth | Apache-2.0 | `aws-common-runtime/aws-c-auth/NOTICE` | `aws-common-runtime/aws-c-auth/LICENSE` | `aws-common-runtime/aws-c-auth/include`, `aws-common-runtime/aws-c-auth/source` |
 | `aws-crt-swift` | aws-c-cal | Apache-2.0 | `aws-common-runtime/aws-c-cal/NOTICE` | `aws-common-runtime/aws-c-cal/LICENSE` | `aws-common-runtime/aws-c-cal/include`, `aws-common-runtime/aws-c-cal/source` |
-| `aws-crt-swift` | aws-c-cal | APSL-2.0 | | `aws-common-runtime/aws-c-cal/source/darwin/common_cryptor_spi.h` | |
+| `aws-crt-swift` | aws-c-cal | APSL-2.0 | | `aws-common-runtime/aws-c-cal/source/darwin/common_cryptor_spi.h`, [licenses/APSL-2.0.txt](licenses/APSL-2.0.txt) | |
 | `aws-crt-swift` | aws-c-common | Apache-2.0 | `aws-common-runtime/aws-c-common/NOTICE` | `aws-common-runtime/aws-c-common/LICENSE` | `aws-common-runtime/aws-c-common/include`, `aws-common-runtime/aws-c-common/source` |
 | `aws-crt-swift` | aws-c-common | BSD-3-Clause AND MIT | | `aws-common-runtime/aws-c-common/THIRD-PARTY-LICENSES.txt` | |
 | `aws-crt-swift` | aws-c-common | BSD-3-Clause | | `aws-common-runtime/aws-c-common/source/posix/time.c` | |
@@ -114,6 +114,9 @@ Notes on the table:
 - `aws-crt-swift` builds ten of its bundled C libraries for iOS; s2n-tls and AWS-LC are built only on Linux.
   `aws-c-common` also bundles cJSON, libcbor and an Intel header, under the licences in its
   `THIRD-PARTY-LICENSES.txt`, and one file (`source/posix/time.c`) carries a BSD-3-Clause notice.
+- `aws-c-cal`'s `source/darwin/common_cryptor_spi.h` carries Apple's APSL 2.0 header, which names the licence and
+  points to Apple's site for its text. The screen shows that header and then the full APSL 2.0 text, kept in
+  [licenses/APSL-2.0.txt](licenses/APSL-2.0.txt) as Apple publishes it at <https://opensource.apple.com/apsl/>.
 - `amplify-swift`'s API plugin includes a copy of Reachability.swift under BSD-2-Clause.
 - `swift-protobuf`'s generated Google well-known types (`*.pb.swift` in `Sources/SwiftProtobuf`) carry the Protocol
   Buffers BSD-3-Clause notice; one of them is listed, as the notice is the same in each.
