@@ -12,7 +12,7 @@
 
 <!-- Say which simulator and Xcode version, and paste the test summary line. -->
 
-- [ ] `./scripts/test.sh` passes (contract check, UI rules, unit tests) with no warnings
+- [ ] `./scripts/test.sh` passes (contract check, open-source licenses check, UI rules, unit tests) with no warnings
 - [ ] Checked the change by hand in the simulator (screens and flows touched)
 
 ## Compatibility
@@ -38,3 +38,4 @@
 - [ ] I agree that this contribution is licensed under Apache-2.0 (see CONTRIBUTING.md).
 - [ ] This PR does not push secrets: no `.env*` files, credential plists, `.p8` or `.p12` files, provisioning profiles, tokens or passwords.
 - [ ] `UserAPIContractsV1.swift` comes from `./scripts/syncContracts.sh`, not hand edits (or no contract files changed).
+- [ ] If `Package.resolved` or the app target's package products changed: `THIRD_PARTY_NOTICES.md` is updated and `OpenSourceLicenses.json` regenerated with `./scripts/generate-open-source-licenses.sh` (or no package changed).

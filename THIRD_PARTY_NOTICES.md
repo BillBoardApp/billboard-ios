@@ -54,8 +54,9 @@ Apache-2.0: <https://www.apache.org/licenses/LICENSE-2.0>. MIT: the text in the 
 
 The app shows these notices on its **Open-source licenses** screen (About Billboard). Seven packages are linked into
 the app; the other 27 pins above are resolved only for targets the app does not link (Amplify's DataStore, Storage and
-push notifications, smithy-swift's SwiftNIO client, opentelemetry-swift's gRPC and other exporters, aws-crt-swift's
-command-line tools, and code built only on Linux, such as s2n-tls and AWS-LC).
+push notifications, smithy-swift's SwiftNIO client, opentelemetry-swift's gRPC and other exporters). Some parts of the
+linked packages are not in the app either: aws-crt-swift's command-line tools, and the s2n-tls and AWS-LC libraries
+bundled inside aws-crt-swift, which are built only on Linux (see the notes under the table).
 
 The table below drives the screen. `scripts/generate-open-source-licenses.sh` reads it and, for each row, the listed
 files from the package at its pinned revision, and writes them to `Billboard/Billboard/Resources/OpenSourceLicenses.json`,
