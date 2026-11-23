@@ -61,11 +61,13 @@ struct LocationEditorView: View {
     let isSignOutDisabled: Bool
 
     private let congressService: any CongressServicing
+    private let saveChosenLocation: (@MainActor (_ state: String, _ district: String) async throws -> Void)?
 
     /// - Parameters:
     ///   - congressService: nil means `CongressService.Live()`.
     ///   - form: what the form opens with before the profile's district and the saved address fill it in (tests).
     ///   - savedResult: opens on the success panel for this saved district (render tests); nil opens the form.
+    ///   - saveChosenLocation: saves a chosen district in place of `UserStore.updateLocation` (tests: no account changes).
     init(
         context: Context,
         congressService: (any CongressServicing)? = nil,
@@ -73,11 +75,13 @@ struct LocationEditorView: View {
         isSignOutDisabled: Bool = false,
         form: LocationForm = LocationForm(),
         savedResult: LocationEditorResult? = nil,
+        saveChosenLocation: (@MainActor (_ state: String, _ district: String) async throws -> Void)? = nil,
         onSaved: @escaping (LocationEditorResult) -> Void = { _ in },
         onDone: @escaping (LocationEditorResult) -> Void
     ) {
         self.context = context
         self.congressService = congressService ?? CongressService.Live()
+        self.saveChosenLocation = saveChosenLocation
         self.onSignOut = onSignOut
         self.isSignOutDisabled = isSignOutDisabled
         self.onSaved = onSaved
@@ -125,6 +129,8 @@ struct LocationEditorView: View {
     @State private var errorCount = 0
     @State private var manifest: [CongressMemberManifestItem] = []
     @State private var followState: FollowState = .idle
+    /// Failed follows so far: each failure's line is a new view, said again even when Try again fails at once.
+    @State private var followFailureCount = 0
     @State private var hasPrefilled = false
     @FocusState private var focusedField: Field?
 
@@ -142,6 +148,7 @@ struct LocationEditorView: View {
                         context: context,
                         followState: followState,
                         unfollowedRepresentativeCount: unfollowedRepresentativeIDs(savedResult).count,
+                        followFailureCount: followFailureCount,
                         onContinue: { following in Task { await finishSetup(savedResult, following: following) } },
                         onFollow: { Task { await followFromProfile(savedResult) } },
                         onDone: {
@@ -490,7 +497,7 @@ struct LocationEditorView: View {
         defer { isBusy = false }
 
         do {
-            try await userStore.updateLocation(state: stateCode, district: district)
+            try await (saveChosenLocation ?? userStore.updateLocation(state:district:))(stateCode, district)
             let status = try await DistrictVerificationService.submitManualSelection(state: stateCode, district: district)
             VerificationAddressStore.clear(userId: userStore.profile.id.trimmedNonEmpty)
             await showSaved(state: stateCode, district: district, method: .chosenDistrict, verification: status)
@@ -546,6 +553,7 @@ struct LocationEditorView: View {
             do {
                 try await userStore.subscribeToCongressMembers(manifestIds: toFollow)
             } catch {
+                followFailureCount += 1
                 followState = .failed
                 return
             }
@@ -562,6 +570,7 @@ struct LocationEditorView: View {
             try await userStore.subscribeToCongressMembers(manifestIds: toFollow)
             followState = .idle
         } catch {
+            followFailureCount += 1
             followState = .failed
         }
     }
@@ -587,6 +596,8 @@ struct LocationSavedPanel: View {
     let followState: LocationEditorView.FollowState
     /// Representatives on the panel the profile does not follow yet.
     let unfollowedRepresentativeCount: Int
+    /// Failed follows so far, so each failure's line is said, even one that comes before the screen redraws.
+    var followFailureCount = 0
     /// Setup: true follows the representatives first ("Continue"); false skips that ("Continue
     /// without following", offered after a failed follow).
     let onContinue: (Bool) -> Void
@@ -704,6 +715,7 @@ struct LocationSavedPanel: View {
 
         if followState == .failed {
             RecordErrorText(Self.setupFollowFailedMessage, announces: true)
+                .id(followFailureCount)
 
             Button("Continue without following") {
                 onContinue(false)
@@ -716,7 +728,8 @@ struct LocationSavedPanel: View {
 
     @ViewBuilder
     private var profileActions: some View {
-        if unfollowedRepresentativeCount > 0 {
+        // Kept while the follow runs: the profile marks them followed at once (undone if the save fails).
+        if unfollowedRepresentativeCount > 0 || followState == .following {
             let follow = BBActionButton(
                 title: "Follow your representatives",
                 action: onFollow,
@@ -737,6 +750,7 @@ struct LocationSavedPanel: View {
 
             if followState == .failed {
                 RecordErrorText(Self.profileFollowFailedMessage, announces: true)
+                    .id(followFailureCount)
             }
         } else if !result.representatives.isEmpty {
             Text("You follow your representatives.")
