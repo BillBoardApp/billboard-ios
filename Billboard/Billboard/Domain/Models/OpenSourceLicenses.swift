@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// What the Open-source licenses screen shows (APPF-32): the bundled `OpenSourceLicenses.json`, which
 /// `scripts/generate-open-source-licenses.sh` writes from THIRD_PARTY_NOTICES.md ("In the app") and the Swift package
@@ -98,8 +99,15 @@ nonisolated struct OpenSourceLicenses: Decodable, Equatable, Sendable {
         "\(billboard.copyright). Licensed under the Apache License, Version 2.0. The Billboard name and logos are not covered by that license."
     }
 
-    /// The app's bundled file, read once; nil only if the bundle lacks it or it does not decode.
-    static let bundled: OpenSourceLicenses? = load(from: .main)
+    /// The app's bundled file, read once; nil only if the bundle lacks it or it does not decode, which is logged as a
+    /// fault so a broken bundle shows up in development (the tests and the gate rule it out).
+    static let bundled: OpenSourceLicenses? = {
+        let licenses = Self.load(from: .main)
+        if licenses == nil {
+            AppLog.store.fault("\(Self.resourceName, privacy: .public).json is missing from the app bundle or does not decode as format \(Self.formatVersion, privacy: .public): the Open-source licenses screen lists no packages")
+        }
+        return licenses
+    }()
 
     static func load(from bundle: Bundle) -> OpenSourceLicenses? {
         let url = bundle.url(forResource: resourceName, withExtension: "json")
