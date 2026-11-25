@@ -96,8 +96,8 @@ final class BillVoteStore: ObservableObject {
     /// the new row, so the two stores do not split.
     var onUnsavedVoteReplaced: (@MainActor (_ guid: String, _ vote: VoteType) -> Void)?
 
-    /// The read of the votes not saved yet that is running (`recheckUnsavedVotes()`), which a second caller joins.
-    private var unsavedRecheck: Task<Bool, Never>?
+    /// The read of the votes not saved yet that is running (`startUnsavedVoteRecheck()`), which a second caller joins.
+    private var unsavedRecheck: Task<Set<String>?, Never>?
 
     /// Weak references for post-vote refresh.
     private weak var civicScoreStore: CivicScoreStore?
@@ -275,7 +275,7 @@ final class BillVoteStore: ObservableObject {
         do {
             let writes = voteWriteTokens(ids)
             let remote = try await service.fetchFeedback(billIds: ids)
-            return applyRemote(remote, to: ids, unlessWrittenSince: writes)
+            return applyRemote(remote, to: ids, unlessWrittenSince: writes).stored
         } catch {
             #if DEBUG
             if !APIErrorResponse.isCancellation(error) {
@@ -293,16 +293,40 @@ final class BillVoteStore: ObservableObject {
     /// read).
     @discardableResult
     func recheckUnsavedVotes() async -> Bool {
-        if let running = unsavedRecheck { return await running.value }
+        await startUnsavedVoteRecheck().value != nil
+    }
+
+    /// The read of `recheckUnsavedVotes()`: started now, or the one already running, which the caller joins. It ends
+    /// with the bills whose rows it read and judged (`applyRemote`), or nil when it failed. The bills store sends on
+    /// its own only votes in that set: a vote whose write failed after a joined read began was not in that read, and
+    /// waits for the next one.
+    ///
+    /// While the request is out the read holds the service, not this store, so a store that sign-out ended is not
+    /// kept alive by it and nothing is written for that account when the answer comes.
+    func startUnsavedVoteRecheck() -> Task<Set<String>?, Never> {
+        if let running = unsavedRecheck { return running }
         let ids = unsavedVotes.keys.sorted()
-        guard !ids.isEmpty else { return true }
-        let read = Task { [weak self] () -> Bool in
-            await self?.readRows(ids) != nil
+        guard !ids.isEmpty else { return Task { Set<String>() } }
+        let writes = voteWriteTokens(ids)
+        let service = service
+        let read = Task { [weak self] () -> Set<String>? in
+            var remote: [String: BillVotesService.RemoteVoteState]?
+            do {
+                remote = try await service.fetchFeedback(billIds: ids)
+            } catch {
+                #if DEBUG
+                if !APIErrorResponse.isCancellation(error) {
+                    print(">>> [BillVoteStore] recheckUnsavedVotes failed: \(APIErrorDebug.debugString(for: error))")
+                }
+                #endif
+            }
+            guard let self else { return nil }
+            self.unsavedRecheck = nil
+            guard let remote else { return nil }
+            return self.applyRemote(remote, to: ids, unlessWrittenSince: writes).checked
         }
         unsavedRecheck = read
-        let succeeded = await read.value
-        unsavedRecheck = nil
-        return succeeded
+        return read
     }
 
     /// The votes not saved yet that have not had their one automatic resend (project decision 2026-11-23), with the
@@ -352,7 +376,8 @@ final class BillVoteStore: ObservableObject {
 
     /// Stores the server's rows for `ids`. An id the server left out stays as it is (never assumed not
     /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken. Returns
-    /// the rows it stored (an Abstain row as `.voted(.abstain)`).
+    /// the rows it stored (an Abstain row as `.voted(.abstain)`), and the ids whose answer it judged (`checked`): every
+    /// id but those left as they are.
     ///
     /// A vote not saved yet (APPF-30 step 2, project decisions D3 and D4): a row with the same vote confirms it
     /// (`confirmUnsavedVote`). A row with the vote it replaced (`UnsavedVote.replacedVotes`), or no vote, leaves the
@@ -365,14 +390,16 @@ final class BillVoteStore: ObservableObject {
         _ remote: [String: BillVotesService.RemoteVoteState],
         to ids: [String],
         unlessWrittenSince writes: [String: UUID]
-    ) -> [String: VoteState] {
+    ) -> (stored: [String: VoteState], checked: Set<String>) {
         let now = Date()
         var stored: [String: VoteState] = [:]
+        var checked: Set<String> = []
         var replaced: [(guid: String, vote: VoteType)] = []
         for id in ids {
             guard let state = remote[id],
                   unconfirmedVotes[id] == nil,
                   latestVotes[id] == writes[id] else { continue }
+            checked.insert(id)
             if let unsaved = cache.unsavedVote(for: id) {
                 switch Self.readOutcome(state, for: unsaved, holdsItsRow: cache.votedRow(for: id)?.vote == unsaved.vote) {
                 case .confirms:
@@ -402,7 +429,7 @@ final class BillVoteStore: ObservableObject {
         for (guid, vote) in replaced {
             onUnsavedVoteReplaced?(guid, vote)
         }
-        return stored
+        return (stored, checked)
     }
 
     /// What a read of the server's row does to a vote not saved yet (`applyRemote`).

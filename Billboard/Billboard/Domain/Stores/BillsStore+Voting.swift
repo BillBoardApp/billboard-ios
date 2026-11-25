@@ -291,7 +291,8 @@ extension BillsStore {
     /// APPF-30 step 2, project decision 2026-11-23: once the phone is back online, each vote not saved yet is sent once
     /// more on its own, with the reasons it was sent with. The rows are read first, in one request: a vote the server
     /// holds is confirmed and a later vote from another device replaces it, so neither is sent; when that read fails
-    /// nothing is sent, and the next return online tries again. A vote is sent this way once at most
+    /// nothing is sent, and the next return online tries again. Only votes that read judged are sent: one whose write
+    /// failed after a read it joined began waits for the next read. A vote is sent this way once at most
     /// (`spendAutomaticResend`), whatever the send ends with. It goes through `recordVote` as a tap does: stored, it
     /// gets its Bill row; refused, it rolls back in both stores and gets none (APPF-27); unknown, it stays not saved,
     /// with Try again on its page.
@@ -299,18 +300,38 @@ extension BillsStore {
     /// Returns each send's result, by guid.
     @discardableResult
     func resendUnsavedVotesOnce() async -> [String: VoteWriteResult] {
-        guard let voteStore, !voteStore.votesAwaitingAutomaticResend().isEmpty else { return [:] }
-        guard await voteStore.recheckUnsavedVotes() else { return [:] }
+        await startUnsavedVoteResend().value
+    }
+
+    /// `resendUnsavedVotesOnce()` as a task, which `UnsavedVoteRecheck` cancels when sign-out takes the tabs down. While
+    /// the read is out it holds neither store; once the read is back it spends and sends nothing when it was cancelled
+    /// or either store has gone.
+    func startUnsavedVoteResend() -> Task<[String: VoteWriteResult], Never> {
+        guard let voteStore, !voteStore.votesAwaitingAutomaticResend().isEmpty else {
+            return Task { [String: VoteWriteResult]() }
+        }
+        let read = voteStore.startUnsavedVoteRecheck()
+        return Task { [weak self] in
+            guard let checked = await read.value, !Task.isCancelled,
+                  let sends = self?.sendUnsavedVotesOnce(among: checked) else { return [:] }
+            var results: [String: VoteWriteResult] = [:]
+            for send in sends {
+                results[send.guid] = await send.task.value
+            }
+            return results
+        }
+    }
+
+    /// Sends once more each vote not saved yet among `checked` (the bills a read has just judged) whose automatic resend
+    /// is not used, using it up first.
+    private func sendUnsavedVotesOnce(among checked: Set<String>) -> [(guid: String, task: Task<VoteWriteResult, Never>)] {
+        guard let voteStore else { return [] }
         var sends: [(guid: String, task: Task<VoteWriteResult, Never>)] = []
-        for unsaved in voteStore.votesAwaitingAutomaticResend() {
+        for unsaved in voteStore.votesAwaitingAutomaticResend() where checked.contains(unsaved.guid) {
             voteStore.spendAutomaticResend(for: unsaved.guid)
             sends.append((unsaved.guid, resendVote(guid: unsaved.guid, vote: unsaved.vote, reasons: unsaved.reasons)))
         }
-        var results: [String: VoteWriteResult] = [:]
-        for send in sends {
-            results[send.guid] = await send.task.value
-        }
-        return results
+        return sends
     }
 
     /// Sends `vote` on `guid` again: through `recordVote` on the loaded bill with that guid, else (a bill not loaded,
