@@ -146,6 +146,16 @@ final class BillVoteStore: ObservableObject {
         BillsStore.trimmedOrNil(billId).flatMap { unsavedVotes[$0] }
     }
 
+    /// The vote write out on the first of `billIds` that has one, which ends with its result, or nil when none is out.
+    /// Bill detail follows it when this store sends the page's vote not saved yet on its own (APPF-30 step 2), which
+    /// hides the vote's mark until the result.
+    func voteWriteOut(onAnyOf billIds: [String]) -> Task<VoteWriteResult, Never>? {
+        for billId in billIds.compactMap({ BillsStore.trimmedOrNil($0) }) where unconfirmedVotes[billId] != nil {
+            if let write = writeChains[billId]?.task { return write }
+        }
+        return nil
+    }
+
     /// Batch fetch vote states for a set of billIds.
     ///
     /// - Uses cache immediately; only fetches missing/expired, and a vote not saved yet (APPF-30 step 2).
