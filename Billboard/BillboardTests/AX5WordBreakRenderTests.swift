@@ -266,7 +266,8 @@ final class AX5WordBreakRenderTests: XCTestCase {
                     updatedAt: nil,
                     currentCongressBillsSupportedCount: nil,
                     trackedSponsoredCount: nil,
-                    trackedSupportedCount: nil
+                    trackedSupportedCount: nil,
+                    currentCongressCounts: nil
                 ))
             ],
             followedRepresentatives: false

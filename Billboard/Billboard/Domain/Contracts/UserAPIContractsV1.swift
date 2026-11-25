@@ -114,14 +114,29 @@ nonisolated enum UserAPIContractsV1 {
         let currentCongressBillsSupportedCount: Int?
         /// Bills in the 119th Congress that BillBoard tracks and this member sponsored, from BillBoard's own member
         /// stats (billsSponsored), not Congress.gov career totals. Absent, with the other two counts, when the member
-        /// has no stats row (no tracked 119th bill, as for every member new in the 120th Congress) or the stats could
-        /// not be read; a member with a row gets its counts, zeros included.
+        /// has no 119th counts (no tracked 119th bill, as for every member new in the 120th Congress, whose stats row
+        /// then holds counts of later Congresses only) or the stats could not be read; a member with 119th counts gets
+        /// them, zeros included. Always the 119th Congress's: currentCongressCounts carries the newest Congress's.
         let trackedSponsoredCount: Int?
         /// Bills in the 119th Congress that BillBoard tracks and this member cosponsored, from BillBoard's own member
         /// stats (billsSupported), not Congress.gov career totals. Absent, with the other two counts, when the member
-        /// has no stats row (no tracked 119th bill, as for every member new in the 120th Congress) or the stats could
-        /// not be read; a member with a row gets its counts, zeros included.
+        /// has no 119th counts (no tracked 119th bill, as for every member new in the 120th Congress, whose stats row
+        /// then holds counts of later Congresses only) or the stats could not be read; a member with 119th counts gets
+        /// them, zeros included. Always the 119th Congress's: currentCongressCounts carries the newest Congress's.
         let trackedSupportedCount: Int?
+        let currentCongressCounts: CongressMemberCongressCounts?
+    }
+
+    /// A member's counts for one Congress, from BillBoard's own member stats, which count each Congress apart (REL-46):
+    /// the newest Congress the member has counts in, else the 119th. Absent when the member has no counts or the stats
+    /// could not be read. Clients label the counts with this congress, never with one computed from a date.
+    nonisolated struct CongressMemberCongressCounts: Decodable {
+        /// The Congress the counts cover, such as 120.
+        let congress: Int
+        /// Bills of that Congress that BillBoard tracks and this member sponsored.
+        let sponsored: Int
+        /// Bills of that Congress that BillBoard tracks and this member cosponsored.
+        let supported: Int
     }
 
     nonisolated struct ProcessedCongressMember: Decodable {
@@ -140,19 +155,22 @@ nonisolated enum UserAPIContractsV1 {
         let sponsoredLegislationCount: Int?
         let cosponsoredLegislationCount: Int?
         /// The same count as trackedSupportedCount, kept for older app builds. GET /processed-congress-members adds it
-        /// with the tracked counts and leaves all three out when the member has no stats row (REL-46) or the member
-        /// stats could not be read (REL-52), never sending 0 for a member with no stats row or an unknown count.
+        /// with the tracked counts and leaves all three out when the member has no 119th counts (REL-46) or the member
+        /// stats could not be read (REL-52), never sending 0 for a member with no 119th counts or an unknown count.
         let currentCongressBillsSupportedCount: Int?
         /// Bills in the 119th Congress that BillBoard tracks and this member sponsored, from BillBoard's own member
         /// stats (billsSponsored), not Congress.gov career totals. Absent, with the other two counts, when the member
-        /// has no stats row (no tracked 119th bill, as for every member new in the 120th Congress) or the stats could
-        /// not be read; a member with a row gets its counts, zeros included.
+        /// has no 119th counts (no tracked 119th bill, as for every member new in the 120th Congress, whose stats row
+        /// then holds counts of later Congresses only) or the stats could not be read; a member with 119th counts gets
+        /// them, zeros included. Always the 119th Congress's: currentCongressCounts carries the newest Congress's.
         let trackedSponsoredCount: Int?
         /// Bills in the 119th Congress that BillBoard tracks and this member cosponsored, from BillBoard's own member
         /// stats (billsSupported), not Congress.gov career totals. Absent, with the other two counts, when the member
-        /// has no stats row (no tracked 119th bill, as for every member new in the 120th Congress) or the stats could
-        /// not be read; a member with a row gets its counts, zeros included.
+        /// has no 119th counts (no tracked 119th bill, as for every member new in the 120th Congress, whose stats row
+        /// then holds counts of later Congresses only) or the stats could not be read; a member with 119th counts gets
+        /// them, zeros included. Always the 119th Congress's: currentCongressCounts carries the newest Congress's.
         let trackedSupportedCount: Int?
+        let currentCongressCounts: CongressMemberCongressCounts?
         /// The number of entries in terms (0 when it is missing). Clients count terms and use this only when terms is
         /// missing.
         let termCount: Int?
@@ -186,6 +204,7 @@ nonisolated enum UserAPIContractsV1 {
             case currentCongressBillsSupportedCount
             case trackedSponsoredCount
             case trackedSupportedCount
+            case currentCongressCounts
             case termCount
             case congress
             case memberType
@@ -215,6 +234,7 @@ nonisolated enum UserAPIContractsV1 {
             currentCongressBillsSupportedCount = try container.decodeIfPresent(Int.self, forKey: .currentCongressBillsSupportedCount)
             trackedSponsoredCount = try container.decodeIfPresent(Int.self, forKey: .trackedSponsoredCount)
             trackedSupportedCount = try container.decodeIfPresent(Int.self, forKey: .trackedSupportedCount)
+            currentCongressCounts = try container.decodeIfPresent(CongressMemberCongressCounts.self, forKey: .currentCongressCounts)
             termCount = try container.decodeIfPresent(Int.self, forKey: .termCount)
             congress = try container.decodeIfPresent(Int.self, forKey: .congress)
             memberType = try container.decodeIfPresent(String.self, forKey: .memberType)
@@ -315,6 +335,83 @@ nonisolated enum UserAPIContractsV1 {
         let civicProfile: CivicProfileScores
     }
 
+    /// A member of Congress's public record in BillBoard (UX-39d), from GET /congress-member-record: their latest
+    /// roll-call vote on each bill in BillBoard, newest first, a page at a time, and the bills they sponsored; or,
+    /// asked with billGuids, only their votes on those bills. Facts only, as Congress records them: no score, no
+    /// ranking, no judging words, and no BillBoard user's vote.
+    nonisolated struct CongressMemberRecord: Decodable {
+        /// A Congress.gov bioguide ID: one capital letter and six digits, such as D000001.
+        let bioguideId: String
+        /// The member's latest roll-call vote on each bill in BillBoard that has one, newest first (by votedOn, then
+        /// bill guid), at most the request's limit. Asked with billGuids: their votes on those bills only, in the same
+        /// order, every one. A member in both chambers' latest roll calls of a bill (who moved chambers) has one entry
+        /// for each. Empty for a member with no recorded vote, or past the last page.
+        let votes: [CongressMemberRecordVote]
+        /// Present when more votes follow: send it as cursor to read the next page. Absent on the last page, and with
+        /// billGuids.
+        let nextCursor: String?
+        /// The bills in BillBoard the member sponsored (not cosponsored), from BillBoard's member stats: the 119th
+        /// Congress and each later Congress counted apart (REL-46), newest Congress first, then by updatedAt, newest
+        /// first. Only bills the bills manifest lists (a bill still waiting for its text is left out), except when the
+        /// manifest could not be read, when every counted bill is sent and some lack a title. At most 250
+        /// (sponsoredBillCount is the whole number). Sent on the first page only (no cursor, no billGuids). Label them
+        /// by each bill's congress (D78): from 2027-01-03 they span more than one Congress.
+        let sponsoredBills: [CongressMemberRecordBill]?
+        /// How many bills in BillBoard the member sponsored, sponsoredBills or more: the sum of sponsoredBillCounts.
+        /// Sent with sponsoredBills.
+        let sponsoredBillCount: Int?
+        /// How many of those bills each Congress has, newest Congress first, one entry per Congress with at least one.
+        /// Sent with sponsoredBills.
+        let sponsoredBillCounts: [CongressMemberRecordCongressCount]?
+    }
+
+    nonisolated struct CongressMemberRecordVote: Decodable {
+        /// The bill's plain guid, such as BILLS-119hr1234.
+        let billGuid: String
+        /// From the guid, such as 119.
+        let congress: String
+        /// From the guid, such as hr or s.
+        let billType: String
+        /// From the guid, such as 1234.
+        let billNumber: String
+        /// The bill's title as the bills manifest has it; absent when the bill has no manifest row yet.
+        let title: String?
+        /// The chamber whose roll call this is.
+        let chamber: String
+        let position: String
+        /// The roll call's day as Congress records it, YYYY-MM-DD (Washington's day, with no time or zone): show it as
+        /// it is, never converted to the device's time zone. A roll call without a day is not in the record.
+        let votedOn: String
+        /// What the roll call was on, as Congress words it (a passage, a cloture vote, a motion), at most 500
+        /// characters; absent when Congress gave none.
+        let actionText: String?
+    }
+
+    nonisolated struct CongressMemberRecordBill: Decodable {
+        /// The bill's plain guid, such as BILLS-119hr1234.
+        let billGuid: String
+        /// From the guid, such as 119.
+        let congress: String
+        /// From the guid, such as hr or s.
+        let billType: String
+        /// From the guid, such as 1234.
+        let billNumber: String
+        /// The bill's title as the bills manifest has it; absent when the bill has no manifest row yet.
+        let title: String?
+        let billStatus: String?
+        /// Only as true, when the bill's veto stands, as the bills manifest has it; absent otherwise.
+        let vetoed: Bool?
+        /// The bill's date in the bills manifest (its latest news); absent without a manifest row.
+        let updatedAt: String?
+    }
+
+    nonisolated struct CongressMemberRecordCongressCount: Decodable {
+        /// The Congress, as each bill's congress writes it, such as 119.
+        let congress: String
+        /// How many of the member's sponsored bills it has.
+        let count: Int
+    }
+
     nonisolated struct WeeklyDigest: Decodable {
         let id: String
         let title: String
@@ -325,6 +422,17 @@ nonisolated enum UserAPIContractsV1 {
         let isRead: Bool
         let stats: [WeeklyDigestStat]
         let sections: [WeeklyDigestSection]
+        /// Your bills this week (UX-41 concept 4): the bills the reader voted on whose latest action is dated in the
+        /// week, newest action first, at most 20; left out when there are none. A companion pair is listed once. A
+        /// top-level list because apps 1.1 and 1.2 decode section kinds as a strict enum and ignore unknown top-level
+        /// keys; app 1.3 shows it first. Each item's reason is "You voted on this"; no item carries the vote itself. It
+        /// is built from the reader's votes, not from the sections, so it can list a bill no section shows, and a brief
+        /// can hold it with no section (GET /weekly-digests/latest serves that brief only to app 1.3 and later). The
+        /// sections are unchanged for apps 1.1 and 1.2, so a bill listed here can also be in a section; app 1.3 shows
+        /// it once, here, matching the two by companion group (the manifest's companionGroups), not by billGuid alone.
+        /// Such a bill also has the same billGuid in both places, a companion pair included: the item here then takes
+        /// the billGuid of the section's item, which can be the pair's other bill.
+        let yourBills: [WeeklyDigestItem]?
     }
 
     nonisolated struct WeeklyDigestStat: Decodable {
@@ -389,6 +497,11 @@ nonisolated enum UserAPIContractsV1 {
         let lifeAreas: [String]
         /// Bioguide IDs of the sponsors, from Congress.gov.
         let sponsors: [String]
+        /// The sponsors' names and seats as Congress.gov lists them on the bill, in the order of sponsors (REL-46 5.3),
+        /// so a client can still name a sponsor who is no longer in the members manifest. Written by billSummarizer and
+        /// billDiffer from the raw bill; absent on a bill not rewritten since, and when Congress.gov gives no name. A
+        /// sponsor who moved chambers keeps the seat the bill lists.
+        let sponsorDetails: [BillSponsorDetail]?
         /// Bioguide IDs of the cosponsors. fetchRawBill reads every page of Congress.gov cosponsors (REL-28); a bill
         /// fetched before that change lists only the first 20 until `npm run backfill:cosponsors` (in services)
         /// refreshes it. IDs may repeat: one stored bill lists a cosponsor twice.
@@ -428,6 +541,25 @@ nonisolated enum UserAPIContractsV1 {
         let when: String
         let `where`: String
         let why: String?
+    }
+
+    nonisolated struct BillSponsorDetail: Decodable {
+        /// A Congress.gov bioguide ID: one capital letter and six digits, such as D000001.
+        let bioguideId: String
+        /// First and last name, such as Jane Doe.
+        let name: String
+        /// The title Congress.gov gives the sponsor on the bill: Rep (Representative), Sen (Senator), Del (Delegate) or
+        /// ResComm (Resident Commissioner). Absent when Congress.gov gives none; the sponsor's chamber is then the
+        /// bill's (a House bill type such as hr or hres has a House sponsor).
+        let title: String?
+        /// The party letter. Congress.gov's ID (Independent Democrat) is I; absent for any other code.
+        let party: String?
+        /// The two-letter code of the state or territory.
+        let state: String?
+        /// A House seat in two digits, as the members manifest writes it (00 for an at-large seat or a delegate). Null
+        /// for a senator, and for a House sponsor whose seat Congress.gov gives in no form read here, which clients
+        /// treat as unknown, not as the Senate.
+        let district: String?
     }
 
     /// One Congress.gov bill action. Only the fields clients read are listed; the rest of the Congress.gov object
@@ -489,6 +621,86 @@ nonisolated enum UserAPIContractsV1 {
         let state: String?
         let district: String?
         let votePosition: String
+    }
+
+    /// GET /recent-actions (UX-35): the caller's bills with an action in Congress inside the window, newest first. A
+    /// bill is the caller's when they voted Yea, Nay or Abstain on it (never an Updates dismissal from app 1.0 or 1.1)
+    /// or watch it, on either member of a companion group. One row per bill (a companion group is one bill), at most
+    /// 50. Only the caller's own vote is ever in it: no count, tally or other user's vote.
+    nonisolated struct RecentActions: Decodable {
+        /// When the server built the list.
+        let generatedAt: String
+        /// How many days back the actions reach (30 today): an action dated on or after that many Eastern calendar days
+        /// before generatedAt's.
+        let windowDays: Int
+        /// Newest action first, then by title. Empty when the caller has no bill with an action in the window.
+        let items: [RecentActionItem]
+    }
+
+    nonisolated struct RecentActionItem: Decodable {
+        /// The row's identity: the bill's key (a companion group's primary guid, as the app keys the group's card; a
+        /// single bill's own plain guid), the action's day and its wording. Only a newer action gives a new id, so a
+        /// row cleared on the device comes back with it; a change in which member of a group the row shows does not.
+        /// Opaque: do not parse it.
+        let id: String
+        /// The plain guid of the bill the row shows. For a companion group (one row), the member whose status the Bills
+        /// card shows for the group: a law first, then a veto, a passage, a failure, an update, then the member whose
+        /// manifest row changed later, then the primary (CompanionGroupIndex.statusLead). The row's number, title,
+        /// billStatus and vetoed are that member's; its action is the group's latest, from either member, and
+        /// action.billGuid names the member it is on.
+        let billGuid: String
+        let congress: String
+        let billType: String
+        let billNumber: String
+        /// The bill's number as the apps show it: "H.R. 77", "S.J.Res. 213".
+        let officialNumber: String
+        /// The bill's plain-language headline, as on its bill page.
+        let title: String
+        let billStatus: String?
+        /// Only as true, when the bill's veto stands (billOutcomes.ts deriveBillVetoedFromActions); absent otherwise.
+        /// billStatus keeps its value.
+        let vetoed: Bool?
+        let action: RecentAction
+        /// The caller's own vote on the bill as the server stores it (on the group's primary when they voted on both
+        /// members); absent when they only watch it. Never anyone else's.
+        let yourVote: String?
+        /// The Eastern calendar day the caller's vote was last saved (the vote shown, not the first one), when known.
+        let votedOn: String?
+        let voteTiming: RecentActionVoteTiming?
+        /// Whether the caller watches the bill (either member of a companion group), by their Watch rows on the server.
+        /// The Bill row a vote saves has the same key as the bill's Watch row and replaces it, so right after a vote on
+        /// a watched bill this can be false until the watch is saved again. A client that keeps its own watch state
+        /// shows that instead.
+        let watched: Bool
+    }
+
+    nonisolated struct RecentAction: Decodable {
+        /// The action's day as Congress dates it.
+        let date: String
+        /// What happened, in a push's words: "Passed the House", "Became law", "House vote fell short of two-thirds",
+        /// or Congress's text without record references and a final period.
+        let text: String
+        /// The Library of Congress or chamber code of the action, when it has one.
+        let actionCode: String?
+        /// The plain guid of the bill the action is on. For a companion group it can be the other member, not the one
+        /// the row shows: a row for H.R. 77 (Passed) can carry S. 50's "Failed in the Senate". A client names that
+        /// member beside the action when it differs from the row's billGuid, as a push does.
+        let billGuid: String
+        /// The number of the bill the action is on, as the apps show it: "S. 50".
+        let officialNumber: String
+    }
+
+    /// UX-41 concept 2: how long before a chamber's roll call the caller voted. Present only when the bill (either
+    /// member of a companion group) has a recorded House or Senate vote inside the window, the latest one, on an
+    /// Eastern day after the one the caller's vote shown was last saved. Absent when the vote came the same day or
+    /// later, was changed or saved again on or after that day, or has no time. Describes yourVote: a client showing
+    /// another vote (one not saved yet) leaves it out.
+    nonisolated struct RecentActionVoteTiming: Decodable {
+        let chamber: String
+        /// The roll call's day as Congress dates it.
+        let rollCallDate: String
+        /// Calendar days from votedOn to rollCallDate.
+        let daysBefore: Int
     }
 }
 

@@ -504,7 +504,8 @@ final class FormErrorAnnouncementTests: XCTestCase {
                 updatedAt: nil,
                 currentCongressBillsSupportedCount: nil,
                 trackedSponsoredCount: nil,
-                trackedSupportedCount: nil
+                trackedSupportedCount: nil,
+                currentCongressCounts: nil
             ))
         }
         return LocationEditorResult(
