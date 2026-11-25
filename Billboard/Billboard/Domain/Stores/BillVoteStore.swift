@@ -288,8 +288,9 @@ final class BillVoteStore: ObservableObject {
 
     /// APPF-30 step 2, at launch and when the app comes back: reads the rows of the votes not saved yet
     /// (`unsavedVotes`) again, in one request. A row with the same vote confirms it, a vote cast later on another
-    /// device replaces it, and an older row or none leaves it not saved (`applyRemote`). Failures stay quiet. A read
-    /// already running is joined, not repeated. Returns false when the read failed (true with nothing to read).
+    /// device replaces it, and the vote it replaced, or no row, leaves it not saved (`applyRemote`). Failures stay
+    /// quiet. A read already running is joined, not repeated. Returns false when the read failed (true with nothing to
+    /// read).
     @discardableResult
     func recheckUnsavedVotes() async -> Bool {
         if let running = unsavedRecheck { return await running.value }
@@ -353,11 +354,12 @@ final class BillVoteStore: ObservableObject {
     /// voted), and so does one with a vote write still unconfirmed or made since `writes` was taken. Returns
     /// the rows it stored (an Abstain row as `.voted(.abstain)`).
     ///
-    /// A vote not saved yet (APPF-30 step 2, project decision 2026-11-23): a row with the same vote confirms it
-    /// (`confirmUnsavedVote`). A different vote cast after it was sent is a later choice (another device) and replaces
-    /// it (`onUnsavedVoteReplaced`). An older different vote (the one a change replaced) or no vote leaves the vote
-    /// shown and not saved, its row as it is, so the stores never split; unless a push dropped that row, when the
-    /// server's row is stored and the mark goes, as the vote did not reach the server.
+    /// A vote not saved yet (APPF-30 step 2, project decisions D3 and D4): a row with the same vote confirms it
+    /// (`confirmUnsavedVote`). A row with the vote it replaced (`UnsavedVote.replacedVotes`), or no vote, leaves the
+    /// vote shown and not saved, its row as it is, so the stores never split; unless a push dropped that row, when the
+    /// server's row is stored and the mark goes, as the vote did not reach the server. Another vote cast after it was
+    /// sent is a later choice (another device) and replaces it (`onUnsavedVoteReplaced`); one cast before it is treated
+    /// as the vote replaced.
     @discardableResult
     private func applyRemote(
         _ remote: [String: BillVotesService.RemoteVoteState],
@@ -415,6 +417,13 @@ final class BillVoteStore: ObservableObject {
         case drops
     }
 
+    /// The vote a change replaced is told by its vote (`replacedVotes`), not by the clocks: `row.votedAt` is the server's
+    /// time and `sentAt` the phone's, so a phone clock that is behind would make it look later and undo the change. Only
+    /// a vote this device did not hold is compared by time. Its limit: with a phone clock off by more than the time
+    /// between the two votes, such a vote is taken for an earlier one (clock ahead: kept, so the one automatic resend
+    /// can send this vote over it) or for a later one (clock behind: it replaces this one). Both need two devices to
+    /// cast different votes on the bill close together. Another device that casts the replaced vote again after this
+    /// send is taken for the replaced vote.
     private static func readOutcome(
         _ state: BillVotesService.RemoteVoteState,
         for unsaved: BillVoteCache.UnsavedVote,
@@ -422,7 +431,7 @@ final class BillVoteStore: ObservableObject {
     ) -> UnsavedVoteReadOutcome {
         if case .voted(let row) = state {
             if row.vote == unsaved.vote { return .confirms }
-            if row.votedAt > unsaved.sentAt { return .replaces(row.vote) }
+            if !unsaved.replacedVotes.contains(row.vote), row.votedAt > unsaved.sentAt { return .replaces(row.vote) }
         }
         return holdsItsRow ? .keeps : .drops
     }
@@ -493,7 +502,8 @@ final class BillVoteStore: ObservableObject {
                 vote: vote,
                 sentAt: now,
                 reasons: reasonKeys,
-                autoResent: earlierMark?.vote == vote && earlierMark?.autoResent == true
+                autoResent: earlierMark?.vote == vote && earlierMark?.autoResent == true,
+                replacedVotes: Self.votesReplaced(by: vote, row: cache.votedRow(for: cleaned)?.vote, earlierMark: earlierMark)
             ),
             for: cleaned
         )
@@ -540,6 +550,15 @@ final class BillVoteStore: ObservableObject {
                 return result
             }
         }
+    }
+
+    /// The votes `vote` replaces on its bill (`UnsavedVote.replacedVotes`): the bill's row (`row`) and, when that row was
+    /// itself not saved yet (`earlierMark`), what that vote replaced, back to the last row known as saved. Each once,
+    /// without `vote`.
+    private static func votesReplaced(by vote: VoteType, row: VoteType?, earlierMark: BillVoteCache.UnsavedVote?) -> [VoteType] {
+        let held = (earlierMark?.replacedVotes ?? []) + [earlierMark?.vote, row].compactMap { $0 }
+        var seen: Set<VoteType> = [vote]
+        return held.filter { seen.insert($0).inserted }
     }
 
     /// How a vote write ended without a rollback (`voteWriteFinished`).

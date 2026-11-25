@@ -89,26 +89,33 @@ final class BillVoteCacheTests: XCTestCase {
 
     // MARK: - Votes not saved yet (APPF-30 step 2)
 
-    private func unsaved(_ vote: VoteType, sentAt: Date = Date(), reasons: [String] = [], autoResent: Bool = false) -> BillVoteCache.UnsavedVote {
-        BillVoteCache.UnsavedVote(vote: vote, sentAt: sentAt, reasons: reasons, autoResent: autoResent)
+    private func unsaved(
+        _ vote: VoteType,
+        sentAt: Date = Date(),
+        reasons: [String] = [],
+        autoResent: Bool = false,
+        replacedVotes: [VoteType] = []
+    ) -> BillVoteCache.UnsavedVote {
+        BillVoteCache.UnsavedVote(vote: vote, sentAt: sentAt, reasons: reasons, autoResent: autoResent, replacedVotes: replacedVotes)
     }
 
     /// The marks are saved beside the rows, under `<persistenceKey>.unconfirmed`, and a new cache on the same defaults
-    /// (the next launch) finds them, with their vote, send time, reasons and whether the automatic resend was used.
+    /// (the next launch) finds them, with their vote, send time, reasons, whether the automatic resend was used and the
+    /// votes each replaced.
     @MainActor
     func testVotesNotSavedYetSurviveANewCacheOnTheSameDefaults() {
         let sentAt = Date(timeIntervalSince1970: 1_800_000_000)
         cache.setVoted(billId: "BILL-1", vote: .yea, votedAt: sentAt, now: Date())
         cache.setUnsavedVote(unsaved(.yea, sentAt: sentAt, reasons: ["education"]), for: "BILL-1")
         cache.setVoted(billId: "BILL-2", vote: .nay, votedAt: sentAt, now: Date())
-        cache.setUnsavedVote(unsaved(.nay, sentAt: sentAt, autoResent: true), for: "BILL-2")
+        cache.setUnsavedVote(unsaved(.nay, sentAt: sentAt, autoResent: true, replacedVotes: [.yea, .abstain]), for: "BILL-2")
         XCTAssertNotNil(defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: persistenceKey)))
 
         let next = BillVoteCache(config: BillVoteCache.Config(persistenceKey: persistenceKey), defaults: defaults)
 
         XCTAssertEqual(next.unsavedVotes, [
             "BILL-1": unsaved(.yea, sentAt: sentAt, reasons: ["education"]),
-            "BILL-2": unsaved(.nay, sentAt: sentAt, autoResent: true)
+            "BILL-2": unsaved(.nay, sentAt: sentAt, autoResent: true, replacedVotes: [.yea, .abstain])
         ])
         XCTAssertEqual(next.getState(for: "BILL-1"), .voted(.yea), "the row itself is an ordinary vote row")
 
@@ -116,6 +123,21 @@ final class BillVoteCacheTests: XCTestCase {
         next.setUnsavedVote(nil, for: "BILL-2")
         XCTAssertNil(defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: persistenceKey)), "no map left once empty")
         XCTAssertEqual(BillVoteCache(config: BillVoteCache.Config(persistenceKey: persistenceKey), defaults: defaults).unsavedVotes, [:])
+    }
+
+    /// A mark saved without the votes it replaced (as builds before them saved it) loads with none, and the map's other
+    /// marks load too.
+    @MainActor
+    func testAMarkSavedWithoutItsReplacedVotesLoads() throws {
+        let sentAt = Date(timeIntervalSince1970: 1_800_000_000)
+        cache.setVoted(billId: "BILL-1", vote: .yea, votedAt: sentAt, now: Date())
+        let mark: [String: Any] = ["vote": "yea", "sentAt": sentAt.timeIntervalSinceReferenceDate, "reasons": ["education"], "autoResent": false]
+        let map = ["BILL-1": mark]
+        defaults.set(try JSONSerialization.data(withJSONObject: map), forKey: BillVoteCache.unsavedVotesKey(for: persistenceKey))
+
+        let next = BillVoteCache(config: BillVoteCache.Config(persistenceKey: persistenceKey), defaults: defaults)
+
+        XCTAssertEqual(next.unsavedVotes, ["BILL-1": unsaved(.yea, sentAt: sentAt, reasons: ["education"])])
     }
 
     /// A 1.2 cache has rows and no map: it loads as it is, with no vote marked.

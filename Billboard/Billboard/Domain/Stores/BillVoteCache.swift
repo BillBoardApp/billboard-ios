@@ -39,13 +39,18 @@ final class BillVoteCache {
     /// map; the row itself stays an ordinary `.voted` entry.
     nonisolated struct UnsavedVote: Codable, Equatable, Sendable {
         var vote: VoteType
-        /// When this device sent the vote: the optimistic row's `votedAt`. A server row cast after it is a later vote
-        /// (from another device); one cast before it is the vote this one replaced.
+        /// When this device sent the vote, by the phone's clock: the optimistic row's `votedAt`. A server row with
+        /// another vote, cast after it, is a later vote (from another device).
         var sentAt: Date
         /// The reasons sent with the vote (their raw values), sent again with it.
         var reasons: [String]
         /// The one automatic resend once the phone is back online has been used (project decision 2026-11-23).
         var autoResent: Bool
+        /// The votes this device held on the bill before this one, back to the last row it knew as saved: the vote
+        /// this one replaced, and any vote not saved yet in between. A server row with one of them is the vote a change
+        /// replaced, which the change did not reach (project decision D4): it is told by its vote, so a phone clock
+        /// that is behind the server's cannot make it look like a later vote.
+        var replacedVotes: [VoteType] = []
     }
 
     private let config: Config
@@ -281,5 +286,17 @@ final class BillVoteCache {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) && key.hasSuffix(suffix) {
             defaults.removeObject(forKey: key)
         }
+    }
+}
+
+extension BillVoteCache.UnsavedVote {
+    /// A mark saved before `replacedVotes` existed loads with none.
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        vote = try container.decode(VoteType.self, forKey: .vote)
+        sentAt = try container.decode(Date.self, forKey: .sentAt)
+        reasons = try container.decode([String].self, forKey: .reasons)
+        autoResent = try container.decode(Bool.self, forKey: .autoResent)
+        replacedVotes = try container.decodeIfPresent([VoteType].self, forKey: .replacedVotes) ?? []
     }
 }

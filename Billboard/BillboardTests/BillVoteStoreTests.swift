@@ -998,6 +998,37 @@ final class BillVoteStoreTests: XCTestCase {
         XCTAssertEqual(confirmed.calls, [])
     }
 
+    /// Project decision D4 with a phone clock behind the server's: the server still holds the Nay that a change to Yea
+    /// replaced, and its time, by the server's clock, is after the change's send time, by the phone's. It is the
+    /// replaced vote, told by its vote, so the change is not undone: the vote stays shown and not saved. So does an
+    /// earlier vote not saved yet in between (a Yea, then an Abstain, both failing): the server may hold either.
+    @MainActor
+    func testTheVoteAChangeReplacedIsToldByItsVoteNotByTheClocks() async {
+        let service = FakeBillVotesService()
+        let store = makeStore(service)
+        let replaced = recordReplacements(of: store)
+        service.singleResult = .success(.voted(.init(vote: .nay, votedAt: Date().addingTimeInterval(-60 * 60))))
+        await store.fetchVoteIfNeeded(for: billId)
+        XCTAssertEqual(store.heldVote(for: billId), .nay, "precondition: the server's Nay")
+
+        service.setFeedbackError = URLError(.timedOut)
+        _ = await store.submitVote(billId: billId, vote: .yea)
+        let serverLater = Date().addingTimeInterval(10 * 60)
+        service.batchResult = .success([billId: .voted(.init(vote: .nay, votedAt: serverLater))])
+        await store.refreshVotes(for: [billId])
+        XCTAssertEqual(store.unsavedVotes, [billId: .yea], "the change is kept")
+        XCTAssertEqual(store.heldVote(for: billId), .yea)
+
+        _ = await store.submitVote(billId: billId, vote: .abstain)
+        for earlier in [VoteType.nay, .yea] {
+            service.batchResult = .success([billId: .voted(.init(vote: earlier, votedAt: serverLater))])
+            await store.refreshVotes(for: [billId])
+            XCTAssertEqual(store.unsavedVotes, [billId: .abstain], "\(earlier)")
+            XCTAssertEqual(store.heldVote(for: billId), .abstain, "\(earlier)")
+        }
+        XCTAssertEqual(replaced.calls, [])
+    }
+
     /// After an "updated" push dropped the app's copy of a vote not saved yet, a read of no vote or another vote means the
     /// vote never reached the server: the server's row is stored and the mark goes.
     @MainActor
