@@ -1057,8 +1057,9 @@ final class VoteRefusalRollbackTests: XCTestCase {
     }
 
     /// A companion group whose vote row sits on a member's legacy text-version guid: a change made on the group that
-    /// failed is marked under that guid, and after a relaunch the group's page shows the strip and Try again quietly.
-    /// Try again goes to that guid, and once stored the Bill row goes there too.
+    /// failed is marked under that guid, and after a relaunch the group's page shows the strip and Try again quietly,
+    /// and reads that guid again with the members' rows. Try again goes to that guid, and once stored the Bill row goes
+    /// there too.
     func testARelaunchKeepsAGroupVoteNotSavedYetOnTheLegacyGuid() throws {
         let house = "BILLS-119hr900"
         let legacy = "BILLS-119s456is"
@@ -1105,6 +1106,7 @@ final class VoteRefusalRollbackTests: XCTestCase {
         let preferences = FakePreferencesService()
         let (store, voteStore) = launch([houseBill, companionTestBill(legacy, userVote: .yea)], preferences: preferences)
         XCTAssertEqual(voteStore.unsavedVotes, [legacy: .yea])
+        let readsBefore = votes.batchRequests.count
         let transport = RecordingTransport()
         transport.failure = { _ in URLError(.notConnectedToInternet) }
         APIClient.$current.withValue(transport.client) {
@@ -1117,8 +1119,13 @@ final class VoteRefusalRollbackTests: XCTestCase {
             defer { host.close() }
             XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
             XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+            XCTAssertTrue(
+                host.run(until: { votes.batchRequests.dropFirst(readsBefore).contains { $0.contains(legacy) } }),
+                "the legacy guid is read again on open: \(votes.batchRequests)"
+            )
             host.run(0.6)
             XCTAssertEqual(alerts.count, 0, "quiet on open")
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "a read without the row keeps it")
 
             votes.setFeedbackError = nil
             XCTAssertTrue(host.activate(identifier: BillVoteBarModel.refusalTryAgainIdentifier, settle: 1.2), host.text())
