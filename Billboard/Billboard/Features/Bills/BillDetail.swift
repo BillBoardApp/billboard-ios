@@ -371,6 +371,10 @@ private struct BillDetailContent: View {
     /// Try again on that strip is sending the vote: the strip stays, its Try again disabled, until the result, so
     /// VoiceOver's focus on it is not lost (UX-49).
     @State private var isRetryingVote = false
+    /// The vote store is sending the shown vote not saved yet on its own, once the phone is back online (APPF-30 step
+    /// 2), which hides its mark until the result: the strip stays with its Try again disabled, as for Try again here,
+    /// and Results offer no Try again, so the vote is not sent twice (`followShownVoteMark()`).
+    @State private var isStoreResendingVote = false
     /// Counts refusals (and votes not saved): the error haptic.
     @State private var refusals = 0
     /// Counts refusals shown as a row of Your vote (from xxxLarge up), which the page scrolls to.
@@ -523,10 +527,17 @@ private struct BillDetailContent: View {
         showsUnsavedVote && !isChangingVote
     }
 
-    /// The vote shown is not saved yet: its write failed on this page (`isVoteUnsaved`), or the vote store marks it
-    /// (`isShownVoteMarkedUnsaved`).
+    /// The vote shown is not saved yet: its write failed on this page (`isVoteUnsaved`), the vote store marks it
+    /// (`isShownVoteMarkedUnsaved`), or the vote store is sending it on its own (`isShownVoteResentByStore`).
     private var showsUnsavedVote: Bool {
-        isVoteUnsaved || isShownVoteMarkedUnsaved
+        isVoteUnsaved || isShownVoteMarkedUnsaved || isShownVoteResentByStore
+    }
+
+    /// The vote store marks the vote shown as not saved yet (APPF-30 step 2), on the bill's guid or wherever the group's
+    /// vote went. The store hides the mark while a write of the vote is out.
+    private var storeMarksShownVote: Bool {
+        guard let shown = barChoice?.voteType else { return false }
+        return voteErrorGuids.contains { voteStore.unsavedVote(for: $0) == shown }
     }
 
     /// The vote shown is one the vote store marks as not saved yet (APPF-30 step 2): its write failed before the page
@@ -534,14 +545,23 @@ private struct BillDetailContent: View {
     /// strip then shows whenever the page opens, quietly: no error haptic and no VoiceOver focus, which only a write
     /// that fails on the page brings (`voteStripShown()`). Not while a vote cast here is out: its result decides.
     private var isShownVoteMarkedUnsaved: Bool {
-        guard voteCasts.latest == nil, let shown = barChoice?.voteType else { return false }
-        return voteErrorGuids.contains { voteStore.unsavedVote(for: $0) == shown }
+        voteCasts.latest == nil && storeMarksShownVote
+    }
+
+    /// The vote store's automatic resend of the shown vote is out (`isStoreResendingVote`), and no vote cast here is.
+    private var isShownVoteResentByStore: Bool {
+        isStoreResendingVote && voteCasts.latest == nil
     }
 
     /// The strip's Try again, only for a vote not saved yet: sends the shown vote again (UX-49).
     private var voteStripTryAgain: (() -> Void)? {
         guard refusalText == nil, showsNotSavedStrip else { return nil }
         return retryUnsavedVote
+    }
+
+    /// The strip's Try again is disabled: it is sending the vote, or the vote store is (APPF-30 step 2).
+    private var isTryingAgainVote: Bool {
+        isRetryingVote || isShownVoteResentByStore
     }
 
     /// When the shown vote was cast, for the stamp's date: the held row's time, else the bill's.
@@ -646,7 +666,9 @@ private struct BillDetailContent: View {
             awaitingSave: resultsAwaitingSave,
             isChecking: isCheckingVote,
             checkFailed: isVoteCheckFailed,
-            canRetry: retryChoice != nil
+            // While the vote store sends the vote on its own, "Results show once your vote is saved." offers no Try
+            // again (APPF-30 step 2).
+            canRetry: retryChoice != nil && !isShownVoteResentByStore
         )
     }
 
@@ -1019,6 +1041,42 @@ private struct BillDetailContent: View {
         }
     }
 
+    /// The vote store no longer marks the shown vote as not saved yet, though no vote cast here changed it (APPF-30 step
+    /// 2): a read found it on the server (at a return to the app, say), or the store is sending it on its own once the
+    /// phone is back online, which hides the mark until the result. Found, it is saved, as when Try again here stores
+    /// it: the strip goes, and Results waiting for the save load. Being sent, the strip stays with its Try again
+    /// disabled, and Results offer none; stored, the same as found; otherwise the store marks the vote again and the
+    /// strip and its Try again show from that mark, quietly. A read that found another vote leaves the page as it is.
+    private func followShownVoteMark() {
+        guard voteCasts.latest == nil, let shown = barChoice?.voteType else { return }
+        if let write = voteStore.voteWriteOut(onAnyOf: voteErrorGuids) {
+            isStoreResendingVote = true
+            Task {
+                let result = await write.value
+                isStoreResendingVote = false
+                if result == .stored, voteCasts.latest == nil {
+                    shownVoteSaved()
+                }
+            }
+        } else if voteErrorGuids.contains(where: { voteStore.heldVote(for: $0) == shown }) {
+            shownVoteSaved()
+        }
+    }
+
+    /// The vote shown as not saved yet was saved without a vote cast here (`followShownVoteMark()`): the strip goes, and
+    /// Results that were waiting for the save, or failed to load, load now (or when the page is back on screen).
+    private func shownVoteSaved() {
+        withAnimation(reduceMotion ? nil : BallotMoment.rollback) {
+            isVoteUnsaved = false
+        }
+        guard resultsAwaitingSave || billStatsError != nil else { return }
+        if isOnScreen {
+            refreshStatsAfterVoteSaved()
+        } else {
+            hasPendingStatsRefresh = true
+        }
+    }
+
     /// Results opened for a vote shown as not saved yet: the server holds a vote from this user on the bill, maybe
     /// this one (a write that timed out after the server stored it). Its row is read, and when it is the shown
     /// vote the strip goes (UX-49). Another row (the vote before a change) leaves the strip and its Try again.
@@ -1279,7 +1337,7 @@ private struct BillDetailContent: View {
                     showsRule: lead != .yourVote,
                     movedRows: movedVoteRows,
                     onTryAgainVote: voteStripTryAgain,
-                    isTryingAgainVote: isRetryingVote,
+                    isTryingAgainVote: isTryingAgainVote,
                     votedAt: shownVoteDate,
                     stampFocusLabel: focusPlanner.oneTimeStampLabel,
                     focus: $voteFocus,
@@ -1370,7 +1428,7 @@ private struct BillDetailContent: View {
                 showsCoachMark: showsVoteCoachMark,
                 refusal: voteStripText,
                 onTryAgain: voteStripTryAgain,
-                isTryingAgain: isRetryingVote,
+                isTryingAgain: isTryingAgainVote,
                 votedAt: shownVoteDate,
                 inked: inkedVote,
                 animatesInk: true,
@@ -1406,6 +1464,11 @@ private struct BillDetailContent: View {
         }
         .task(id: statsBillGuid) {
             await loadVoteAndStats()
+        }
+        .onChange(of: storeMarksShownVote) { wasMarked, isMarked in
+            if wasMarked, !isMarked {
+                followShownVoteMark()
+            }
         }
         .onChange(of: hasVoted) { _, unlocked in
             guard !unlocked else { return }

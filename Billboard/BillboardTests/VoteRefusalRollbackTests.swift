@@ -1137,6 +1137,131 @@ final class VoteRefusalRollbackTests: XCTestCase {
         withExtendedLifetime((earlierVotes, voteStore)) {}
     }
 
+    // MARK: - An open page follows the vote store (APPF-30 step 2)
+
+    /// `GET /bill-stats` answers `RESULTS_LOCKED` while `isLocked` (the server holds no vote from this user), then stats.
+    @MainActor
+    private final class StatsLock {
+        var isLocked = true
+    }
+
+    /// The page's requests fail as offline, except `GET /bill-stats`, which `lock` answers.
+    private func lockedStatsTransport(_ lock: StatsLock) -> RecordingTransport {
+        let transport = RecordingTransport()
+        transport.responses = Array(repeating: Self.statsBody, count: 4)
+        transport.failure = { request in
+            guard request.path == "bill-stats" else { return URLError(.notConnectedToInternet) }
+            return lock.isLocked ? backendError("RESULTS_LOCKED") : nil
+        }
+        return transport
+    }
+
+    /// The vote fails on the page, then, with the page still open, the phone is back online and the vote store's one
+    /// automatic resend sends it. While that is out, the strip stays with its Try again disabled and Results ("Results
+    /// show once your vote is saved.") offer no Try again, so the vote cannot be sent twice. Stored, the strip goes and
+    /// Results open. Failed again, the strip's Try again and Results' are back. Either way nothing else is sent and
+    /// nothing alerts again.
+    func testAnOpenPageFollowsTheAutomaticResendOfItsVote() {
+        for storesIt in [true, false] {
+            let votes = FakeBillVotesService()
+            votes.singleResult = .success(.notVoted)
+            votes.batchResult = .success([Self.guid: .notVoted])
+            votes.setFeedbackError = URLError(.notConnectedToInternet)
+            let bill = pageBill()
+            let (store, voteStore) = pageStores(bill, votes: votes)
+            let lock = StatsLock()
+            APIClient.$current.withValue(lockedStatsTransport(lock).client) {
+                let alerts = StripAlerts()
+                let host = AccessibilityTreeText.Host(
+                    page(bill, store: store, voteStore: voteStore, alerts: alerts),
+                    size: CGSize(width: 390, height: 9000),
+                    settle: 0.6
+                )
+                defer { host.close() }
+                XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+                XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.tryAgainIdentifier) != nil }), "\(storesIt): \(host.text())")
+                XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier), "\(storesIt)")
+
+                votes.setFeedbackError = nil
+                let gate = Gate()
+                votes.holdSetFeedback = gate
+                let resend = WriteOutcome()
+                Task { resend.result = (await store.resendUnsavedVotesOnce())[Self.guid] }
+                XCTAssertTrue(host.run(until: { votes.setFeedbackCalls.count == 2 }), "\(storesIt): the resend is out")
+                host.run(0.3)
+                XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.", "\(storesIt)")
+                let busy = host.traits(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier)
+                XCTAssertEqual(busy?.contains(.notEnabled), true, "\(storesIt): Try again is disabled while the resend is out")
+                XCTAssertNil(host.label(ofIdentifier: SealedTally.tryAgainIdentifier), "\(storesIt): no Try again on Results meanwhile")
+                XCTAssertTrue(host.text().contains(VoteResultsFormatting.awaitingSaveText), "\(storesIt): \(host.text())")
+
+                if storesIt {
+                    lock.isLocked = false
+                } else {
+                    votes.setFeedbackError = URLError(.timedOut)
+                }
+                gate.open()
+                XCTAssertTrue(host.run(until: { resend.result != nil }), "\(storesIt)")
+                XCTAssertEqual(resend.result, storesIt ? .stored : .unconfirmed)
+                if storesIt {
+                    XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+                    XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+                    XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.resultsIdentifier) == nil }), "Results open: \(host.text())")
+                    XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "the stamp stays")
+                } else {
+                    XCTAssertTrue(
+                        host.run(until: { host.traits(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier)?.contains(.notEnabled) == false }),
+                        host.text()
+                    )
+                    XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+                    XCTAssertNotNil(host.label(ofIdentifier: SealedTally.tryAgainIdentifier), "Results offer Try again again")
+                }
+                host.run(0.5)
+                XCTAssertEqual(votes.setFeedbackCalls.count, 2, "\(storesIt): the page's write and the resend only")
+                XCTAssertEqual(alerts.count, 1, "\(storesIt): only the failure on the page alerts")
+            }
+            withExtendedLifetime(voteStore) {}
+        }
+    }
+
+    /// The vote fails on the page, then the app comes back and the quiet read finds it on the server (its write timed
+    /// out after the server stored it): the vote is saved, so the strip and its Try again go and Results open. Nothing
+    /// is sent again, and the vote gets its Bill row once.
+    func testAReadThatFindsAnOpenPagesVoteEndsTheStripAndOpensResults() {
+        let votes = FakeBillVotesService()
+        votes.singleResult = .success(.notVoted)
+        votes.batchResult = .success([Self.guid: .notVoted])
+        votes.setFeedbackError = URLError(.timedOut)
+        let preferences = FakePreferencesService()
+        let bill = pageBill()
+        let (store, voteStore) = pageStores(bill, votes: votes, preferences: preferences)
+        let lock = StatsLock()
+        APIClient.$current.withValue(lockedStatsTransport(lock).client) {
+            let alerts = StripAlerts()
+            let host = AccessibilityTreeText.Host(
+                page(bill, store: store, voteStore: voteStore, alerts: alerts),
+                size: CGSize(width: 390, height: 9000),
+                settle: 0.6
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.2), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.tryAgainIdentifier) != nil }), host.text())
+            XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+
+            votes.batchResult = .success([Self.guid: .voted(BillVotesService.RemoteVote(vote: .yea, votedAt: Date()))])
+            lock.isLocked = false
+            Task { await voteStore.recheckUnsavedVotes() }
+
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier) == nil }), host.text())
+            XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier))
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.resultsIdentifier) == nil }), "Results open: \(host.text())")
+            XCTAssertEqual(votes.setFeedbackCalls.count, 1, "nothing sent again")
+            assertOneBillRow(preferences, guid: Self.guid, host: host)
+            XCTAssertEqual(alerts.count, 1)
+        }
+        withExtendedLifetime(voteStore) {}
+    }
+
     /// Exactly one `PUT /preferences` once the page has run a little longer: the Bill row for `guid` (type "bill",
     /// category "", the backend contract), which makes the server follow the bill for this voter.
     private func assertOneBillRow(
