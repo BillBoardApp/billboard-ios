@@ -253,6 +253,71 @@ final class UnsavedVoteResendTests: XCTestCase {
         await settleBillsCache(scope: disk.scope)
     }
 
+    /// Two returns online close together (the network path drops and comes back while the read is out) each start a
+    /// resend: the second joins the first one's read, and the vote is sent once.
+    func testTwoReturnsOnlineCloseTogetherSendTheVoteOnce() async throws {
+        let disk = try makeDisk()
+        let voted = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([:])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+
+        let first = Task { await store.resendUnsavedVotesOnce() }
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+        let second = Task { await store.resendUnsavedVotesOnce() }
+        for _ in 0..<50 { await Task.yield() }
+        readGate.open()
+        let results = await [first.value, second.value]
+
+        XCTAssertEqual(votes.batchRequests, [[Self.guid]], "one read, which the second resend joined")
+        XCTAssertEqual(results.filter { !$0.isEmpty }, [[Self.guid: .stored]], "one of the two sent it")
+        XCTAssertEqual(votes.setFeedbackCalls.count, 1, "sent once")
+        XCTAssertEqual(voteStore.unsavedVotes, [:])
+        await settleBillsCache(scope: disk.scope)
+    }
+
+    /// The resend is used up on disk before it goes. When the app ends while it is out, the next launch shows the vote
+    /// as not saved yet (Try again on its page) and, back online, sends nothing on its own; so does a launch after a
+    /// resend that failed again with its outcome unknown.
+    func testTheResendIsUsedUpAcrossARelaunch() async throws {
+        let disk = try makeDisk()
+        let voted = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([:])
+        let sendGate = Gate()
+        votes.holdSetFeedback = sendGate
+        let started = expectation(description: "the resend is out")
+        votes.onSetFeedback = { _ in started.fulfill() }
+        let (store, _) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+        let resend = Task { await store.resendUnsavedVotesOnce() }
+        await fulfillment(of: [started], timeout: 5)
+        votes.onSetFeedback = nil
+
+        // The app ended while the resend was out: the next launch, on the same disk.
+        let (relaunched, relaunchedVotes) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+        XCTAssertEqual(relaunchedVotes.unsavedVotes, [Self.guid: .yea], "not saved yet at the next launch")
+        XCTAssertTrue(relaunchedVotes.votesAwaitingAutomaticResend().isEmpty, "the resend is used up")
+        let afterEndedResend = await relaunched.resendUnsavedVotesOnce()
+        XCTAssertEqual(afterEndedResend, [:])
+
+        // The resend fails again with its outcome unknown; the launch after that sends nothing on its own either.
+        votes.setFeedbackError = URLError(.timedOut)
+        sendGate.open()
+        let sent = await resend.value
+        XCTAssertEqual(sent, [Self.guid: .unconfirmed], "precondition")
+        await settleBillsCache(scope: disk.scope)
+        votes.setFeedbackError = nil
+        let (lastLaunch, lastVotes) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+        XCTAssertEqual(lastVotes.unsavedVotes, [Self.guid: .yea])
+        let afterFailedResend = await lastLaunch.resendUnsavedVotesOnce()
+
+        XCTAssertEqual(afterFailedResend, [:])
+        XCTAssertEqual(votes.setFeedbackCalls.count, 1, "sent on its own once, across both relaunches")
+        await settleBillsCache(scope: disk.scope)
+    }
+
     /// A vote not saved yet on a guid the bills store has not loaded (a companion member's legacy text-version guid) is
     /// sent through the vote store alone, and gets its Bill row under that guid once stored.
     func testAVoteOnAGuidTheBillsStoreHasNotLoadedIsSentToo() async throws {
