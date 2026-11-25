@@ -1188,8 +1188,10 @@ private struct BillDetailContent: View {
         voteCheckFailed = false
         let failure: String?
         if companionGroup != nil {
-            // Every member's vote in one request: the group's vote may sit on either bill.
-            failure = await voteStore.fetchVotes(for: voteRowGuids, revalidateNotVoted: true)
+            // Every member's vote in one request: the group's vote may sit on either bill, or on a member's legacy
+            // text-version guid, which is read too while it holds a vote not saved yet (APPF-30 step 2).
+            let markedTarget = BillsStore.trimmedOrNil(voteTargetGuid).flatMap { voteStore.unsavedVote(for: $0) == nil ? nil : $0 }
+            failure = await voteStore.fetchVotes(for: voteRowGuids + [markedTarget].compactMap { $0 }, revalidateNotVoted: true)
         } else {
             failure = await voteStore.fetchVoteIfNeeded(for: statsBillGuid, reportError: false, revalidateNotVoted: true)
         }
