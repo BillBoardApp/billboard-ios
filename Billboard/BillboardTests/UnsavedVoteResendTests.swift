@@ -166,7 +166,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertNil(voteStore.lastError, "quiet")
         XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid], "not used up")
 
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([Self.guid: .notVoted])
         let sent = await store.resendUnsavedVotesOnce()
         XCTAssertEqual(sent, [Self.guid: .stored])
         await settleBillsCache(scope: disk.scope)
@@ -179,7 +179,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         let disk = try makeDisk()
         let voted = await voteOffline(disk, on: bill())
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([Self.guid: .notVoted])
         votes.setFeedbackError = backendError("VOTE_DAILY_LIMIT")
         let preferences = FakePreferencesService()
         let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: preferences)
@@ -205,19 +205,25 @@ final class UnsavedVoteResendTests: XCTestCase {
         await settleBillsCache(scope: disk.scope)
     }
 
-    /// A refused resend of a first vote whose earlier row was unknown rolls the bills store back too: the bill holds no
-    /// vote, and the vote store holds no row for it.
-    func testARefusedResendOfAVoteWithNoEarlierRowLeavesNoVote() async throws {
+    /// An "updated" push that drops the app's copy of the vote while its resend is out, then a refusal: the rollback
+    /// restores "unknown" (the dropped copy is not put back), and the bills store follows, so the bill holds no vote.
+    func testARefusedResendAfterAPushDroppedTheVoteLeavesNoVote() async throws {
         let disk = try makeDisk()
         let voted = await voteOffline(disk, on: bill())
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
-        // The push that drops the app's copy runs before the resend: the rollback restores "unknown".
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let sendGate = Gate()
+        votes.holdSetFeedback = sendGate
+        let started = expectation(description: "the resend is out")
+        votes.onSetFeedback = { _ in started.fulfill() }
         let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+        let resend = Task { await store.resendUnsavedVotesOnce() }
+        await fulfillment(of: [started], timeout: 5)
+
         voteStore.clearVote(for: Self.guid)
         votes.setFeedbackError = backendError("APP_ATTEST_FAILED")
-
-        let sent = await store.resendUnsavedVotesOnce()
+        sendGate.open()
+        let sent = await resend.value
 
         XCTAssertEqual(sent, [Self.guid: .rolledBack(restored: .unknown)])
         XCTAssertEqual(voteStore.vote(for: Self.guid), .unknown)
@@ -232,7 +238,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         let disk = try makeDisk()
         let voted = await voteOffline(disk, on: bill())
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([Self.guid: .notVoted])
         votes.setFeedbackError = URLError(.timedOut)
         let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
 
@@ -259,7 +265,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         let disk = try makeDisk()
         let voted = await voteOffline(disk, on: bill())
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([Self.guid: .notVoted])
         let readGate = Gate()
         votes.holdBatchFetch = readGate
         let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
@@ -285,7 +291,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         let disk = try makeDisk()
         let voted = await voteOffline(disk, on: bill())
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([Self.guid: .notVoted])
         let sendGate = Gate()
         votes.holdSetFeedback = sendGate
         let started = expectation(description: "the resend is out")
@@ -328,7 +334,7 @@ final class UnsavedVoteResendTests: XCTestCase {
         let (_, first) = launch(disk, bills: [], votes: failing, preferences: FakePreferencesService())
         _ = await first.submitVote(billId: legacy, vote: .nay)
         let votes = FakeBillVotesService()
-        votes.batchResult = .success([:])
+        votes.batchResult = .success([legacy: .notVoted])
         let preferences = FakePreferencesService()
         let (store, voteStore) = launch(disk, bills: [], votes: votes, preferences: preferences)
 
@@ -339,6 +345,107 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertEqual(voteStore.unsavedVotes, [:])
         await waitForPuts(preferences, count: 1)
         XCTAssertEqual(preferences.putCalls.flatMap { $0 }.map(\.preference), [legacy])
+    }
+
+    /// A resend that joins a read already out (the launch read) sends only the votes that read judged. A vote whose write
+    /// failed while that read was out was not in it: the server may hold it, so it is not sent unread, and waits for the
+    /// next read, which sends it.
+    func testAResendThatJoinsAReadSendsOnlyTheVotesThatReadJudged() async throws {
+        let disk = try makeDisk()
+        let other = "BILLS-119hr4200"
+        let voted = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted, other: .notVoted])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let (store, voteStore) = launch(disk, bills: [voted, bill(other)], votes: votes, preferences: FakePreferencesService())
+        let launchRead = Task { await voteStore.recheckUnsavedVotes() }
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+
+        votes.setFeedbackError = URLError(.notConnectedToInternet)
+        let failed = await store.submitVote(billID: bill(other).id, vote: .nay, watch: nil)?.value
+        XCTAssertEqual(failed, .unconfirmed, "precondition")
+        votes.setFeedbackError = nil
+        let resend = Task { await store.resendUnsavedVotesOnce() }
+        for _ in 0..<50 { await Task.yield() }
+        readGate.open()
+        let sent = await resend.value
+        _ = await launchRead.value
+
+        XCTAssertEqual(votes.batchRequests, [[Self.guid]], "one read, which the resend joined")
+        XCTAssertEqual(sent, [Self.guid: .stored])
+        XCTAssertEqual(votes.setFeedbackCalls.map(\.billId), [other, Self.guid], "the other vote was not sent unread")
+        XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [other])
+
+        let next = await store.resendUnsavedVotesOnce()
+        XCTAssertEqual(votes.batchRequests.last, [other], "read first")
+        XCTAssertEqual(next, [other: .stored])
+        await settleBillsCache(scope: disk.scope)
+    }
+
+    /// A resend cancelled while its read is out (sign-out takes the tabs down, which cancels it) spends and sends
+    /// nothing once the read is back: the vote stays not saved, its resend not used, for this account's next launch.
+    func testACancelledResendSendsNothingAndKeepsItsResend() async throws {
+        let disk = try makeDisk()
+        let voted = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: FakePreferencesService())
+        let resend = store.startUnsavedVoteResend()
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+
+        resend.cancel()
+        readGate.open()
+        let sent = await resend.value
+
+        XCTAssertEqual(sent, [:])
+        XCTAssertEqual(votes.setFeedbackCalls, [])
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea])
+        XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid], "not used up")
+        await settleBillsCache(scope: disk.scope)
+    }
+
+    /// Sign-out ends both stores while the resend's read is out: neither the read nor the resend keeps them, so once the
+    /// read is back nothing is sent (under whatever session is current then) and nothing is written to the signed-out
+    /// account's cache, though the answer would confirm the vote.
+    func testStoresThatSignOutEndedAreNotKeptAndNothingIsSentOrWritten() async throws {
+        let disk = try makeDisk()
+        _ = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .voted(.init(vote: .yea, votedAt: Date()))])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        var voteStore: BillVoteStore? = BillVoteStore(
+            cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: disk.key), defaults: disk.defaults),
+            service: votes
+        )
+        let service = FakeBillsService()
+        service.cachedManifest = []
+        var store: BillsStore? = BillsStore(bills: [], cacheScope: disk.scope, service: service, preferencesService: FakePreferencesService())
+        if let store, let voteStore {
+            store.connect(voteStore: voteStore)
+        }
+        weak let endedVoteStore = voteStore
+        weak let endedStore = store
+        let resend = try XCTUnwrap(store?.startUnsavedVoteResend())
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+        let rows = disk.defaults.data(forKey: disk.key)
+        let marks = disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key))
+
+        store = nil
+        voteStore = nil
+        XCTAssertNil(endedVoteStore, "the read does not keep the vote store")
+        XCTAssertNil(endedStore, "the resend does not keep the bills store")
+        readGate.open()
+        let sent = await resend.value
+
+        XCTAssertEqual(sent, [:])
+        XCTAssertEqual(votes.setFeedbackCalls, [])
+        XCTAssertNotNil(marks, "precondition")
+        XCTAssertEqual(disk.defaults.data(forKey: disk.key), rows, "no row written")
+        XCTAssertEqual(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), marks, "the mark as it was")
     }
 
     // MARK: - Back online
