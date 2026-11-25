@@ -17,8 +17,10 @@ struct OnlineReturnDetector: Equatable {
 /// The network path's reports, from `NWPathMonitor`.
 enum NetworkPathReports {
     /// Whether the phone is online (the path is satisfied), at once and then on each change, until the stream ends.
+    /// Every report is kept until it is read (they are few): an offline report and the online one after it, both
+    /// waiting while the main actor is busy, still count as a return online.
     nonisolated static func online() -> AsyncStream<Bool> {
-        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        AsyncStream(bufferingPolicy: .unbounded) { continuation in
             let monitor = NWPathMonitor()
             monitor.pathUpdateHandler = { path in
                 continuation.yield(path.status == .satisfied)
@@ -33,11 +35,15 @@ enum NetworkPathReports {
 
 /// APPF-30 step 2: the votes not saved yet, outside bill detail. Their rows are read again, quietly, at launch and when
 /// the app comes back from the background (`BillVoteStore.recheckUnsavedVotes()`, one request, only when there are
-/// some), and once the phone is back online each is sent once more on its own (`BillsStore.resendUnsavedVotesOnce()`,
+/// some), and once the phone is back online each is sent once more on its own (`BillsStore.startUnsavedVoteResend()`,
 /// project decision 2026-11-23). UI-test launches stay off the network, as at launch.
 struct UnsavedVoteRecheck: ViewModifier {
     let billsStore: BillsStore
     let voteStore: BillVoteStore
+    /// The phone's online reports (`NetworkPathReports.online()`, or a test's).
+    let onlineReports: @Sendable () -> AsyncStream<Bool>
+    /// True on a UI-test launch, which reads and sends nothing.
+    let staysOffline: Bool
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var foreground = ForegroundReturnDetector()
@@ -45,29 +51,50 @@ struct UnsavedVoteRecheck: ViewModifier {
     func body(content: Content) -> some View {
         content
             .task {
-                guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
+                guard !staysOffline else { return }
                 await voteStore.recheckUnsavedVotes()
             }
             .onChange(of: scenePhase) { _, phase in
-                guard foreground.didReturn(to: phase), !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
+                guard foreground.didReturn(to: phase), !staysOffline else { return }
                 Task { await voteStore.recheckUnsavedVotes() }
             }
             .task {
-                guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
-                var detector = OnlineReturnDetector()
-                for await isOnline in NetworkPathReports.online() {
-                    guard detector.cameOnline(isOnline) else { continue }
-                    // Unstructured, so a send is not cancelled with this task (sign-out ends the store with it).
-                    Task { await billsStore.resendUnsavedVotesOnce() }
-                }
+                guard !staysOffline else { return }
+                await Self.resendOnEachReturnOnline(onlineReports(), billsStore: billsStore)
             }
+    }
+
+    /// Starts the one automatic resend (`BillsStore.startUnsavedVoteResend()`) each time `reports` say the phone is back
+    /// online (`OnlineReturnDetector`), until they end or this task is cancelled. Sign-out takes the tabs down, which
+    /// cancels it: a resend still out is cancelled then too, and once its read is back it sends nothing. A resend is not
+    /// awaited here, so the next report is read while it runs.
+    static func resendOnEachReturnOnline(_ reports: AsyncStream<Bool>, billsStore: BillsStore) async {
+        var detector = OnlineReturnDetector()
+        var resends: [Task<[String: VoteWriteResult], Never>] = []
+        for await isOnline in reports {
+            guard detector.cameOnline(isOnline) else { continue }
+            resends.append(billsStore.startUnsavedVoteResend())
+        }
+        for resend in resends {
+            resend.cancel()
+        }
     }
 }
 
 extension View {
     /// Reads the votes not saved yet again on a return to the app, and sends each once more once the phone is back
-    /// online (APPF-30 step 2).
-    func rechecksUnsavedVotes(billsStore: BillsStore, voteStore: BillVoteStore) -> some View {
-        modifier(UnsavedVoteRecheck(billsStore: billsStore, voteStore: voteStore))
+    /// online (APPF-30 step 2). Tests pass their own `onlineReports`, and `staysOffline` for a UI-test launch.
+    func rechecksUnsavedVotes(
+        billsStore: BillsStore,
+        voteStore: BillVoteStore,
+        onlineReports: @escaping @Sendable () -> AsyncStream<Bool> = { NetworkPathReports.online() },
+        staysOffline: Bool = AppLaunchOptions.shouldStreamlineStartupForUITests
+    ) -> some View {
+        modifier(UnsavedVoteRecheck(
+            billsStore: billsStore,
+            voteStore: voteStore,
+            onlineReports: onlineReports,
+            staysOffline: staysOffline
+        ))
     }
 }

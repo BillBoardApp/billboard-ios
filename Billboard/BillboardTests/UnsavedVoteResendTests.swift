@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Billboard
 
@@ -464,7 +465,121 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertFalse(launchedOffline.cameOnline(true))
     }
 
+    // MARK: - The tabs' modifier (`rechecksUnsavedVotes`)
+
+    /// The tabs' modifier reads the votes not saved yet at launch; then, on an offline report and an online one after
+    /// it, starts the one automatic resend, which reads the row again and sends the vote. A further online report (Wi-Fi
+    /// to cellular) starts none.
+    func testTheTabsReadAtLaunchAndResendOnceThePhoneIsBackOnline() throws {
+        let disk = try markedDisk()
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let (store, voteStore) = launch(disk, bills: [bill()], votes: votes, preferences: FakePreferencesService())
+        let (reports, online) = AsyncStream.makeStream(of: Bool.self)
+        let session = Session()
+        let host = AccessibilityTreeText.Host(SignedInTabs(session: session, billsStore: store, voteStore: voteStore, onlineReports: { reports }))
+        defer { host.close() }
+
+        XCTAssertTrue(host.run(until: { votes.batchRequests == [[Self.guid]] }), "the launch read: \(votes.batchRequests)")
+        online.yield(false)
+        host.run(0.3)
+        XCTAssertEqual(votes.setFeedbackCalls, [], "offline")
+        online.yield(true)
+        XCTAssertTrue(host.run(until: { voteStore.unsavedVotes.isEmpty }), "back online: \(votes.setFeedbackCalls)")
+        XCTAssertEqual(votes.batchRequests, [[Self.guid], [Self.guid]], "read again first")
+        XCTAssertEqual(votes.setFeedbackCalls.map(\.feedback), [.yea])
+        online.yield(true)
+        host.run(0.3)
+        XCTAssertEqual(votes.batchRequests.count, 2, "no return online")
+        XCTAssertEqual(votes.setFeedbackCalls.count, 1)
+    }
+
+    /// A UI-test launch stays off the network: no read at launch, and nothing sent when the phone is online.
+    func testTheTabsOfAUITestLaunchReadAndSendNothing() throws {
+        let disk = try markedDisk()
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let (store, voteStore) = launch(disk, bills: [bill()], votes: votes, preferences: FakePreferencesService())
+        let (reports, online) = AsyncStream.makeStream(of: Bool.self)
+        let session = Session()
+        let host = AccessibilityTreeText.Host(
+            SignedInTabs(session: session, billsStore: store, voteStore: voteStore, onlineReports: { reports }, staysOffline: true)
+        )
+        defer { host.close() }
+
+        online.yield(false)
+        online.yield(true)
+        host.run(0.5)
+        XCTAssertEqual(votes.batchRequests, [])
+        XCTAssertEqual(votes.setFeedbackCalls, [])
+        XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid])
+    }
+
+    /// Sign-out takes the tabs down while a resend's read is out: the resend is cancelled with them, so once the read is
+    /// back nothing is sent and the resend is not used.
+    func testTabsTakenDownWhileTheReadIsOutSendNothing() throws {
+        let disk = try markedDisk()
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let (store, voteStore) = launch(disk, bills: [bill()], votes: votes, preferences: FakePreferencesService())
+        let (reports, online) = AsyncStream.makeStream(of: Bool.self)
+        let session = Session()
+        let host = AccessibilityTreeText.Host(SignedInTabs(session: session, billsStore: store, voteStore: voteStore, onlineReports: { reports }))
+        defer { host.close() }
+
+        online.yield(true)
+        XCTAssertTrue(host.run(until: { !votes.batchRequests.isEmpty }), "the read is out")
+        host.run(0.3)
+        session.isSignedIn = false
+        host.run(0.3)
+        readGate.open()
+        host.run(0.5)
+
+        XCTAssertEqual(votes.batchRequests.count, 1, "the resend joined the launch read")
+        XCTAssertEqual(votes.setFeedbackCalls, [])
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea])
+        XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid], "not used up")
+    }
+
+    /// Whether the tabs are up: sign-out takes them down.
+    @MainActor
+    private final class Session: ObservableObject {
+        @Published var isSignedIn = true
+    }
+
+    /// The tabs' modifier on a view that is there while `session` is signed in, as `TabsBar` is.
+    private struct SignedInTabs: View {
+        @ObservedObject var session: Session
+        let billsStore: BillsStore
+        let voteStore: BillVoteStore
+        let onlineReports: @Sendable () -> AsyncStream<Bool>
+        var staysOffline = false
+
+        var body: some View {
+            if session.isSignedIn {
+                Color.clear.rechecksUnsavedVotes(
+                    billsStore: billsStore,
+                    voteStore: voteStore,
+                    onlineReports: onlineReports,
+                    staysOffline: staysOffline
+                )
+            }
+        }
+    }
+
     // MARK: - Helpers
+
+    /// A disk holding a Yea not saved yet, as a launch whose write failed offline leaves it.
+    private func markedDisk() throws -> Disk {
+        let disk = try makeDisk()
+        let cache = BillVoteCache(config: BillVoteCache.Config(persistenceKey: disk.key), defaults: disk.defaults)
+        let sentAt = Date()
+        cache.setVoted(billId: Self.guid, vote: .yea, votedAt: sentAt, now: sentAt)
+        cache.setUnsavedVote(BillVoteCache.UnsavedVote(vote: .yea, sentAt: sentAt, reasons: [], autoResent: false), for: Self.guid)
+        return disk
+    }
 
     private func waitForPuts(_ preferences: FakePreferencesService, count: Int) async {
         for _ in 0..<500 where preferences.putCalls.count < count { await Task.yield() }
