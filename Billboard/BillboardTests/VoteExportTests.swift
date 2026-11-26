@@ -365,7 +365,7 @@ final class VoteExportTests: XCTestCase {
 
         XCTAssertEqual(Array(data.prefix(3)), [0xEF, 0xBB, 0xBF], "UTF-8 byte order mark")
         // Read past the mark by hand: Foundation's UTF-8 decoding drops it.
-        let text = String(decoding: data.dropFirst(3), as: UTF8.self)
+        let text = try XCTUnwrap(String(bytes: data.dropFirst(3), encoding: .utf8))
         XCTAssertEqual(
             text,
             Self.header + "\r\n"
@@ -588,27 +588,20 @@ final class VoteExportTests: XCTestCase {
     }
 
     /// A new load first removes every export on disk, such as one left by an app that was closed while the screen
-    /// showed, so only the new one stays.
+    /// showed, whether it ends with files, with no votes or in the error state; only a new export stays.
     func testANewLoadRemovesAnExportLeftFromBefore() async throws {
-        let left = try folder.write([vote("BILLS-119hr1")], exportedAt: Date())
-        XCTAssertTrue(FileManager.default.fileExists(atPath: left.csv.path), "precondition")
-
-        let model = DownloadVotesModel(service: FakeVoteExportService(.success([vote("BILLS-119hr2")])), folder: folder)
-        await model.load()
-
-        guard case .ready(let files) = model.phase else { return XCTFail("expected ready, got \(model.phase)") }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: left.folder.path), "the earlier export is gone")
-        let folders = try FileManager.default.contentsOfDirectory(at: folder.root, includingPropertiesForKeys: nil)
-        XCTAssertEqual(folders.map(\.lastPathComponent), [files.folder.lastPathComponent], "only the new export")
-    }
-
-    /// The same happens when the new load ends with no votes or in the error state.
-    func testALoadWithoutFilesStillRemovesAnExportLeftFromBefore() async throws {
-        for result in [Result<[ExportedVote], Error>.success([]), .failure(httpStatusError(500, path: "account-data/votes"))] {
+        let error = httpStatusError(500, path: "account-data/votes")
+        for result in [Result<[ExportedVote], Error>.success([vote("BILLS-119hr2")]), .success([]), .failure(error)] {
             let left = try folder.write([vote("BILLS-119hr1")], exportedAt: Date())
             let model = DownloadVotesModel(service: FakeVoteExportService(result), folder: folder)
             await model.load()
             XCTAssertFalse(FileManager.default.fileExists(atPath: left.folder.path), "\(model.phase)")
+            let kept = (try? FileManager.default.contentsOfDirectory(atPath: folder.root.path)) ?? []
+            if case .ready(let files) = model.phase {
+                XCTAssertEqual(kept, [files.folder.lastPathComponent], "only the new export")
+            } else {
+                XCTAssertEqual(kept, [], "\(model.phase)")
+            }
         }
     }
 
@@ -691,7 +684,7 @@ private extension VoteExportTests {
         let data = VoteExport.csv(votes)
         XCTAssertEqual(Array(data.prefix(3)), [0xEF, 0xBB, 0xBF], "UTF-8 byte order mark")
         // Read past the mark by hand: Foundation's UTF-8 decoding drops it.
-        let text = String(decoding: data.dropFirst(3), as: UTF8.self)
+        let text = try XCTUnwrap(String(bytes: data.dropFirst(3), encoding: .utf8))
         XCTAssertTrue(text.hasSuffix("\r\n"))
         var rows = text.components(separatedBy: "\r\n")
         XCTAssertEqual(rows.removeLast(), "", "every line ends in CRLF")
