@@ -376,7 +376,8 @@ struct TabsBar: View {
             // The brief counts on Sunday and Monday only (UX-28): worked out for the time of each refresh, and
             // refreshed when the app becomes active.
             unreadDigestCount: WeeklyDigestStore.unreadDigestCount(
-                digest: weeklyDigestStore.settings.isEnabled ? weeklyDigestStore.digest : nil,
+                digest: weeklyDigestStore.digest,
+                isEnabled: weeklyDigestStore.settings.isEnabled,
                 now: Date()
             ),
             historyWindow: selectedBillboardHistoryWindow,

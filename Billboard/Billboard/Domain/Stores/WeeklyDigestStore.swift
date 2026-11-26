@@ -46,10 +46,11 @@ final class WeeklyDigestStore: ObservableObject {
 
     /// What the brief adds to the Updates badge at `now` (feature review N5; UX-28, a project decision of
     /// 2026-11-23): 1 for this week's brief (`latestPublishedWindow(relativeTo: now)`) not yet opened, from its
-    /// release on Sunday at 10 AM until Tuesday 00:00, New York time; else 0. Updates still shows an unopened brief
-    /// as its UNREAD front page all week; only the badge stops on Tuesday.
-    static func unreadDigestCount(digest: WeeklyDigest?, now: Date) -> Int {
-        guard let digest, !digest.isRead else { return 0 }
+    /// release on Sunday at 10 AM until Tuesday 00:00, New York time; else 0, and 0 while Weekly Brief in Updates is
+    /// off (`isEnabled`). Updates still shows an unopened brief as its UNREAD front page all week; only the badge
+    /// stops on Tuesday.
+    static func unreadDigestCount(digest: WeeklyDigest?, isEnabled: Bool, now: Date) -> Int {
+        guard isEnabled, let digest, !digest.isRead else { return 0 }
         let window = latestPublishedWindow(relativeTo: now)
         guard isSameRelease(digest.id, window.id), now < badgeEnd(forReleaseAt: window.releaseAt) else { return 0 }
         return 1

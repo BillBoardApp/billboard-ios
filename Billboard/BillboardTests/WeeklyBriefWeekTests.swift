@@ -73,8 +73,9 @@ final class WeeklyBriefWeekTests: XCTestCase {
     }
 
     /// The server writes each person's brief on Sunday and keeps it all week, so a change to the profile reads
-    /// nothing: the tabs no longer force a refresh on one, and a refresh with the changed profile (an Updates visit)
-    /// keeps this week's brief without asking the server.
+    /// nothing: a refresh with the changed profile (an Updates visit) keeps this week's brief without asking the
+    /// server. This covers the store only; that the tabs no longer force a refresh on a profile change
+    /// (`TabsBar`, which has no unit test) is checked in review.
     func testAProfileChangeDoesNotReadTheBriefAgain() async throws {
         let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
@@ -307,7 +308,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
             func at(_ text: String) throws -> Date { try XCTUnwrap(FlexibleISO8601.parse(text), text) }
             func count(_ digest: WeeklyDigest?, _ text: String) throws -> Int {
                 let now = try at(text)
-                return WeeklyDigestStore.unreadDigestCount(digest: digest, now: now)
+                return WeeklyDigestStore.unreadDigestCount(digest: digest, isEnabled: true, now: now)
             }
             let release = try at(week.release)
             let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: release)
@@ -327,6 +328,11 @@ final class WeeklyBriefWeekTests: XCTestCase {
             read.isRead = true
             XCTAssertEqual(try count(read, week.release), 0, "\(week.name): a read brief")
             XCTAssertEqual(try count(nil, week.release), 0, "\(week.name): no brief")
+            XCTAssertEqual(
+                WeeklyDigestStore.unreadDigestCount(digest: unread, isEnabled: false, now: release),
+                0,
+                "\(week.name): Weekly Brief in Updates off"
+            )
 
             // Last week's brief, still unread, does not count once this week's is out.
             let previous = WeeklyDigestStore.latestPublishedWindow(relativeTo: release.addingTimeInterval(-1))
