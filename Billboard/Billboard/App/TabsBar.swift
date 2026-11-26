@@ -173,6 +173,8 @@ struct TabsBar: View {
         Tab(rawValue: appState.selectedTab) ?? .home
     }
 
+    /// The Weekly Brief's first read, once the profile has loaded. A later change to the profile reads nothing: the
+    /// server writes each person's brief on Sunday and keeps it as written all week (UX-28).
     @MainActor
     private func bootstrapWeeklyDigestIfNeeded() async {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
@@ -635,14 +637,6 @@ struct TabsBar: View {
                     return
                 }
                 scheduleProfileDependentReconciliationIfReady()
-            }
-            .onChange(of: userStore.profile) { oldProfile, newProfile in
-                guard userStore.hasRefreshedOnce else { return }
-                guard oldProfile != newProfile else { return }
-                guard hasCompletedInitialWeeklyDigestBootstrap else { return }
-                Task {
-                    await weeklyDigestStore.refresh(profile: newProfile, forceRefresh: true)
-                }
             }
             .onChange(of: appState.selectedTab) { _, _ in
                 // A tab switch (by the tab bar, a link or the tour) ends the undo window (spec D 2.1.2).
