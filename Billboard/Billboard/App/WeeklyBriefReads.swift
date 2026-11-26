@@ -1,8 +1,9 @@
 import Foundation
 
 /// The Weekly Brief reads the tabs make (UX-28), apart from `TabsBar` so tests can drive them: the first read, once
-/// the profile has loaded with its id, and after it a read on each return to the app. A later change to the profile
-/// reads nothing: the server writes each person's brief on Sunday and keeps it as written all week.
+/// the profile has loaded with its id, and after it a read on each return to the app and at each time the brief's
+/// badge can change (`WeeklyDigestStore.nextBadgeCheck`). A later change to the profile reads nothing: the server
+/// writes each person's brief on Sunday and keeps it as written all week.
 ///
 /// A later read is kept, so the tabs cancel it when they go at sign-out (`cancel`). The store also writes nothing
 /// for an account that signed out after it was made, so a read that answers late leaves nothing on the device.
@@ -21,7 +22,7 @@ final class WeeklyBriefReads {
         hasCompletedFirstRead = true
     }
 
-    /// A read on a return to the app: this week's brief if it is not here yet
+    /// A read on a return to the app, or when the badge can change: this week's brief if it is not here yet
     /// (`WeeklyDigestStore.refreshOnReturnToApp`). Nothing before the first read, and nothing while one is out.
     func readAgain(store: WeeklyDigestStore, profile: UserProfile) {
         guard hasCompletedFirstRead, laterRead == nil else { return }

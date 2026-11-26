@@ -382,6 +382,31 @@ final class WeeklyBriefWeekTests: XCTestCase {
         }
     }
 
+    /// An app left open counts the badge again, and reads the brief if it is not here, at each time the count can
+    /// change: Sunday 10:30 AM ET, when this week's brief is stored (`briefStoringGrace`), and Tuesday 00:00 ET,
+    /// when the badge stops counting it. The instants are in UTC, so both 2026 clock changes are checked.
+    func testTheBadgeIsCheckedAgainAtSunday1030AndTuesdayMidnight() throws {
+        let checks: [(name: String, now: String, next: String)] = [
+            ("EST Saturday noon", "2026-11-14T17:00:00Z", "2026-11-15T15:30:00Z"),
+            ("EST Sunday 9:59:59", "2026-11-15T14:59:59Z", "2026-11-15T15:30:00Z"),
+            ("EST Sunday 10:00", "2026-11-15T15:00:00Z", "2026-11-15T15:30:00Z"),
+            ("EST Sunday 10:29:59", "2026-11-15T15:29:59Z", "2026-11-15T15:30:00Z"),
+            ("EST Sunday 10:30", "2026-11-15T15:30:00Z", "2026-11-17T05:00:00Z"),
+            ("EST Monday 23:59:59", "2026-11-17T04:59:59Z", "2026-11-17T05:00:00Z"),
+            ("EST Tuesday 00:00", "2026-11-17T05:00:00Z", "2026-11-22T15:30:00Z"),
+            ("EDT Sunday 10:30", "2026-10-25T14:30:00Z", "2026-10-27T04:00:00Z"),
+            ("clocks forward: Tuesday Mar 3 00:00 EST", "2026-03-03T05:00:00Z", "2026-03-08T14:30:00Z"),
+            ("clocks forward: Sunday Mar 8 10:30 EDT", "2026-03-08T14:30:00Z", "2026-03-10T04:00:00Z"),
+            ("clocks back: Tuesday Oct 27 00:00 EDT", "2026-10-27T04:00:00Z", "2026-11-01T15:30:00Z"),
+            ("clocks back: Sunday Nov 1 10:30 EST", "2026-11-01T15:30:00Z", "2026-11-03T05:00:00Z")
+        ]
+        for check in checks {
+            let now = try XCTUnwrap(FlexibleISO8601.parse(check.now), check.now)
+            let next = try XCTUnwrap(FlexibleISO8601.parse(check.next), check.next)
+            XCTAssertEqual(WeeklyDigestStore.nextBadgeCheck(after: now), next, check.name)
+        }
+    }
+
     // MARK: - Is a brief expected?
 
     func testFollowingSomethingMeansTopicsLifeAreasMembersOrWatchedBills() {
@@ -650,9 +675,9 @@ final class WeeklyBriefWeekTests: XCTestCase {
 /// The reads `TabsBar` makes (`WeeklyBriefReads`), and a read that answers after sign-out.
 extension WeeklyBriefWeekTests {
     /// The tabs' first read waits for the profile to load with its id: a profile still loading, or one that loaded
-    /// with no id, reads nothing and leaves the first read to the next load. A later read (a return to the app) waits
-    /// for the first. That `TabsBar` calls these from its `.task`, when the profile loads and on `scenePhase`
-    /// `.active` (it has no unit test) is checked in review.
+    /// with no id, reads nothing and leaves the first read to the next load. A later read (a return to the app, or a
+    /// time the badge can change) waits for the first. That `TabsBar` calls these from its `.task`, when the profile
+    /// loads, on `scenePhase` `.active` and at `nextBadgeCheck` (it has no unit test) is checked in review.
     func testTheTabsFirstReadWaitsForAProfileWithAnID() async throws {
         let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
