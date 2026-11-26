@@ -13,6 +13,9 @@ struct CongressMemberManifestItem: Codable, Identifiable, Equatable, Hashable {
     /// member stats could not be read.
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
+    /// BillBoard's counts for the Congress the server says they cover (REL-46); absent from services before REL-46,
+    /// from caches written before 1.3 and when the member has no counts.
+    let currentCongressCounts: TrackedCongressCounts?
 
     enum CodingKeys: String, CodingKey {
         case bioguideId
@@ -25,6 +28,7 @@ struct CongressMemberManifestItem: Codable, Identifiable, Equatable, Hashable {
         case currentCongressBillsSupportedCount
         case trackedSponsoredCount
         case trackedSupportedCount
+        case currentCongressCounts
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +61,8 @@ struct CongressMemberManifestItem: Codable, Identifiable, Equatable, Hashable {
         currentCongressBillsSupportedCount = try container.decodeIfPresent(Int.self, forKey: .currentCongressBillsSupportedCount)
         trackedSponsoredCount = try container.decodeIfPresent(Int.self, forKey: .trackedSponsoredCount)
         trackedSupportedCount = try container.decodeIfPresent(Int.self, forKey: .trackedSupportedCount)
+        // A cache written before 1.3 has no such key, and the counts stay unknown.
+        currentCongressCounts = try container.decodeIfPresent(TrackedCongressCounts.self, forKey: .currentCongressCounts)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -71,6 +77,7 @@ struct CongressMemberManifestItem: Codable, Identifiable, Equatable, Hashable {
         try container.encodeIfPresent(currentCongressBillsSupportedCount, forKey: .currentCongressBillsSupportedCount)
         try container.encodeIfPresent(trackedSponsoredCount, forKey: .trackedSponsoredCount)
         try container.encodeIfPresent(trackedSupportedCount, forKey: .trackedSupportedCount)
+        try container.encodeIfPresent(currentCongressCounts, forKey: .currentCongressCounts)
     }
 
     var chamberLabel: String? {
@@ -141,5 +148,6 @@ extension CongressMemberManifestItem {
         self.currentCongressBillsSupportedCount = dto.currentCongressBillsSupportedCount
         self.trackedSponsoredCount = dto.trackedSponsoredCount
         self.trackedSupportedCount = dto.trackedSupportedCount
+        self.currentCongressCounts = dto.currentCongressCounts.map(TrackedCongressCounts.init(dto:))
     }
 }

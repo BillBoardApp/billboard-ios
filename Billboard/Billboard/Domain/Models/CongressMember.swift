@@ -17,6 +17,10 @@ struct CongressMember: Identifiable, Hashable {
     /// cosponsored. Nil when the payload does not carry them.
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
+    /// BillBoard's counts for the Congress the server says they cover (REL-46): the newest Congress the member has
+    /// counts in, else the 119th. Nil from services before REL-46 and when the member has no counts; the page then
+    /// falls back to the 119th Congress counts above.
+    let currentCongressCounts: TrackedCongressCounts?
 
     // Profile
     let biography: String
@@ -39,6 +43,7 @@ struct CongressMember: Identifiable, Hashable {
         currentCongressBillsSupportedCount: Int? = nil,
         trackedSponsoredCount: Int? = nil,
         trackedSupportedCount: Int? = nil,
+        currentCongressCounts: TrackedCongressCounts? = nil,
         biography: String = "",
         party: PoliticalParty = .independent,
         district: String? = nil,
@@ -56,6 +61,7 @@ struct CongressMember: Identifiable, Hashable {
         self.currentCongressBillsSupportedCount = currentCongressBillsSupportedCount
         self.trackedSponsoredCount = trackedSponsoredCount
         self.trackedSupportedCount = trackedSupportedCount
+        self.currentCongressCounts = currentCongressCounts
         self.biography = biography
         self.party = party
         self.district = district
@@ -126,6 +132,33 @@ struct CongressMember: Identifiable, Hashable {
 
         let districtPart = Int(normalized).map(String.init) ?? rawDistrict
         return stateCode.isEmpty ? districtPart : "\(stateCode)-\(districtPart)"
+    }
+}
+
+/// A member's tracked counts for one Congress, as the server sends them in `currentCongressCounts`
+/// (REL-46): the newest Congress the member has counts in, else the 119th. Clients label the counts
+/// with `congress`, never with a Congress computed from the date. Codable for the members manifest's
+/// disk cache.
+nonisolated struct TrackedCongressCounts: Codable, Hashable, Sendable {
+    /// The Congress the older count fields (`trackedSponsoredCount`, `trackedSupportedCount`,
+    /// `currentCongressBillsSupportedCount`) always cover.
+    static let fieldsCongress = 119
+
+    /// The Congress the counts cover, such as 120.
+    let congress: Int
+    /// Bills of that Congress that BillBoard tracks and this member sponsored.
+    let sponsored: Int
+    /// Bills of that Congress that BillBoard tracks and this member cosponsored.
+    let supported: Int
+
+    init(congress: Int, sponsored: Int, supported: Int) {
+        self.congress = congress
+        self.sponsored = sponsored
+        self.supported = supported
+    }
+
+    init(dto: UserAPIContractsV1.CongressMemberCongressCounts) {
+        self.init(congress: dto.congress, sponsored: dto.sponsored, supported: dto.supported)
     }
 }
 

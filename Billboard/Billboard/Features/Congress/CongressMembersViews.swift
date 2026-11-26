@@ -482,6 +482,7 @@ struct CongressMemberProfileLoaderView: View {
             currentCongressBillsSupportedCount: manifest.currentCongressBillsSupportedCount,
             trackedSponsoredCount: manifest.trackedSponsoredCount,
             trackedSupportedCount: manifest.trackedSupportedCount,
+            currentCongressCounts: manifest.currentCongressCounts,
             biography: "",
             party: resolvedParty,
             district: manifest.district

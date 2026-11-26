@@ -20,6 +20,9 @@ struct ProcessedCongressMember: Decodable {
     /// member stats could not be read.
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
+    /// BillBoard's counts for the Congress the server says they cover (REL-46); absent from services before REL-46
+    /// and when the member has no counts. A member new in the 120th Congress has these and no 119th counts.
+    let currentCongressCounts: TrackedCongressCounts?
     let terms: [Term]?
 
     init(from decoder: Decoder) throws {
@@ -96,6 +99,7 @@ struct ProcessedCongressMember: Decodable {
         currentCongressBillsSupportedCount = try? container.decodeIfPresent(Int.self, forKey: .currentCongressBillsSupportedCount)
         trackedSponsoredCount = try? container.decodeIfPresent(Int.self, forKey: .trackedSponsoredCount)
         trackedSupportedCount = try? container.decodeIfPresent(Int.self, forKey: .trackedSupportedCount)
+        currentCongressCounts = try? container.decodeIfPresent(TrackedCongressCounts.self, forKey: .currentCongressCounts)
 
         terms = try? container.decodeIfPresent([Term].self, forKey: .terms)
     }
@@ -143,6 +147,7 @@ struct ProcessedCongressMember: Decodable {
         case currentCongressBillsSupportedCount
         case trackedSponsoredCount
         case trackedSupportedCount
+        case currentCongressCounts
         case directOrderName
 
         // Flattened payload support
@@ -264,9 +269,10 @@ struct ProcessedCongressMember: Decodable {
         let resolvedTerms = [derivedTermsServed, termsServed].compactMap { $0 }.first { $0 > 0 }
         let resolvedBiography = (biography ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedName = name.isEmpty ? manifest.name : name
-        // The tracked counts come as a pair. Use the manifest's when this payload has neither
-        // (its member stats read failed), rather than showing no tracked counts.
-        let hasTrackedCounts = trackedSponsoredCount != nil || trackedSupportedCount != nil
+        // The tracked counts come together. Use the manifest's when this payload has none of them
+        // (its member stats read failed), rather than showing no tracked counts. A member new in the
+        // 120th Congress sends currentCongressCounts and no 119th counts, and has counts.
+        let hasTrackedCounts = trackedSponsoredCount != nil || trackedSupportedCount != nil || currentCongressCounts != nil
 
         return CongressMember(
             id: UUID.deterministic(from: bioguideId),
@@ -280,6 +286,7 @@ struct ProcessedCongressMember: Decodable {
             currentCongressBillsSupportedCount: currentCongressBillsSupportedCount,
             trackedSponsoredCount: hasTrackedCounts ? trackedSponsoredCount : manifest.trackedSponsoredCount,
             trackedSupportedCount: hasTrackedCounts ? trackedSupportedCount : manifest.trackedSupportedCount,
+            currentCongressCounts: hasTrackedCounts ? currentCongressCounts : manifest.currentCongressCounts,
             biography: resolvedBiography,
             party: resolvedParty,
             district: resolvedDistrict,
@@ -372,6 +379,7 @@ extension ProcessedCongressMember {
         currentCongressBillsSupportedCount = dto.currentCongressBillsSupportedCount
         trackedSponsoredCount = dto.trackedSponsoredCount
         trackedSupportedCount = dto.trackedSupportedCount
+        currentCongressCounts = dto.currentCongressCounts.map(TrackedCongressCounts.init(dto:))
         terms = mappedTerms
     }
 
