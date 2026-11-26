@@ -109,7 +109,7 @@ final class BillWatchNotificationsTests: XCTestCase {
         let notifications = try fakeNotifications(.authorized)
         var saved = DeviceNotificationSettings.allEnabled
         saved.notifyAlert = false
-        PushPresentationSettings.save(saved, defaults: notifications.defaults)
+        NotificationSettingsStore.saveLocally(saved, defaults: notifications.defaults)
 
         let block = BillWatchNotificationBlock.make(
             permission: .authorized,
@@ -119,6 +119,20 @@ final class BillWatchNotificationsTests: XCTestCase {
         )
 
         XCTAssertEqual(block, .actionsInCongressOff)
+
+        // The master switch has a key of its own, which Profile writes beside the types.
+        saved.notificationsEnabled = false
+        NotificationSettingsStore.saveLocally(saved, defaults: notifications.defaults)
+        XCTAssertFalse(NotificationSettingsStore.savedSettings(defaults: notifications.defaults).notificationsEnabled)
+        XCTAssertEqual(
+            BillWatchNotificationBlock.make(
+                permission: .authorized,
+                settings: NotificationSettingsStore.savedSettings(defaults: notifications.defaults),
+                isWatching: true,
+                hasAskedPermission: true
+            ),
+            .notificationsOff
+        )
     }
 
     // MARK: - The bill page
@@ -178,7 +192,7 @@ final class BillWatchNotificationsTests: XCTestCase {
             let notifications = try fakeNotifications(permission)
             notifications.defaults.set(askedBefore, forKey: AppNotificationStorage.pushPermissionPromptedKey)
             if let saved {
-                PushPresentationSettings.save(saved, defaults: notifications.defaults)
+                NotificationSettingsStore.saveLocally(saved, defaults: notifications.defaults)
             }
             let page = billPage(watched: false, notifications: notifications)
             let spoken = SpokenLines()
@@ -228,10 +242,13 @@ final class BillWatchNotificationsTests: XCTestCase {
 
     /// A watched bill whose watch can't notify on this device: the Watch row's caption says why, and the watch stays.
     func testTheWatchRowSaysWhenNotificationsAreOff() throws {
+        var masterOff = DeviceNotificationSettings.allEnabled
+        masterOff.notificationsEnabled = false
         var actionsOff = DeviceNotificationSettings.allEnabled
         actionsOff.notifyAlert = false
         let cases: [(String, UNAuthorizationStatus, DeviceNotificationSettings?, BillWatchNotificationBlock?)] = [
             ("iOS permission off", .denied, nil, .permissionOff),
+            ("Notifications off", .authorized, masterOff, .notificationsOff),
             ("Actions in Congress off", .authorized, actionsOff, .actionsInCongressOff),
             ("allowed", .authorized, nil, nil)
         ]
@@ -239,7 +256,7 @@ final class BillWatchNotificationsTests: XCTestCase {
             let notifications = try fakeNotifications(permission)
             notifications.defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
             if let saved {
-                PushPresentationSettings.save(saved, defaults: notifications.defaults)
+                NotificationSettingsStore.saveLocally(saved, defaults: notifications.defaults)
             }
             let page = billPage(watched: true, notifications: notifications)
             APIClient.$current.withValue(Self.offlineClient()) {
