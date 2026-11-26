@@ -173,6 +173,23 @@ extension WeeklyDigestService {
     }
 }
 
+// MARK: - Download my votes
+
+protocol VoteExportServicing: Sendable {
+    /// Every one of the caller's votes, all pages read, one row per bill (UX-40 L7).
+    func fetchAllVotes() async throws -> [ExportedVote]
+}
+
+extension VoteExportService {
+    struct Live: VoteExportServicing {
+        nonisolated init() {}
+
+        func fetchAllVotes() async throws -> [ExportedVote] {
+            try await VoteExportService.fetchAllVotes()
+        }
+    }
+}
+
 // MARK: - Device notification settings
 
 protocol DeviceNotificationSettingsServicing: Sendable {
