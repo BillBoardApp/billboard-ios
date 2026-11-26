@@ -99,7 +99,9 @@ final class WeeklyDigestStore: ObservableObject {
     /// How long after the Sunday 10 AM ET release an empty answer (204) may mean only that this person's brief is
     /// not stored yet. The server's GenerateWeeklyDigests starts at 10:00 and hands the briefs to its workers, which
     /// store them in time for the first Sunday push run at 10:30 (billboard-backend
-    /// `infra/lib/config/weekly-digest-constants.ts`).
+    /// `infra/lib/config/weekly-digest-constants.ts`). A worker that fails is tried again 12 minutes later, up to
+    /// three times in all, so a brief can still be stored after 10:30: a return to the app on Sunday asks again
+    /// (`refreshOnReturnToApp`), and so does each Updates visit.
     nonisolated static let briefStoringGrace: TimeInterval = 30 * 60
 
     /// Whether the person follows topics, life areas or members, or watches bills, the things a brief is mostly
@@ -227,10 +229,18 @@ final class WeeklyDigestStore: ObservableObject {
 
     /// A return to the app (UX-28): reads this week's brief if it is not here yet, for example after the app was
     /// last open before Sunday 10 AM ET, so the Sunday and Monday badge can count it. It asks the server nothing
-    /// when this week's brief is here (`refresh`'s early returns) or this week's check found none.
+    /// when this week's brief is here (`refresh`'s early returns), or once this week's check found none, except on
+    /// the release day itself: a worker the server tries again can store a brief after 10:30 AM
+    /// (`briefStoringGrace`).
     func refreshOnReturnToApp(profile: UserProfile) async {
-        guard !foundNoBriefThisWeek else { return }
+        guard !foundNoBriefThisWeek || isReleaseDay else { return }
         await refresh(profile: profile)
+    }
+
+    /// Whether it is Sunday, New York time, after this week's release.
+    private var isReleaseDay: Bool {
+        let now = now()
+        return WeeklyDigestSchedule.calendar.isDate(now, inSameDayAs: Self.latestPublishedWindow(relativeTo: now).releaseAt)
     }
 
     /// Whether `digest` is the server's brief for `window`'s week. Weeks are compared by release time, since the
