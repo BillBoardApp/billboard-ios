@@ -1095,6 +1095,7 @@ enum UserLocalDataPurge {
         BillAlertsStore.clearCache(scope: userId, defaults: defaults)
         CivicScoreStore.clearCache(scope: userId, userDefaults: defaults)
         WeeklyDigestStore.clearCache(scope: userId, defaults: defaults)
+        VoteExportFolder.standard.removeAll()
         clearLegacyUserData(defaults: defaults)
     }
 
@@ -1112,6 +1113,7 @@ enum UserLocalDataPurge {
         }
         // A vote not saved yet is sent again on its own (APPF-30 step 2): none may wait for the next account.
         BillVoteCache.clearAllUnsavedVotes(defaults: defaults)
+        VoteExportFolder.standard.removeAll()
         clearLegacyUserData(defaults: defaults)
     }
 }
