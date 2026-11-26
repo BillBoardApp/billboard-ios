@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The glyph colour of a toolbar control on a document page's glass bar: the bill page's Watch and Share,
-/// the member page's Follow (spec 3.21: toolbar items in ink).
+/// The glyph colour of a toolbar control on a document page's glass bar: the bill page's Share, the member
+/// page's Follow (spec 3.21: toolbar items in ink).
 ///
 /// A swipe back to a navy tab root draws the whole bar in the root's dark appearance for as long as the
 /// finger is held, even with the page's own scheme set on the bar. In light mode the system then drew the
@@ -18,7 +18,7 @@ enum DocumentToolbarGlyph {
     }
 }
 
-/// A word-and-symbol control in a document page's bar (Watch, Follow): the symbol and the word side by
+/// A word-and-symbol control in a document page's bar (the member page's Follow): the symbol and the word side by
 /// side, not a `Label`, which the bar draws as its icon alone even with `.titleAndIcon`, so the state
 /// would show only as a glyph (spec 1.4). Like system bar buttons it keeps the bar's fixed size (capped at
 /// `.large`); the button it labels offers the Large Content Viewer instead

@@ -706,8 +706,8 @@ struct BillVoteCastLedger: Equatable {
 
 // MARK: - Watch
 
-/// What one tap on a Watch control writes (spec D 2.1.5). Votes never change watch; only these
-/// toggles do.
+/// What one tap on the Watch row writes (spec D 2.1.5). Votes never change watch; only this toggle
+/// does.
 ///
 /// Watching adds the watch to one guid: a companion group's vote target (the member holding the
 /// vote, else the primary), else the bill's. Stopping removes it from the bill (every loaded member
@@ -770,21 +770,12 @@ extension BillWatchPlan {
     }
 }
 
-/// The Watch controls' copy and identifiers (spec D 2.1.5).
+/// The Watch row's copy and identifiers (spec D 2.1.5). The row is the bill page's one Watch control (a project
+/// decision of 2026-11-23, UX-39g).
 enum BillWatchCopy {
-    static let toolbarIdentifier = "bill.watch.toggle"
     static let rowIdentifier = "bill.watch.row"
     static let rowTitle = "Watch this bill"
     static let rowSubtitle = "Get notified when Congress acts on it."
-
-    /// "Watch" / "Watching": the toolbar button's label.
-    static func toolbarLabel(isWatching: Bool) -> String {
-        isWatching ? "Watching" : "Watch"
-    }
-
-    static func symbolName(isWatching: Bool) -> String {
-        isWatching ? "binoculars.fill" : "binoculars"
-    }
 
     /// Announced after a toggle.
     static func announcement(isWatching: Bool) -> String {

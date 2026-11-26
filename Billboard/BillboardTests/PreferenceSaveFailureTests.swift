@@ -113,31 +113,6 @@ final class PreferenceSaveFailureTests: XCTestCase {
         }
     }
 
-    /// The toolbar's Watch: the Watch row is usually off screen, so the failure also shows in the top banner, under the
-    /// button, which says it ("Error: …"). The row's line shows too and stays quiet, so it is said once.
-    func testTheBillPageShowsAFailedToolbarStopInTheBanner() {
-        let page = billPage(failing: true)
-        let spoken = SpokenLines()
-        APIClient.$current.withValue(Self.offlineClient()) {
-            let host = AccessibilityTreeText.Host(page.view.environment(\.announceToVoiceOver, spoken.announce), size: CGSize(width: 390, height: 5000), settle: 0.5)
-            defer { host.close() }
-            let watching = host.value(ofIdentifier: BillWatchCopy.rowIdentifier)
-            XCTAssertFalse(host.strings().contains("Couldn't stop watching this bill."), "no error before the tap")
-
-            XCTAssertTrue(host.activate(identifier: BillWatchCopy.toolbarIdentifier), "the toolbar's Watch: \(host.text())")
-            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillWatchCopy.errorIdentifier) != nil }), host.text())
-
-            XCTAssertEqual(host.label(ofIdentifier: BillWatchCopy.errorIdentifier), "Couldn't stop watching this bill.")
-            let banner = host.elements().filter { $0.label == "Couldn't stop watching this bill." && $0.identifier != BillWatchCopy.errorIdentifier }
-            XCTAssertEqual(banner.count, 1, "and the banner: \(host.text())")
-            XCTAssertEqual(page.preferences.deleteCalls.count, 1, "the stop was sent")
-            XCTAssertEqual(page.user.profile.watchedBillGUIDs, [Self.guid], "the watch is back")
-            XCTAssertEqual(host.value(ofIdentifier: BillWatchCopy.rowIdentifier), watching, "the toggle shows it")
-            host.run(0.3)
-            XCTAssertEqual(spoken.lines, [], "the banner says it; the row's line stays quiet")
-        }
-    }
-
     func testTheBillPageSaysNothingMoreWhenTheStopSaves() throws {
         let page = billPage(failing: false)
         let spoken = SpokenLines()

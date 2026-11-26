@@ -32,8 +32,8 @@ final class ThemePaletteTests: XCTestCase {
 
     // MARK: - Fixed colours
 
-    /// `fixedColor` keeps one appearance's value wherever it is drawn: the bill page's Watch and Share
-    /// glyphs stay the page's ink while the bar around them is drawn in a navy root's dark appearance
+    /// `fixedColor` keeps one appearance's value wherever it is drawn: the bill page's Share glyph
+    /// stays the page's ink while the bar around it is drawn in a navy root's dark appearance
     /// (a held swipe back).
     func testAFixedColourKeepsItsAppearanceInAnyEnvironment() {
         let ink = BillboardPalette.interactive
@@ -52,7 +52,7 @@ final class ThemePaletteTests: XCTestCase {
         }
     }
 
-    /// The document pages' toolbar glyphs (the bill page's Watch and Share, the member page's Follow): ink
+    /// The document pages' toolbar glyphs (the bill page's Share, the member page's Follow): ink
     /// fixed to the page's appearance, except with Reduce Transparency or Increase Contrast, where the group
     /// behind them turns dark during a held swipe back and the system's own colour (white there) is the
     /// readable one. `CongressRenderTests.testTheFollowButtonKeepsTheBarsSizeAndThePagesInk` checks that

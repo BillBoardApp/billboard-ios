@@ -389,7 +389,6 @@ final class BillVoteBarModelTests: XCTestCase {
         for identifier in VoteChoice.allCases.map(BillVoteBarModel.identifier(for:)) {
             XCTAssertFalse(identifier.contains("watch"), "the _&_watch identifiers are gone")
         }
-        XCTAssertEqual(BillWatchCopy.toolbarIdentifier, "bill.watch.toggle")
     }
 
     func testButtonsAreLeftToRightYeaNayAbstain() {
@@ -400,10 +399,6 @@ final class BillVoteBarModelTests: XCTestCase {
     // MARK: - Watch
 
     func testWatchCopy() {
-        XCTAssertEqual(BillWatchCopy.toolbarLabel(isWatching: false), "Watch")
-        XCTAssertEqual(BillWatchCopy.toolbarLabel(isWatching: true), "Watching")
-        XCTAssertEqual(BillWatchCopy.symbolName(isWatching: false), "binoculars")
-        XCTAssertEqual(BillWatchCopy.symbolName(isWatching: true), "binoculars.fill")
         XCTAssertEqual(BillWatchCopy.rowTitle, "Watch this bill")
         XCTAssertEqual(BillWatchCopy.rowSubtitle, "Get notified when Congress acts on it.")
     }
