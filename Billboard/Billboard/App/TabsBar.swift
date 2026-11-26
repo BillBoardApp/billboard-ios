@@ -189,8 +189,8 @@ struct TabsBar: View {
 
     /// A return to the app, or an app left open, may pass Sunday 10:30 AM ET with last week's brief still in hand:
     /// this week's is read then, so the Sunday and Monday badge counts it (UX-28). Only after the first read; the
-    /// store asks nothing when this week's brief is here or this week's check found none (`refreshOnReturnToApp`).
-    /// The read is kept and cancelled when the tabs go (`onDisappear`).
+    /// store asks nothing when this week's brief is here (`refreshOnReturnToApp`). The read is kept and cancelled
+    /// when the tabs go (`onDisappear`).
     @MainActor
     private func readWeeklyDigestAgain() {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }

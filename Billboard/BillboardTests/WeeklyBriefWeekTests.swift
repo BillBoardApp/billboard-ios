@@ -295,8 +295,11 @@ final class WeeklyBriefWeekTests: XCTestCase {
     // MARK: - A return to the app
 
     /// The app left in the background before Sunday 10 AM ET still holds last week's brief. A return to the app
-    /// after the release reads this week's, so the badge can count it; once it is here, or once this week's check
-    /// found none, a return asks nothing. With Weekly Brief in Updates off, nothing is read.
+    /// after the release reads this week's, so the badge can count it; once it is here a return asks nothing. Once
+    /// this week's check found none, a return asks again on Sunday, since a worker the server tries again can store
+    /// a brief after 10:30 AM, and asks nothing from Monday. With Weekly Brief in Updates off, nothing is read. The
+    /// tabs' calls are in `WeeklyBriefReads` (tested below); that `TabsBar` makes them on `scenePhase` `.active` is
+    /// checked in review.
     func testAReturnToTheAppReadsThisWeeksBriefOnce() async throws {
         let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let lastWeek = Self.lastWeeksWindow()
@@ -318,13 +321,17 @@ final class WeeklyBriefWeekTests: XCTestCase {
         await store.refreshOnReturnToApp(profile: profile)
         XCTAssertEqual(service.fetchCount, 1, "this week's brief is here")
 
-        // This week's check found none: a return asks nothing more.
+        // This week's check found none: on Sunday a return asks again, and from Monday it asks nothing more.
         let empty = FakeWeeklyDigestService()
         let (none, _, _) = try makeStore(service: empty, clock: clock)
         await none.refresh(profile: profile)
         XCTAssertTrue(none.foundNoBriefThisWeek)
         await none.refreshOnReturnToApp(profile: profile)
-        XCTAssertEqual(empty.fetchCount, 1)
+        XCTAssertEqual(empty.fetchCount, 2, "Sunday: a retried worker may store it after 10:30 AM")
+        XCTAssertTrue(none.foundNoBriefThisWeek)
+        clock.now = window.releaseAt.addingTimeInterval(26 * 60 * 60)
+        await none.refreshOnReturnToApp(profile: profile)
+        XCTAssertEqual(empty.fetchCount, 2, "Monday noon: this week's check found none")
 
         // Weekly Brief in Updates off.
         let off = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
