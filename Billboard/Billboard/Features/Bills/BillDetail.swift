@@ -291,6 +291,7 @@ private struct BillDetailContent: View {
     @EnvironmentObject private var voteStore: BillVoteStore
     @EnvironmentObject private var readState: AppReadState
     @EnvironmentObject private var userStore: UserStore
+    @EnvironmentObject private var congressManifestStore: CongressMembersManifestStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
@@ -1305,7 +1306,7 @@ private struct BillDetailContent: View {
         ScrollViewReader { scrollProxy in
         ScrollView {
             // The document (spec 4.28): front matter, then ruled sections in this order. Results, Why
-            // people voted, Compare with Congress and Done form the post-vote block, so Done never sits
+            // people voted, What happens next and Done form the post-vote block, so Done never sits
             // between a vote and the Results it opened.
             VStack(alignment: .leading, spacing: 0) {
                 BillFrontMatter(bill: bill, companion: companionDisplay) { bottom in
@@ -1374,9 +1375,11 @@ private struct BillDetailContent: View {
                     titleFocus: $voteFocus
                 )
 
-                // Post-vote: how Congress voted beside the user's vote, then Done.
+                // Post-vote: what happens next, the user's vote beside their members' (UX-41 concept 1), then Done.
                 if didJustVote {
-                    BillCongressVotedSection(bill: bill)
+                    if let afterVoteSummary {
+                        BillAfterVoteSection(summary: afterVoteSummary)
+                    }
                     doneButton
                 }
 
@@ -1667,6 +1670,56 @@ extension BillDetailContent {
             return .unknown
         }
         return .notVoted
+    }
+}
+
+// MARK: - What happens next (UX-41 concept 1)
+
+extension BillDetailContent {
+    /// What happens next after a vote made here: the shown vote beside the person's members, and the promise.
+    fileprivate var afterVoteSummary: AfterVoteSummary? {
+        guard let vote = barChoice else { return nil }
+        return AfterVoteSummary(
+            bill: bill,
+            vote: vote,
+            representatives: afterVoteRepresentatives,
+            companions: afterVoteCompanions,
+            block: voterNotificationBlock,
+            isWatching: currentWatchValue,
+            isVoteSaved: !showsUnsavedVote
+        )
+    }
+
+    /// The person's members as far as the page knows them: no address once the profile has loaded without a state;
+    /// not loaded while the profile or the members manifest is not.
+    fileprivate var afterVoteRepresentatives: AfterVoteSummary.Representatives {
+        guard !userStateCode.isEmpty else {
+            return userStore.hasRefreshedOnce ? .noAddress : .notLoaded
+        }
+        let manifest = congressManifestStore.items
+        guard !manifest.isEmpty else { return .notLoaded }
+        return .known(state: userStateCode, district: userDistrictValue, manifest: manifest)
+    }
+
+    /// A companion group's other members, each its loaded bill with details or nil while it is not (In Congress loads
+    /// them): a chamber's roll call may sit on one.
+    fileprivate var afterVoteCompanions: [Bill?] {
+        guard let companionGroup else { return [] }
+        let shown = billsStore.companionGroupIndex.memberGuid(for: bill)
+        return companionGroup.memberGuids.filter { $0 != shown }.map { member in
+            billsStore.loadedBills(ofMember: member).first { billsStore.hasBillDetails($0) }
+        }
+    }
+
+    /// Why a vote's notifications can't reach this device, for What happens next's promise: the Watch row's rule for a
+    /// bill that is followed, since nothing asks for iOS's permission after a vote.
+    fileprivate var voterNotificationBlock: BillWatchNotificationBlock? {
+        BillWatchNotificationBlock.make(
+            permission: notificationPermission,
+            settings: savedNotificationSettings,
+            isWatching: true,
+            hasAskedPermission: hasAskedNotificationPermission
+        )
     }
 }
 
