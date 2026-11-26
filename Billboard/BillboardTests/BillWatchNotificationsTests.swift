@@ -75,6 +75,26 @@ final class BillWatchNotificationsTests: XCTestCase {
         XCTAssertTrue(NotificationsSectionModel.notAskedHint.hasPrefix("Billboard needs your permission before it can send notifications."))
     }
 
+    /// What VoiceOver hears after a toggle (UX-47, D8 (b)): turning Watch on says why it can't notify, one line per
+    /// block, and nothing when nothing blocks it; turning it off is said as before, whatever blocks a watch.
+    func testTheAnnouncementSaysWhyANewWatchCantNotify() {
+        let expected: [(BillWatchNotificationBlock, String)] = [
+            (.permissionOff, "Watching this bill. Notifications are off in iOS Settings. Turn them on there to get notified when Congress acts on it."),
+            (.permissionNotAsked, "Watching this bill. Billboard needs your permission before it can send notifications. Turn them on in Profile."),
+            (.notificationsOff, "Watching this bill. Notifications are off in Profile. Turn them on there to get notified when Congress acts on it."),
+            (
+                .actionsInCongressOff,
+                "Watching this bill. Actions in Congress notifications are off in Profile. Turn them on there to get notified when Congress acts on it."
+            )
+        ]
+        for (block, line) in expected {
+            XCTAssertEqual(BillWatchCopy.announcement(isWatching: true, blockedBy: block), line, "\(block)")
+            XCTAssertEqual(BillWatchCopy.announcement(isWatching: false, blockedBy: block), "Stopped watching this bill", "off, \(block)")
+        }
+        XCTAssertNil(BillWatchCopy.announcement(isWatching: true, blockedBy: nil), "nothing blocks it: the switch says it is on")
+        XCTAssertEqual(BillWatchCopy.announcement(isWatching: false, blockedBy: nil), "Stopped watching this bill")
+    }
+
     func testWatchAsksOnlyWhenTheAppNeverHas() {
         XCTAssertTrue(BillWatchNotificationBlock.asksPermission(permission: .notDetermined, hasAskedPermission: false))
         XCTAssertFalse(BillWatchNotificationBlock.asksPermission(permission: .notDetermined, hasAskedPermission: true), "asked once already")
@@ -138,6 +158,74 @@ final class BillWatchNotificationsTests: XCTestCase {
         }
     }
 
+    /// Turning Watch on where the watch can't notify: once iOS's permission is read, VoiceOver hears "Watching this
+    /// bill. " and the row's caption, once (D8 (b)). Nothing when nothing blocks it, and nothing while iOS's prompt is
+    /// about to show (the app has never asked).
+    func testTurningWatchOnSaysWhyItCantNotify() throws {
+        var masterOff = DeviceNotificationSettings.allEnabled
+        masterOff.notificationsEnabled = false
+        var actionsOff = DeviceNotificationSettings.allEnabled
+        actionsOff.notifyAlert = false
+        let cases: [(String, UNAuthorizationStatus, Bool, DeviceNotificationSettings?, BillWatchNotificationBlock?)] = [
+            ("iOS permission off", .denied, true, nil, .permissionOff),
+            ("not asked, asked before", .notDetermined, true, nil, .permissionNotAsked),
+            ("Notifications off", .authorized, true, masterOff, .notificationsOff),
+            ("Actions in Congress off", .authorized, true, actionsOff, .actionsInCongressOff),
+            ("allowed", .authorized, true, nil, nil),
+            ("the prompt is about to show", .notDetermined, false, nil, nil)
+        ]
+        for (name, permission, askedBefore, saved, block) in cases {
+            let notifications = try fakeNotifications(permission)
+            notifications.defaults.set(askedBefore, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+            if let saved {
+                PushPresentationSettings.save(saved, defaults: notifications.defaults)
+            }
+            let page = billPage(watched: false, notifications: notifications)
+            let spoken = SpokenLines()
+            try APIClient.$current.withValue(Self.offlineClient()) {
+                let host = AccessibilityTreeText.Host(
+                    page.view.environment(\.announceToVoiceOver, spoken.announce),
+                    size: CGSize(width: 390, height: 5000),
+                    settle: 0.5
+                )
+                defer { host.close() }
+                XCTAssertEqual(spoken.lines, [], "\(name): nothing before the tap")
+
+                XCTAssertTrue(host.activate(identifier: BillWatchCopy.rowIdentifier), "\(name): \(host.text())")
+                XCTAssertTrue(host.run(until: { page.preferences.putCalls.count == 1 }), "\(name): \(host.text())")
+                host.run(0.3)
+
+                let expected = try block.map { [try XCTUnwrap(BillWatchCopy.announcement(isWatching: true, blockedBy: $0))] } ?? []
+                XCTAssertEqual(spoken.lines, expected, name)
+                XCTAssertEqual(notifications.prompts, askedBefore ? 0 : 1, "\(name): the prompt only when never asked")
+                XCTAssertEqual(page.user.profile.watchedBillGUIDs, [Self.guid], "\(name): the watch is kept")
+            }
+        }
+    }
+
+    /// Turning Watch off is said as before ("Stopped watching this bill", straight to VoiceOver), never with a
+    /// block's words, whatever blocks a watch.
+    func testTurningWatchOffSaysNoBlock() throws {
+        let notifications = try fakeNotifications(.denied)
+        notifications.defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+        let page = billPage(watched: true, notifications: notifications)
+        let spoken = SpokenLines()
+        APIClient.$current.withValue(Self.offlineClient()) {
+            let host = AccessibilityTreeText.Host(
+                page.view.environment(\.announceToVoiceOver, spoken.announce),
+                size: CGSize(width: 390, height: 5000),
+                settle: 0.5
+            )
+            defer { host.close() }
+            XCTAssertTrue(host.activate(identifier: BillWatchCopy.rowIdentifier), host.text())
+            XCTAssertTrue(host.run(until: { page.preferences.deleteCalls.count == 1 }), host.text())
+            host.run(0.3)
+
+            XCTAssertEqual(spoken.lines, [], "no block's words after a stop")
+            XCTAssertEqual(page.user.profile.watchedBillGUIDs, [])
+        }
+    }
+
     /// A watched bill whose watch can't notify on this device: the Watch row's caption says why, and the watch stays.
     func testTheWatchRowSaysWhenNotificationsAreOff() throws {
         var actionsOff = DeviceNotificationSettings.allEnabled
@@ -170,6 +258,16 @@ final class BillWatchNotificationsTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// The lines the page said to VoiceOver through `announceToVoiceOver`.
+    @MainActor
+    private final class SpokenLines {
+        private(set) var lines: [String] = []
+
+        var announce: @MainActor @Sendable (String) -> Void {
+            { [self] line in lines.append(line) }
+        }
+    }
 
     /// iOS permission and the device's saved switches for the page, on a defaults suite of its own, and the prompts
     /// it was asked to show.

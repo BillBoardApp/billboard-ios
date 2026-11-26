@@ -299,6 +299,7 @@ private struct BillDetailContent: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.watchNotificationAccess) private var watchNotificationAccess
+    @Environment(\.announceToVoiceOver) private var announceToVoiceOver
     @Environment(\.voteStripAlert) private var voteStripAlert
     /// Set by the tour's "Open this bill" until a vote is saved or the user taps Not now (spec D 2.5.5).
     @AppStorage(FirstRunStorage.voteCoachMarkPendingKey) private var voteCoachMarkPending = false
@@ -626,19 +627,37 @@ private struct BillDetailContent: View {
         hasAskedNotificationPermission = defaults.bool(forKey: AppNotificationStorage.pushPermissionPromptedKey)
     }
 
-    /// Turning Watch on shows iOS's notification prompt when the app has never asked (UX-47), once, as Profile and
-    /// the Updates card do. The watch is kept whatever the answer; the Watch row says when it can't notify.
-    private func askNotificationPermissionIfNeverAsked() {
+    /// After Watch is turned on (UX-47): reads iOS's permission, then shows iOS's notification prompt when the app has
+    /// never asked, once, as Profile and the Updates card do. Otherwise, when the watch can't notify on this device,
+    /// VoiceOver hears "Watching this bill. " and the row's caption (D8 (b)), queued after the switch's new value.
+    /// Nothing is said while the prompt is about to show, or when nothing blocks the watch. The watch is kept
+    /// whatever the answer; the Watch row says when it can't notify.
+    private func watchTurnedOn(_ toggle: UUID) {
         Task {
             let permission = await watchNotificationAccess.permission()
             let defaults = watchNotificationAccess.defaults
             notificationPermission = permission
+            savedNotificationSettings = NotificationSettingsStore.savedSettings(defaults: defaults)
             // The flag is read after the permission, so a quick second tap does not ask again.
             let hasAsked = defaults.bool(forKey: AppNotificationStorage.pushPermissionPromptedKey)
-            guard BillWatchNotificationBlock.asksPermission(permission: permission, hasAskedPermission: hasAsked) else { return }
-            defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
-            hasAskedNotificationPermission = true
-            watchNotificationAccess.showPrompt()
+            if BillWatchNotificationBlock.asksPermission(permission: permission, hasAskedPermission: hasAsked) {
+                defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+                hasAskedNotificationPermission = true
+                watchNotificationAccess.showPrompt()
+                return
+            }
+            hasAskedNotificationPermission = hasAsked
+            // A later toggle says its own words.
+            guard latestWatchToggle == toggle else { return }
+            let block = BillWatchNotificationBlock.make(
+                permission: permission,
+                settings: savedNotificationSettings,
+                isWatching: true,
+                hasAskedPermission: hasAsked
+            )
+            if let line = BillWatchCopy.announcement(isWatching: true, blockedBy: block) {
+                announceToVoiceOver(line)
+            }
         }
     }
 
@@ -934,9 +953,10 @@ private struct BillDetailContent: View {
     }
 
     /// The Watch row's toggle, the page's one Watch control (a project decision of 2026-11-23, UX-39g), and the only
-    /// control that changes watch: a vote, Skip and Clear never do (UX-47). The change shows and is said at once; if
-    /// its save fails, the stores put the watch back and the Watch row says so (UX-48). Turning it on asks for
-    /// notification permission if the app never has (UX-47).
+    /// control that changes watch: a vote, Skip and Clear never do (UX-47). The change shows at once, and turning it
+    /// off is said at once; if its save fails, the stores put the watch back and the Watch row says so (UX-48).
+    /// Turning it on asks for notification permission if the app never has, else says why the watch can't notify
+    /// when it can't (`watchTurnedOn`, UX-47).
     private func setWatch(_ watch: Bool) {
         guard watch != currentWatchValue else { return }
         let plan = BillWatchPlan.make(watch: watch, targetGuid: voteTargetGuid, memberGuids: watchGuids)
@@ -953,9 +973,10 @@ private struct BillDetailContent: View {
             watchOverride = nil
         }
         HapticFeedback.selection()
-        AccessibilityNotification.Announcement(BillWatchCopy.announcement(isWatching: watch)).post()
         if watch {
-            askNotificationPermissionIfNeverAsked()
+            watchTurnedOn(toggle)
+        } else if let line = BillWatchCopy.announcement(isWatching: false, blockedBy: nil) {
+            AccessibilityNotification.Announcement(line).post()
         }
         Task {
             guard await !save.value, latestWatchToggle == toggle else { return }

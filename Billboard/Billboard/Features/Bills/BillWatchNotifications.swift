@@ -61,6 +61,20 @@ extension BillWatchCopy {
             return "\(NotificationKind.actionsInCongress.title) notifications are off in Profile. Turn them on there to get notified when Congress acts on it."
         }
     }
+
+    /// Said to VoiceOver when the Watch row is turned off.
+    static let stoppedWatchingAnnouncement = "Stopped watching this bill"
+
+    /// What VoiceOver hears after the Watch row is toggled (UX-47): "Stopped watching this bill" when it is turned
+    /// off; when it is turned on and the watch can't notify on this device, "Watching this bill. " and the row's
+    /// caption, so the person hears why (a project decision of 2026-11-23, D8 (b)). Nil when it is turned on and
+    /// nothing blocks it: the switch says its own new value. The page also says nothing while iOS's prompt is about to
+    /// show (`asksPermission`), and reads `blockedBy` only after it has read iOS's permission.
+    static func announcement(isWatching: Bool, blockedBy block: BillWatchNotificationBlock?) -> String? {
+        guard isWatching else { return stoppedWatchingAnnouncement }
+        guard let block else { return nil }
+        return "Watching this bill. \(rowSubtitle(blockedBy: block))"
+    }
 }
 
 /// What the bill page reads and does about notifications for its Watch row (UX-47): iOS's permission, the

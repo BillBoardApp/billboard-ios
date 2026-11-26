@@ -777,11 +777,6 @@ enum BillWatchCopy {
     static let rowTitle = "Watch this bill"
     static let rowSubtitle = "Get notified when Congress acts on it."
 
-    /// Announced after a toggle.
-    static func announcement(isWatching: Bool) -> String {
-        isWatching ? "Watching this bill" : "Stopped watching this bill"
-    }
-
     /// Shown under the Watch row and said to VoiceOver when a toggle's save failed and the watch was put back
     /// (UX-48). `isWatching` is the value the toggle asked for.
     static func saveFailedText(isWatching: Bool) -> String {

@@ -491,6 +491,38 @@ final class BillDetailRenderTests: XCTestCase {
         }
     }
 
+    /// The Watch row's title is whole at AX5 on a 375 pt phone (UX-47): it wraps beside the switch, so the row is at
+    /// least as tall as the whole title and the caption under it, each set as wide as the row less the switch (the
+    /// widest they can be, so the fewest lines).
+    func testTheWatchRowTitleIsWholeAtAX5On375() throws {
+        let size = DynamicTypeSize.accessibility5
+        for watching in [false, true] {
+            let host = AccessibilityTreeText.Host(
+                voteSection(.notVoted, watching: watching).environment(\.dynamicTypeSize, size),
+                size: CGSize(width: 375, height: 3000)
+            )
+            defer { host.close() }
+            let row = try XCTUnwrap(host.frame(ofIdentifier: BillWatchCopy.rowIdentifier), host.text())
+            XCTAssertEqual(row.width, 375 - 2 * BillboardStyle.Space.xl, accuracy: 0.5, "the column")
+            let switchWidth = UIHostingController(rootView: Toggle("", isOn: .constant(watching)).labelsHidden())
+                .sizeThatFits(in: CGSize(width: 375, height: 200)).width
+            func height(_ text: String, _ role: TextRole, width: CGFloat) -> CGFloat {
+                UIHostingController(rootView: Text(text).textRole(role).fixedSize(horizontal: false, vertical: true).environment(\.dynamicTypeSize, size))
+                    .sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+            }
+            let labelWidth = row.width - switchWidth
+            let line = height("W", .body, width: 1000)
+            let title = height(BillWatchCopy.rowTitle, .body, width: labelWidth)
+            XCTAssertGreaterThan(title, line * 1.5, "precondition: beside the switch the title takes two lines at AX5")
+            let caption = height(BillWatchCopy.rowSubtitle, .caption, width: labelWidth)
+            XCTAssertGreaterThanOrEqual(row.height + 0.5, title + 2 + caption, "watching \(watching): the whole title, then the caption (\(row))")
+        }
+        for scheme in [ColorScheme.light, .dark] {
+            let variant = Variant(scheme: scheme, size: size)
+            attach(try render(voteSection(.notVoted), variant: variant, width: 375), name: "your-vote-watch-row-375-\(variant.name)")
+        }
+    }
+
     /// Your vote opens with where the vote stands until one is held, then says nothing about it (the vote
     /// bar shows it). R2's "Vote saved", the vote badge ("Not voted yet", "Yea") and the "Watch for changes"
     /// nudge are gone (project decision 9); the Watch row is always there.
