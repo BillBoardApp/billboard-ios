@@ -2396,6 +2396,31 @@ final class BillDetailRenderTests: XCTestCase {
         }
     }
 
+    /// The bar holds Share alone (UX-39g): Watch is the row in Your vote, the page's one Watch control.
+    func testTheToolbarHoldsOnlyShare() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let offline = APIClient(transport: { _ in throw URLError(.notConnectedToInternet) })
+        let bill = Self.documentBill()
+        let (billsStore, voteStore) = stores([bill])
+        try APIClient.$current.withValue(offline) {
+            let host = AccessibilityTreeText.Host(
+                page(BillDetail(billID: bill.id), billsStore: billsStore, voteStore: voteStore),
+                size: CGSize(width: 390, height: 844),
+                settle: 0.6,
+                scene: scene
+            )
+            defer { host.close() }
+            let navigation = try XCTUnwrap(host.navigationController, "the stack's navigation controller")
+            let bar = host.strings(under: navigation.navigationBar)
+            XCTAssertTrue(bar.contains("Share bill"), "Share: \(bar)")
+            for gone in ["Watch", "Watching"] {
+                XCTAssertFalse(bar.contains(gone), "no \(gone) in the bar: \(bar)")
+            }
+            XCTAssertFalse(host.identifiers().contains("bill.watch.toggle"), "the toolbar's Watch is gone")
+            XCTAssertNotNil(host.label(ofIdentifier: BillWatchCopy.rowIdentifier), "the Watch row stays: \(host.text())")
+        }
+    }
+
     /// On the page, before a vote, the sealed Results and Why people voted carry the VoiceOver action "Go to
     /// vote buttons" (spec 3.8.3), wired to the vote panel's focus; after a vote it is gone with the seal.
     func testThePageSealedSheetOffersGoToVoteButtons() {

@@ -63,7 +63,7 @@ extension BillWatchCopy {
     }
 }
 
-/// What the bill page reads and does about notifications for its Watch controls (UX-47): iOS's permission, the
+/// What the bill page reads and does about notifications for its Watch row (UX-47): iOS's permission, the
 /// switches this device last saved, whether the app has shown iOS's prompt, and the prompt itself. Tests put fakes
 /// here.
 nonisolated struct WatchNotificationAccess {
@@ -97,7 +97,7 @@ private nonisolated struct WatchNotificationAccessKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// The bill page's notification reads and iOS's prompt, for its Watch controls (UX-47). Tests put fakes here.
+    /// The bill page's notification reads and iOS's prompt, for its Watch row (UX-47). Tests put fakes here.
     var watchNotificationAccess: WatchNotificationAccess {
         get { self[WatchNotificationAccessKey.self] }
         set { self[WatchNotificationAccessKey.self] = newValue }

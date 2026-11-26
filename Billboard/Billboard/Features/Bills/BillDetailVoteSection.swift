@@ -49,11 +49,9 @@ struct BillYourVoteSection: View {
     /// The Watch row's caption: its promise, or why the watch can't notify on this device (UX-47,
     /// `BillWatchCopy.rowSubtitle(blockedBy:)`).
     var watchCaption: String = BillWatchCopy.rowSubtitle
-    /// Under the Watch row after a toggle's save failed and the watch was put back (UX-48).
+    /// Under the Watch row after a toggle's save failed and the watch was put back (UX-48), said to VoiceOver when it
+    /// appears.
     var watchError: String? = nil
-    /// The Watch row's error is said to VoiceOver when it appears; not when the top banner says it (the toolbar's
-    /// Watch made the change).
-    var announcesWatchError = true
     /// For a companion group (APPF-23): "These bills have identical text. Your vote counts once for both."
     var companionCaption: String?
     /// For a companion group whose members hold different votes (APPF-23): which one counts.
@@ -180,9 +178,9 @@ struct BillYourVoteSection: View {
     }
 
     /// "Watch this bill — Get notified when Congress acts on it.", on the `controlOn` toggle, and under it a failed
-    /// save's error, said to VoiceOver when it appears (UX-48). When the toolbar's Watch made the change, the top
-    /// banner shows and says it, and the line here stays quiet. When the watch can't notify on this device, the
-    /// caption says why instead of making its promise (UX-47).
+    /// save's error, said to VoiceOver when it appears (UX-48). It is the page's one Watch control (a project decision
+    /// of 2026-11-23, UX-39g). When the watch can't notify on this device, the caption says why instead of making its
+    /// promise (UX-47).
     private var watchRow: some View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
             Toggle(isOn: Binding(get: { isWatching }, set: { onSetWatch($0) })) {
@@ -200,7 +198,7 @@ struct BillYourVoteSection: View {
             .accessibilityIdentifier(BillWatchCopy.rowIdentifier)
 
             if let watchError {
-                RecordErrorText(watchError, announces: announcesWatchError)
+                RecordErrorText(watchError, announces: true)
                     .accessibilityIdentifier(BillWatchCopy.errorIdentifier)
             }
         }
