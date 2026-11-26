@@ -20,8 +20,8 @@ final class DownloadVotesRenderTests: XCTestCase {
         folder = VoteExportFolder(
             root: FileManager.default.temporaryDirectory.appendingPathComponent("DownloadVotesRenderTests-\(UUID().uuidString)", isDirectory: true)
         )
-        // A list takes a row out with an animation, and the old row stays in the accessibility tree until it ends:
-        // without animations the tree shows each state as soon as it is drawn.
+        // A list animates a row in or out when the state changes; without animations each state is drawn at once, so
+        // the tree read right after a change is the settled one.
         animationsWereEnabled = UIView.areAnimationsEnabled
         UIView.setAnimationsEnabled(false)
     }
@@ -261,9 +261,8 @@ final class DownloadVotesRenderTests: XCTestCase {
         }
     }
 
-    /// The screen hosted in a window on the test app's screen. Its list animates a row out when the state changes,
-    /// and the old row stays in the accessibility tree until that animation ends, which needs a window on the
-    /// screen.
+    /// The screen hosted in a window on the test app's screen, as the app shows it (lists lay out and reuse their
+    /// cells as they do on a phone).
     private func onScreen<Content: View>(_ view: Content, size: CGSize) throws -> AccessibilityTreeText.Host {
         let scene = try XCTUnwrap(
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
