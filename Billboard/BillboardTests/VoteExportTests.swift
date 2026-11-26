@@ -364,10 +364,11 @@ final class VoteExportTests: XCTestCase {
         let data = VoteExport.csv(page.votes)
 
         XCTAssertEqual(Array(data.prefix(3)), [0xEF, 0xBB, 0xBF], "UTF-8 byte order mark")
-        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        // Read past the mark by hand: Foundation's UTF-8 decoding drops it.
+        let text = String(decoding: data.dropFirst(3), as: UTF8.self)
         XCTAssertEqual(
             text,
-            "\u{FEFF}" + Self.header + "\r\n"
+            Self.header + "\r\n"
                 + "H.R. 1285,119th,Clean Energy Access Act,Yea,Economic Impact / Jobs; Taxes / Spending,2026-10-01T15:00:00Z,2026-10-02T15:00:00Z,VA,8,Verified\r\n"
                 + "S. 570,119th,BILLS-119s570,Abstain,,,,,,Not verified\r\n"
         )
@@ -687,10 +688,12 @@ private extension VoteExportTests {
 
     /// The CSV's lines without the byte order mark: the header first.
     func csvRows(_ votes: [ExportedVote]) throws -> [String] {
-        let text = try XCTUnwrap(String(data: VoteExport.csv(votes), encoding: .utf8))
-        XCTAssertTrue(text.hasPrefix("\u{FEFF}"))
+        let data = VoteExport.csv(votes)
+        XCTAssertEqual(Array(data.prefix(3)), [0xEF, 0xBB, 0xBF], "UTF-8 byte order mark")
+        // Read past the mark by hand: Foundation's UTF-8 decoding drops it.
+        let text = String(decoding: data.dropFirst(3), as: UTF8.self)
         XCTAssertTrue(text.hasSuffix("\r\n"))
-        var rows = String(text.dropFirst()).components(separatedBy: "\r\n")
+        var rows = text.components(separatedBy: "\r\n")
         XCTAssertEqual(rows.removeLast(), "", "every line ends in CRLF")
         return rows
     }

@@ -13,15 +13,21 @@ final class DownloadVotesRenderTests: XCTestCase {
     private static let privacyLine = "You can download a copy of your votes from within the app (Profile → Settings → Download my votes)."
 
     private var folder: VoteExportFolder!
+    private var animationsWereEnabled = true
 
     override func setUp() {
         super.setUp()
         folder = VoteExportFolder(
             root: FileManager.default.temporaryDirectory.appendingPathComponent("DownloadVotesRenderTests-\(UUID().uuidString)", isDirectory: true)
         )
+        // A list takes a row out with an animation, and the old row stays in the accessibility tree until it ends:
+        // without animations the tree shows each state as soon as it is drawn.
+        animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
     }
 
     override func tearDown() {
+        UIView.setAnimationsEnabled(animationsWereEnabled)
         folder.removeAll()
         folder = nil
         super.tearDown()
@@ -81,12 +87,11 @@ final class DownloadVotesRenderTests: XCTestCase {
 
     /// Each save button reads its title with the hint, at the default size and at AX5, and is a button that works once
     /// the files are ready. The body, the footer and the title are read too.
-    func testVoiceOverReadsTheSaveButtonsWithTheirHint() {
+    func testVoiceOverReadsTheSaveButtonsWithTheirHint() throws {
         for size in [DynamicTypeSize.large, .accessibility5] {
-            let host = AccessibilityTreeText.Host(
+            let host = try onScreen(
                 screen(FakeVoteExportService(.success(votes))).environment(\.dynamicTypeSize, size),
-                size: CGSize(width: size == .accessibility5 ? 375 : 390, height: 2400),
-                settle: 0.3
+                size: CGSize(width: size == .accessibility5 ? 375 : 390, height: 2400)
             )
             defer { host.close() }
             XCTAssertTrue(host.run(until: { !host.identifiers().contains("downloadVotes.preparing") }), "\(size): the files are ready")
@@ -108,10 +113,10 @@ final class DownloadVotesRenderTests: XCTestCase {
     }
 
     /// While the files are prepared the buttons are dimmed (they have nothing to send yet) and the loading line shows.
-    func testWhilePreparingTheButtonsAreDimmed() {
+    func testWhilePreparingTheButtonsAreDimmed() throws {
         let service = FakeVoteExportService(.success(votes))
         service.waitsForCancellation = true
-        let host = AccessibilityTreeText.Host(screen(service), size: CGSize(width: 390, height: 1400), settle: 0.3)
+        let host = try onScreen(screen(service), size: CGSize(width: 390, height: 1400))
         defer { host.close() }
 
         XCTAssertEqual(host.label(ofIdentifier: "downloadVotes.preparing"), "Preparing your votes…")
@@ -122,7 +127,7 @@ final class DownloadVotesRenderTests: XCTestCase {
 
     /// VoiceOver hears the loading line, then the empty line or the error. The approved copy has no line for the
     /// files being ready, so nothing more is said then.
-    func testVoiceOverHearsTheLoadingLineThenTheEmptyLineOrTheError() {
+    func testVoiceOverHearsTheLoadingLineThenTheEmptyLineOrTheError() throws {
         let outcomes: [(FakeVoteExportService, [String])] = [
             (FakeVoteExportService(.success(votes)), ["Preparing your votes…"]),
             (FakeVoteExportService(.success([])), ["Preparing your votes…", "You haven't voted on a bill yet."]),
@@ -130,10 +135,9 @@ final class DownloadVotesRenderTests: XCTestCase {
         ]
         for (service, expected) in outcomes {
             let spoken = SpokenLines()
-            let host = AccessibilityTreeText.Host(
+            let host = try onScreen(
                 screen(service).environment(\.announceToVoiceOver, spoken.announce),
-                size: CGSize(width: 390, height: 1400),
-                settle: 0.3
+                size: CGSize(width: 390, height: 1400)
             )
             defer { host.close() }
             XCTAssertTrue(
@@ -146,13 +150,12 @@ final class DownloadVotesRenderTests: XCTestCase {
     }
 
     /// The error: a Couldn't load notice titled "Couldn't prepare your votes", and Try again loads again.
-    func testTryAgainLoadsAgain() {
+    func testTryAgainLoadsAgain() throws {
         let service = FakeVoteExportService(.failure(httpStatusError(500, path: "account-data/votes")), .success(votes))
         let spoken = SpokenLines()
-        let host = AccessibilityTreeText.Host(
+        let host = try onScreen(
             screen(service).environment(\.announceToVoiceOver, spoken.announce),
-            size: CGSize(width: 390, height: 1400),
-            settle: 0.3
+            size: CGSize(width: 390, height: 1400)
         )
         defer { host.close() }
         XCTAssertTrue(host.run(until: { host.identifiers().contains("downloadVotes.tryAgain") }))
@@ -169,8 +172,8 @@ final class DownloadVotesRenderTests: XCTestCase {
     }
 
     /// With no votes, the empty line, and nothing to save.
-    func testTheEmptyLine() {
-        let host = AccessibilityTreeText.Host(screen(FakeVoteExportService(.success([]))), size: CGSize(width: 390, height: 1400), settle: 0.3)
+    func testTheEmptyLine() throws {
+        let host = try onScreen(screen(FakeVoteExportService(.success([]))), size: CGSize(width: 390, height: 1400))
         defer { host.close() }
         XCTAssertTrue(host.run(until: { host.identifiers().contains("downloadVotes.empty") }))
         XCTAssertEqual(host.label(ofIdentifier: "downloadVotes.empty"), "You haven't voted on a bill yet.")
@@ -180,8 +183,8 @@ final class DownloadVotesRenderTests: XCTestCase {
     // MARK: - Files
 
     /// The files are written while the screen shows and deleted when it goes.
-    func testTheFilesAreDeletedWhenTheScreenGoes() {
-        let host = AccessibilityTreeText.Host(screen(FakeVoteExportService(.success(votes))), size: CGSize(width: 390, height: 1400), settle: 0.3)
+    func testTheFilesAreDeletedWhenTheScreenGoes() throws {
+        let host = try onScreen(screen(FakeVoteExportService(.success(votes))), size: CGSize(width: 390, height: 1400))
         XCTAssertTrue(host.run(until: { !host.identifiers().contains("downloadVotes.preparing") }))
         let written = exportFolders()
         XCTAssertEqual(written.count, 1)
@@ -242,6 +245,17 @@ final class DownloadVotesRenderTests: XCTestCase {
         return NavigationStack {
             DownloadVotesView(model: model)
         }
+    }
+
+    /// The screen hosted in a window on the test app's screen. Its list animates a row out when the state changes,
+    /// and the old row stays in the accessibility tree until that animation ends, which needs a window on the
+    /// screen.
+    private func onScreen<Content: View>(_ view: Content, size: CGSize) throws -> AccessibilityTreeText.Host {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "the hosted test app has a window scene"
+        )
+        return AccessibilityTreeText.Host(view, size: size, settle: 0.3, scene: scene)
     }
 
     /// The export folders on disk now.
