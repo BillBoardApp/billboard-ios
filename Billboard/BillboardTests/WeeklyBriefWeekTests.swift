@@ -9,13 +9,17 @@ import XCTest
 /// nothing, one quiet line says how to get one, once this week's check found none.
 ///
 /// Since 1.3 (UX-28, a project decision of 2026-11-23) the brief is the server's only: no brief is built on the
-/// device and no local notification is posted. A 204 means no brief this week, a failed read keeps the brief on
-/// screen, and a brief for another week changes nothing. The Updates badge counts an unopened brief on Sunday and
-/// Monday only, New York time.
+/// device and no local notification is posted. A 204 means no brief this week, except in the half hour after the
+/// release, a failed read keeps the brief on screen, and a brief for another week changes nothing. The Updates badge
+/// counts an unopened brief on Sunday and Monday only, New York time.
+///
+/// The stores run on a fixed clock (`now`, a Wednesday), so no test depends on the day it runs.
 @MainActor
 final class WeeklyBriefWeekTests: XCTestCase {
     private static let serverID = "2026-10-25T14:00:00.000Z"
     private static let appID = "2026-10-25T10:00:00-04:00"
+    /// Wednesday Oct 28 2026, noon in New York: the week released on Sunday Oct 25.
+    private static let now = Date(timeIntervalSince1970: 1_793_203_200)
 
     // MARK: - Same week, either id
 
@@ -40,7 +44,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
     /// The server's brief is downloaded once a week, not on every Updates visit, by this store and by the next
     /// launch's; its read state carries over.
     func testTheServersBriefIsDownloadedOnceAndStaysRead() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
         let (store, defaults, scope) = try makeStore(service: service)
 
@@ -57,7 +61,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(store.digest?.isRead, true)
 
         // The next launch reads the saved brief and does not download it either.
-        let relaunched = WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service)
+        let relaunched = relaunch(scope, defaults, service)
         await relaunched.refresh(profile: profile)
         XCTAssertEqual(service.fetchCount, 1)
         XCTAssertEqual(relaunched.digest?.isRead, true)
@@ -72,7 +76,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
     /// nothing: the tabs no longer force a refresh on one, and a refresh with the changed profile (an Updates visit)
     /// keeps this week's brief without asking the server.
     func testAProfileChangeDoesNotReadTheBriefAgain() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
         let (store, _, _) = try makeStore(service: service)
         await store.refresh(profile: profile)
@@ -87,7 +91,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
     /// A brief app 1.2 built on the device and saved for this week is replaced by the server's, and stays read if it
     /// was opened.
     func testReadStateCarriesFromTheOnDeviceBriefToTheServers() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
         var saved = brief(id: window.id, window: window, source: .localFallback)
         saved.isRead = true
@@ -101,7 +105,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(store.digest?.isRead, true, "the same week, already read")
 
         // The server's brief is saved in its place: the next launch keeps it and asks nothing.
-        let relaunched = WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service)
+        let relaunched = relaunch(scope, defaults, service)
         await relaunched.refresh(profile: profile)
         XCTAssertEqual(service.fetchCount, 1)
         XCTAssertEqual(relaunched.digest?.source, .remote)
@@ -110,7 +114,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
 
     /// The same for 1.2's brief kept in memory and on the device: neither early return takes it for this week's.
     func testAnUnreadOnDeviceBriefIsReplacedAndStaysUnread() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
         let (store, _, _) = try makeStore(service: service, saved: brief(id: window.id, window: window, source: .localFallback))
 
@@ -141,9 +145,40 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(transport.requests.map(\.path), ["weekly-digests/latest"], "the brief's read alone")
         XCTAssertNil(store.digest)
         XCTAssertNil(store.errorMessage)
-        XCTAssertEqual(store.noBriefReleaseID, WeeklyDigestStore.latestPublishedWindow(relativeTo: Date()).id)
+        XCTAssertEqual(store.noBriefReleaseID, WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now).id)
         XCTAssertTrue(store.foundNoBriefThisWeek)
-        XCTAssertNil(WeeklyDigestStore(scope: scope, defaults: defaults, digestService: EmptyWeeklyDigestService()).digest, "nothing left on the device")
+        XCTAssertNil(relaunch(scope, defaults, EmptyWeeklyDigestService()).digest, "nothing left on the device")
+    }
+
+    /// From Sunday 10:00 to 10:30 AM ET the server may not have stored a person's brief yet (GenerateWeeklyDigests
+    /// starts at 10:00; the first push run is at 10:30), so a 204 then is not "no brief this week": last week's
+    /// brief stays on screen and on the device, nothing says there is none, and the next refresh asks again. From
+    /// 10:30 a 204 means no brief this week.
+    func testAnEmptyAnswerInTheHalfHourAfterTheReleaseChangesNothing() async throws {
+        let release = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now).releaseAt
+        let lastWeek = WeeklyDigestStore.latestPublishedWindow(relativeTo: release.addingTimeInterval(-60))
+        let onScreen = brief(id: serverID(for: lastWeek), window: lastWeek)
+        let clock = BriefClock(release)
+        let service = FakeWeeklyDigestService()
+        let (store, defaults, scope) = try makeStore(service: service, saved: onScreen, clock: clock)
+
+        for (name, offset) in [("10:00 AM", 0.0), ("10:10 AM", 10 * 60.0), ("10:29:59 AM", 30 * 60.0 - 1)] {
+            clock.now = release.addingTimeInterval(offset)
+            await store.refresh(profile: profile)
+            XCTAssertEqual(store.digest, onScreen, "\(name): last week's brief stays on screen")
+            XCTAssertEqual(relaunch(scope, defaults, service).digest, onScreen, "\(name): and on the device")
+            XCTAssertNil(store.noBriefReleaseID, name)
+            XCTAssertFalse(store.foundNoBriefThisWeek, name)
+            XCTAssertNil(store.errorMessage, name)
+        }
+        XCTAssertEqual(service.fetchCount, 3, "each refresh asks again")
+
+        clock.now = release.addingTimeInterval(30 * 60)
+        await store.refresh(profile: profile)
+        XCTAssertEqual(service.fetchCount, 4)
+        XCTAssertNil(store.digest, "10:30 AM: no brief this week")
+        XCTAssertTrue(store.foundNoBriefThisWeek)
+        XCTAssertNil(relaunch(scope, defaults, service).digest)
     }
 
     /// A failed read says so and keeps last week's brief on screen, marked as an earlier week's; it is not taken
@@ -163,24 +198,25 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertNil(store.noBriefReleaseID)
         XCTAssertFalse(store.foundNoBriefThisWeek)
         XCTAssertEqual(
-            WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service).digest?.id,
+            relaunch(scope, defaults, service).digest?.id,
             serverID(for: lastWeek),
             "and on the device"
         )
 
         // The next refresh asks again.
-        service.answer(brief(id: serverID(for: WeeklyDigestStore.latestPublishedWindow(relativeTo: Date()))))
+        service.answer(brief(id: serverID(for: WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now))))
         await store.refresh(profile: profile)
         XCTAssertEqual(service.fetchCount, 2)
         XCTAssertNil(store.errorMessage)
         XCTAssertFalse(store.isShowingStaleDigest)
     }
 
-    /// A brief the server returns for another week (last week's, read before this week's is stored, or one
-    /// published later than now) is not this week's and not a sign that there is none: the brief on screen and the
-    /// one on the device stay, no "no brief this week" and no error, and the next refresh asks again.
+    /// A brief the server returns for another week is not this week's and not a sign that there is none. The server
+    /// answers for the week its own clock is in, so this is a phone whose clock is ahead of the server's (last week's
+    /// brief) or behind it (this week's, published later than the phone's now) near a release. The brief on screen
+    /// and the one on the device stay, no "no brief this week" and no error, and the next refresh asks again.
     func testABriefForAnotherWeekChangesNothing() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let lastWeek = Self.lastWeeksWindow()
         let future = WeeklyDigest(
             id: serverID(for: window),
@@ -188,7 +224,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
             summary: "Published an hour from now.",
             weekStart: window.start,
             weekEnd: window.end,
-            publishedAt: Date().addingTimeInterval(60 * 60),
+            publishedAt: Self.now.addingTimeInterval(60 * 60),
             source: .remote,
             isRead: false,
             stats: [],
@@ -209,7 +245,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
 
             XCTAssertEqual(service.fetchCount, 1, name)
             XCTAssertEqual(store.digest, onScreen, "\(name): the brief on screen stays as it was")
-            XCTAssertEqual(WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service).digest, onScreen, "\(name): and on the device")
+            XCTAssertEqual(relaunch(scope, defaults, service).digest, onScreen, "\(name): and on the device")
             XCTAssertNil(store.noBriefReleaseID, name)
             XCTAssertFalse(store.foundNoBriefThisWeek, name)
             XCTAssertNil(store.errorMessage, name)
@@ -363,7 +399,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
     /// Someone who follows nothing and has no brief this week: the store remembers that this week's check found
     /// none, until a brief arrives.
     func testTheStoreRemembersThatThisWeeksCheckFoundNoBrief() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService()
         let (store, _, _) = try makeStore(service: service)
         let followsNothing = UserProfile.placeholder().updating(id: "user-1")
@@ -481,7 +517,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
 
     /// Last week's window: the one before this week's release.
     private static func lastWeeksWindow() -> DigestPublicationWindow {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         return WeeklyDigestStore.latestPublishedWindow(relativeTo: window.releaseAt.addingTimeInterval(-60))
     }
 
@@ -491,7 +527,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
         source: WeeklyDigest.Source = .remote,
         summary: String = "One bill you watch moved this week."
     ) -> WeeklyDigest {
-        let window = window ?? WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let window = window ?? WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         return WeeklyDigest(
             id: id,
             title: "Your Week in Congress",
@@ -507,11 +543,13 @@ final class WeeklyBriefWeekTests: XCTestCase {
     }
 
     /// A store on its own defaults suite, with `saved` as the brief saved on the device (as an earlier launch, or
-    /// app 1.2, left it).
+    /// app 1.2, left it), on `clock` (by default at `now`, a Wednesday).
     private func makeStore(
         service: any WeeklyDigestServicing,
-        saved: WeeklyDigest? = nil
+        saved: WeeklyDigest? = nil,
+        clock: BriefClock? = nil
     ) throws -> (WeeklyDigestStore, UserDefaults, String) {
+        let clock = clock ?? BriefClock(Self.now)
         let scope = "weekly-brief-week-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: scope))
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: scope) }
@@ -520,7 +558,22 @@ final class WeeklyBriefWeekTests: XCTestCase {
             encoder.dateEncodingStrategy = .iso8601
             defaults.set(try encoder.encode(saved), forKey: "BillBoard.weeklyDigest.v1.digest.\(scope)")
         }
-        let store = WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service)
+        let store = WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service, now: { clock.now })
         return (store, defaults, scope)
+    }
+
+    /// The next launch's store on the same device, at `now`.
+    private func relaunch(_ scope: String, _ defaults: UserDefaults, _ service: any WeeklyDigestServicing) -> WeeklyDigestStore {
+        let now = Self.now
+        return WeeklyDigestStore(scope: scope, defaults: defaults, digestService: service, now: { now })
+    }
+}
+
+/// The Weekly Brief store's clock, which a test moves.
+private final class BriefClock {
+    var now: Date
+
+    init(_ now: Date) {
+        self.now = now
     }
 }

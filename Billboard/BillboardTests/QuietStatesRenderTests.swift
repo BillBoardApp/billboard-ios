@@ -35,6 +35,8 @@ final class QuietStatesRenderTests: XCTestCase {
     ]
 
     private static let width: CGFloat = 390
+    /// Wednesday Oct 28 2026, noon in New York: the Weekly Brief store's clock.
+    private static let wednesday = Date(timeIntervalSince1970: 1_793_203_200)
 
     // MARK: - Empty-state titles (N10)
 
@@ -411,10 +413,14 @@ final class QuietStatesRenderTests: XCTestCase {
         userStore.hydrateCachedProfileIfAvailable(userId: profile.id)
         XCTAssertEqual(userStore.profile.id, profile.id)
 
+        // A Wednesday: on Sunday before 10:30 AM ET an empty answer leaves the week unchecked
+        // (`WeeklyDigestStore.briefStoringGrace`).
+        let wednesday = Self.wednesday
         let digestStore = WeeklyDigestStore(
             scope: scope,
             defaults: defaults,
-            digestService: digestService ?? EmptyWeeklyDigestService()
+            digestService: digestService ?? EmptyWeeklyDigestService(),
+            now: { wednesday }
         )
         XCTAssertNil(digestStore.digest)
         let civicService = FakeCivicService()
@@ -446,8 +452,7 @@ final class QuietStatesRenderTests: XCTestCase {
         return (view, digestStore)
     }
 
-    /// `updatesTab` once this week's Weekly Brief check has run: the server has no brief for `profile`, and the
-    /// device builds none (no bills changed).
+    /// `updatesTab` once this week's Weekly Brief check has run: the server has no brief for `profile`.
     private func checkedUpdatesTab(profile: UserProfile) throws -> AnyView {
         let (view, digestStore) = try updatesTab(profile: profile)
         let checked = expectation(description: "this week's brief checked")

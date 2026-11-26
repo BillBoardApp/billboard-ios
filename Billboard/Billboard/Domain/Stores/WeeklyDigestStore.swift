@@ -14,17 +14,21 @@ final class WeeklyDigestStore: ObservableObject {
     private let scope: String
     private let defaults: UserDefaults
     private let digestService: any WeeklyDigestServicing
+    private let now: () -> Date
     private let encoder = JSONEncoder()
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "BillBoard", category: "weeklyDigest")
 
+    /// - Parameter now: the clock, which tests set.
     init(
         scope: String,
         defaults: UserDefaults = .standard,
-        digestService: any WeeklyDigestServicing = WeeklyDigestService.Live()
+        digestService: any WeeklyDigestServicing = WeeklyDigestService.Live(),
+        now: @escaping () -> Date = { Date() }
     ) {
         self.scope = scope
         self.defaults = defaults
         self.digestService = digestService
+        self.now = now
         self.settings = Self.loadSettings(scope: scope, defaults: defaults) ?? .default
         self.encoder.dateEncodingStrategy = .iso8601
         self.digest = Self.loadDigest(scope: scope, defaults: defaults)
@@ -58,8 +62,14 @@ final class WeeklyDigestStore: ObservableObject {
     /// (`followsSomething`).
     var foundNoBriefThisWeek: Bool {
         guard let noBriefReleaseID else { return false }
-        return Self.isSameRelease(noBriefReleaseID, Self.latestPublishedWindow(relativeTo: Date()).id)
+        return Self.isSameRelease(noBriefReleaseID, Self.latestPublishedWindow(relativeTo: now()).id)
     }
+
+    /// How long after the Sunday 10 AM ET release an empty answer (204) may mean only that this person's brief is
+    /// not stored yet. The server's GenerateWeeklyDigests starts at 10:00 and hands the briefs to its workers, which
+    /// store them in time for the first Sunday push run at 10:30 (billboard-backend
+    /// `infra/lib/config/weekly-digest-constants.ts`).
+    nonisolated static let briefStoringGrace: TimeInterval = 30 * 60
 
     /// Whether the person follows topics, life areas or members, or watches bills, the things a brief is mostly
     /// built from (feature review N2). Updates says how to get a brief ("Follow topics or members to get a Weekly
@@ -93,7 +103,7 @@ final class WeeklyDigestStore: ObservableObject {
     /// (for example because this week's brief failed to load).
     var isShowingStaleDigest: Bool {
         guard let digest else { return false }
-        return !Self.matches(digest, window: Self.latestPublishedWindow(relativeTo: Date()))
+        return !Self.matches(digest, window: Self.latestPublishedWindow(relativeTo: now()))
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -110,16 +120,17 @@ final class WeeklyDigestStore: ObservableObject {
     }
 
     /// Reads this week's brief from the server, unless it is already here. A refresh that finds the server has no
-    /// brief this week clears the one on screen and remembers that (`noBriefReleaseID`). A failed read keeps the
-    /// brief on screen and says so (`errorMessage`; views check `isShowingStaleDigest`). A brief for another week
-    /// changes nothing, and the next refresh asks again.
+    /// brief this week clears the one on screen and remembers that (`noBriefReleaseID`), except in the first half
+    /// hour after the release (`briefStoringGrace`). A failed read keeps the brief on screen and says so
+    /// (`errorMessage`; views check `isShowingStaleDigest`). A brief for another week changes nothing, and the next
+    /// refresh asks again.
     func refresh(profile: UserProfile, forceRefresh: Bool = false) async {
         guard !isLoading else { return }
         guard settings.isEnabled else { return }
         guard !profile.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         // This week's brief is already here: kept from the last refresh, or saved on the device (`isServersBrief`).
-        let targetWindow = Self.latestPublishedWindow(relativeTo: Date())
+        let targetWindow = Self.latestPublishedWindow(relativeTo: now())
         if !forceRefresh, let digest, Self.isServersBrief(digest, for: targetWindow) {
             errorMessage = nil
             return
@@ -148,17 +159,23 @@ final class WeeklyDigestStore: ObservableObject {
         }
 
         guard let remote else {
-            // An empty answer (204): the server has no brief for this person this week.
+            // An empty answer (204) on Sunday before 10:30 AM ET may only mean the server has not stored this
+            // person's brief yet. Like another week's brief, it changes nothing, and the next refresh asks again.
+            if now() < targetWindow.releaseAt.addingTimeInterval(Self.briefStoringGrace) {
+                logger.notice("No Weekly Brief yet in the half hour after its release; the brief on screen is kept")
+                return
+            }
+            // Otherwise the server has no brief for this person this week.
             digest = nil
             noBriefReleaseID = targetWindow.id
             clearPersistedDigest()
             return
         }
 
-        // Another week's brief is neither this week's nor a sign that there is none: for example last week's, read
-        // on Sunday morning before this week's is stored. What is on screen and on the device stays as it is, and
-        // the next refresh asks again.
-        guard remote.publishedAt <= Date(), Self.matches(remote, window: targetWindow) else {
+        // Another week's brief is neither this week's nor a sign that there is none. The server answers for the
+        // week its own clock is in, so this comes from a phone whose clock is ahead of or behind the server's near
+        // a release. What is on screen and on the device stays as it is, and the next refresh asks again.
+        guard remote.publishedAt <= now(), Self.matches(remote, window: targetWindow) else {
             logger.notice("The server's Weekly Brief is not this week's; the brief on screen is kept")
             return
         }
