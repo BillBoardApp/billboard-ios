@@ -53,7 +53,8 @@ struct TabsBar: View {
     @StateObject private var appState = AppState()
     @State private var activeSheet: TabsSheet?
     @State private var isShowingTutorialOverlay = false
-    @State private var hasCompletedInitialWeeklyDigestBootstrap = false
+    /// The Weekly Brief's first read and the later ones (UX-28); a later read still out is cancelled when the tabs go.
+    @State private var weeklyBriefReads = WeeklyBriefReads()
     @State private var profileDependentReconciliationTask: Task<Void, Never>?
     @State private var deferredHomeQueueRefreshTask: Task<Void, Never>?
     @State private var hasScheduledStartupHomeQueueRefresh = false
@@ -175,27 +176,25 @@ struct TabsBar: View {
 
     /// The Weekly Brief's first read, once the profile has loaded with its id; a profile load that leaves no id
     /// leaves it to the next load. A later change to the profile reads nothing: the server writes each person's
-    /// brief on Sunday and keeps it as written all week (UX-28).
+    /// brief on Sunday and keeps it as written all week (UX-28, `WeeklyBriefReads`).
     @MainActor
     private func bootstrapWeeklyDigestIfNeeded() async {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
-        guard userStore.hasRefreshedOnce else { return }
-        guard !userStore.isLoading else { return }
-        guard !hasCompletedInitialWeeklyDigestBootstrap else { return }
-        guard !userStore.profile.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        await weeklyDigestStore.refresh(profile: userStore.profile)
-        hasCompletedInitialWeeklyDigestBootstrap = true
+        await weeklyBriefReads.firstReadIfReady(
+            store: weeklyDigestStore,
+            profile: userStore.profile,
+            profileHasLoaded: userStore.hasRefreshedOnce && !userStore.isLoading
+        )
     }
 
     /// A return to the app may come after Sunday 10 AM ET with last week's brief still in hand: this week's is read
     /// then, so the Sunday and Monday badge counts it (UX-28). Only after the first read; the store asks nothing
-    /// when this week's brief is here or this week's check found none (`refreshOnReturnToApp`).
+    /// when this week's brief is here or this week's check found none (`refreshOnReturnToApp`). The read is kept and
+    /// cancelled when the tabs go (`onDisappear`).
     @MainActor
-    private func refreshWeeklyDigestOnReturnToApp() {
+    private func readWeeklyDigestAgain() {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
-        guard hasCompletedInitialWeeklyDigestBootstrap else { return }
-        Task { await weeklyDigestStore.refreshOnReturnToApp(profile: userStore.profile) }
+        weeklyBriefReads.readAgain(store: weeklyDigestStore, profile: userStore.profile)
     }
 
     /// UX-51 (project decision 2026-11-19): once after the update to 1.3, the full manifest, so the bills held
@@ -627,7 +626,7 @@ struct TabsBar: View {
                 // A brief read now refreshes the badge again through `$digest`.
                 guard phase == .active else { return }
                 scheduleTabBadgeRefresh()
-                refreshWeeklyDigestOnReturnToApp()
+                readWeeklyDigestAgain()
             }
             .onChange(of: userStore.profile.watchedBillGUIDs) { _, watched in
                 billsStore.reconcileWatchesFromProfile(watched)
@@ -722,6 +721,7 @@ struct TabsBar: View {
             // undo window so this account's pending skip is not offered to the next one.
             deferredHomeQueueRefreshTask?.cancel()
             profileDependentReconciliationTask?.cancel()
+            weeklyBriefReads.cancel()
             UndoCenter.shared.commitPending()
         }
     }
