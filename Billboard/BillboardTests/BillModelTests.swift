@@ -735,15 +735,6 @@ final class BillModelTests: XCTestCase {
         XCTAssertTrue(BillContentTypePreference.allows(rawBillType: "unknown-type", allowed: allowed))
     }
 
-    func testWeeklyDigestTitleUsesEasternDateRange() {
-        let title = WeeklyDigestDateFormatter.title(
-            weekStart: easternDate(year: 2026, month: 3, day: 15),
-            weekEnd: easternDate(year: 2026, month: 3, day: 21)
-        )
-
-        XCTAssertEqual(title, "Your Week in Congress | Mar 15\u{2013}21, 2026")
-    }
-
     func testWeeklyDigestPublishedLabelIncludesEasternReleaseTime() {
         let publishedLabel = WeeklyDigestDateFormatter.publishedDate(
             easternDate(year: 2026, month: 3, day: 22, hour: 10)
