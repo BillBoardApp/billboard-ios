@@ -70,6 +70,20 @@ final class WeeklyDigestStore: ObservableObject {
         return calendar.date(byAdding: .day, value: 2, to: releaseDay) ?? releaseDay.addingTimeInterval(2 * 24 * 60 * 60)
     }
 
+    /// The next time after `now` that the brief's badge can change while the app stays open (UX-28), when the tabs
+    /// read and count it again: Sunday 10:30 AM, New York time, when this week's brief is stored
+    /// (`briefStoringGrace`), and Tuesday 00:00, when the badge stops counting it (`unreadDigestCount`).
+    static func nextBadgeCheck(after now: Date) -> Date {
+        let releaseAt = latestPublishedWindow(relativeTo: now).releaseAt
+        let stored = releaseAt.addingTimeInterval(briefStoringGrace)
+        if now < stored { return stored }
+        let end = badgeEnd(forReleaseAt: releaseAt)
+        if now < end { return end }
+        let nextRelease = WeeklyDigestSchedule.calendar.date(byAdding: .day, value: 7, to: releaseAt)
+            ?? releaseAt.addingTimeInterval(7 * 24 * 60 * 60)
+        return nextRelease.addingTimeInterval(briefStoringGrace)
+    }
+
     /// The release (a window id) whose last finished refresh found no brief: the server answered with none for
     /// this person. Cleared when a brief arrives.
     @Published private(set) var noBriefReleaseID: String?

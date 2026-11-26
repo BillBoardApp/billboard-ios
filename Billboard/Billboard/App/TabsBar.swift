@@ -187,14 +187,30 @@ struct TabsBar: View {
         )
     }
 
-    /// A return to the app may come after Sunday 10 AM ET with last week's brief still in hand: this week's is read
-    /// then, so the Sunday and Monday badge counts it (UX-28). Only after the first read; the store asks nothing
-    /// when this week's brief is here or this week's check found none (`refreshOnReturnToApp`). The read is kept and
-    /// cancelled when the tabs go (`onDisappear`).
+    /// A return to the app, or an app left open, may pass Sunday 10:30 AM ET with last week's brief still in hand:
+    /// this week's is read then, so the Sunday and Monday badge counts it (UX-28). Only after the first read; the
+    /// store asks nothing when this week's brief is here or this week's check found none (`refreshOnReturnToApp`).
+    /// The read is kept and cancelled when the tabs go (`onDisappear`).
     @MainActor
     private func readWeeklyDigestAgain() {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
         weeklyBriefReads.readAgain(store: weeklyDigestStore, profile: userStore.profile)
+    }
+
+    /// While the app stays open, the badge is counted again, and the brief read if it is not here, at each time the
+    /// brief's count can change: Sunday 10:30 AM and Tuesday 00:00, New York time (`nextBadgeCheck`). A return to the
+    /// app does the same (`scenePhase`). Cancelled with the view.
+    @MainActor
+    private func recheckWeeklyDigestBadgeAtEachChange() async {
+        guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
+        while !Task.isCancelled {
+            let wait = WeeklyDigestStore.nextBadgeCheck(after: Date()).timeIntervalSinceNow
+            // At least a second, so a clock that reads just short of the edge cannot spin.
+            try? await Task.sleep(for: .seconds(max(1, wait)))
+            guard !Task.isCancelled else { return }
+            scheduleTabBadgeRefresh()
+            readWeeklyDigestAgain()
+        }
     }
 
     /// UX-51 (project decision 2026-11-19): once after the update to 1.3, the full manifest, so the bills held
@@ -581,6 +597,10 @@ struct TabsBar: View {
                 // UX-51: once after the update, after Home's startup reconciliation. Cancelled when the view
                 // goes (sign-out), which leaves it to a later launch.
                 await runVetoedFlagFullLoadAfterStartup()
+            }
+            .task {
+                // UX-28: the brief's badge on Sunday and Monday, for an app left open across 10:30 AM or midnight.
+                await recheckWeeklyDigestBadgeAtEachChange()
             }
             // The chips, the Civic Rank sheet and the Civic Profile on a return to the app and a new day.
             .refreshesCivicStats(score: civicScoreStore, profile: civicProfileStore)
