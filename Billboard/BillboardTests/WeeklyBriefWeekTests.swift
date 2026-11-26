@@ -10,7 +10,8 @@ import XCTest
 ///
 /// Since 1.3 (UX-28, a project decision of 2026-11-23) the brief is the server's only: no brief is built on the
 /// device and no local notification is posted. A 204 means no brief this week, a failed read keeps the brief on
-/// screen, and a brief for another week changes nothing.
+/// screen, and a brief for another week changes nothing. The Updates badge counts an unopened brief on Sunday and
+/// Monday only, New York time.
 @MainActor
 final class WeeklyBriefWeekTests: XCTestCase {
     private static let serverID = "2026-10-25T14:00:00.000Z"
@@ -208,6 +209,49 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertNil(store.digest)
         XCTAssertFalse(store.foundNoBriefThisWeek)
         XCTAssertNil(store.errorMessage)
+    }
+
+    // MARK: - The Updates badge: Sunday and Monday only
+
+    /// An unopened brief counts in the Updates badge from its release, Sunday 10:00 ET, through Monday 23:59:59 ET,
+    /// and not from Tuesday 00:00 ET. The instants are written in UTC, so the clock changes on Mar 8 2026 (the
+    /// brief's Monday ends 47 hours after its Sunday began) and Nov 1 2026 (49 hours) are checked against the clock.
+    func testTheBriefCountsInTheBadgeOnSundayAndMondayOnly() throws {
+        let weeks: [(name: String, sunday: String, beforeRelease: String, release: String, lastSecond: String, tuesday: String)] = [
+            ("an ordinary week (EST)", "2026-11-15", "2026-11-15T14:59:59Z", "2026-11-15T15:00:00Z", "2026-11-17T04:59:59Z", "2026-11-17T05:00:00Z"),
+            ("an ordinary week (EDT)", "2026-10-25", "2026-10-25T13:59:59Z", "2026-10-25T14:00:00Z", "2026-10-27T03:59:59Z", "2026-10-27T04:00:00Z"),
+            ("clocks forward Mar 8 2026", "2026-03-08", "2026-03-08T13:59:59Z", "2026-03-08T14:00:00Z", "2026-03-10T03:59:59Z", "2026-03-10T04:00:00Z"),
+            ("clocks back Nov 1 2026", "2026-11-01", "2026-11-01T14:59:59Z", "2026-11-01T15:00:00Z", "2026-11-03T04:59:59Z", "2026-11-03T05:00:00Z")
+        ]
+        for week in weeks {
+            func at(_ text: String) throws -> Date { try XCTUnwrap(FlexibleISO8601.parse(text), text) }
+            func count(_ digest: WeeklyDigest?, _ text: String) throws -> Int {
+                let now = try at(text)
+                return WeeklyDigestStore.unreadDigestCount(digest: digest, now: now)
+            }
+            let release = try at(week.release)
+            let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: release)
+            XCTAssertEqual(window.releaseAt, release, "\(week.name): the release is Sunday 10:00 ET")
+            let unread = brief(id: serverID(for: window), window: window)
+
+            XCTAssertEqual(try count(unread, week.beforeRelease), 0, "\(week.name): Sunday 9:59:59 ET")
+            XCTAssertEqual(try count(unread, week.release), 1, "\(week.name): Sunday 10:00 ET")
+            XCTAssertEqual(try count(unread, week.lastSecond), 1, "\(week.name): Monday 23:59:59 ET")
+            XCTAssertEqual(try count(unread, week.tuesday), 0, "\(week.name): Tuesday 00:00 ET")
+            XCTAssertEqual(try count(unread, week.sunday + "T23:00:00Z"), 1, "\(week.name): Sunday evening")
+
+            // The app's own id for the week counts the same as the server's.
+            XCTAssertEqual(try count(brief(id: window.id, window: window), week.release), 1, week.name)
+
+            var read = unread
+            read.isRead = true
+            XCTAssertEqual(try count(read, week.release), 0, "\(week.name): a read brief")
+            XCTAssertEqual(try count(nil, week.release), 0, "\(week.name): no brief")
+
+            // Last week's brief, still unread, does not count once this week's is out.
+            let previous = WeeklyDigestStore.latestPublishedWindow(relativeTo: release.addingTimeInterval(-1))
+            XCTAssertEqual(try count(brief(id: serverID(for: previous), window: previous), week.release), 0, "\(week.name): last week's brief")
+        }
     }
 
     // MARK: - Is a brief expected?
