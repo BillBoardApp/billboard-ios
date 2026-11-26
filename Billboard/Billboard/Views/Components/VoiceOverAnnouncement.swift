@@ -20,12 +20,23 @@ private nonisolated struct AnnounceToVoiceOverKey: EnvironmentKey {
     static let defaultValue: @MainActor @Sendable (String) -> Void = { VoiceOverAnnouncement.postQueued($0) }
 }
 
+private nonisolated struct AnnounceToVoiceOverNowKey: EnvironmentKey {
+    static let defaultValue: @MainActor @Sendable (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
+}
+
 extension EnvironmentValues {
     /// How a form's line is said to VoiceOver (`announcesToVoiceOver(_:)`): a queued announcement. Tests put a
     /// recorder here.
     var announceToVoiceOver: @MainActor @Sendable (String) -> Void {
         get { self[AnnounceToVoiceOverKey.self] }
         set { self[AnnounceToVoiceOverKey.self] = newValue }
+    }
+
+    /// A line said to VoiceOver at once, not queued: the bill page's "Stopped watching this bill". Tests put a
+    /// recorder here.
+    var announceToVoiceOverNow: @MainActor @Sendable (String) -> Void {
+        get { self[AnnounceToVoiceOverNowKey.self] }
+        set { self[AnnounceToVoiceOverNowKey.self] = newValue }
     }
 }
 
