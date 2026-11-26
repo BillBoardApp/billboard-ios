@@ -491,9 +491,8 @@ final class BillDetailRenderTests: XCTestCase {
         }
     }
 
-    /// The Watch row's title is whole at AX5 on a 375 pt phone (UX-47): it wraps beside the switch, so the row is at
-    /// least as tall as the whole title and the caption under it, each set as wide as the row less the switch (the
-    /// widest they can be, so the fewest lines).
+    /// The Watch row's title is whole at AX5 on a 375 pt phone (UX-47): beside the switch it takes two lines, and the
+    /// row is as tall as both lines and the caption under them, each set at the width the switch leaves the label.
     func testTheWatchRowTitleIsWholeAtAX5On375() throws {
         let size = DynamicTypeSize.accessibility5
         for watching in [false, true] {
@@ -504,23 +503,43 @@ final class BillDetailRenderTests: XCTestCase {
             defer { host.close() }
             let row = try XCTUnwrap(host.frame(ofIdentifier: BillWatchCopy.rowIdentifier), host.text())
             XCTAssertEqual(row.width, 375 - 2 * BillboardStyle.Space.xl, accuracy: 0.5, "the column")
-            let switchWidth = UIHostingController(rootView: Toggle("", isOn: .constant(watching)).labelsHidden())
-                .sizeThatFits(in: CGSize(width: 375, height: 200)).width
+            let labelWidth = try Self.toggleLabelWidth(rowWidth: row.width, isOn: watching, size: size)
             func height(_ text: String, _ role: TextRole, width: CGFloat) -> CGFloat {
                 UIHostingController(rootView: Text(text).textRole(role).fixedSize(horizontal: false, vertical: true).environment(\.dynamicTypeSize, size))
                     .sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
             }
-            let labelWidth = row.width - switchWidth
             let line = height("W", .body, width: 1000)
             let title = height(BillWatchCopy.rowTitle, .body, width: labelWidth)
-            XCTAssertGreaterThan(title, line * 1.5, "precondition: beside the switch the title takes two lines at AX5")
+            XCTAssertGreaterThan(title, line * 1.5, "precondition: beside the switch the title takes two lines at AX5 (label \(labelWidth) pt)")
             let caption = height(BillWatchCopy.rowSubtitle, .caption, width: labelWidth)
-            XCTAssertGreaterThanOrEqual(row.height + 0.5, title + 2 + caption, "watching \(watching): the whole title, then the caption (\(row))")
+            XCTAssertGreaterThanOrEqual(row.height + 1, title + 2 + caption, "watching \(watching): the whole title, then the caption (\(row))")
         }
         for scheme in [ColorScheme.light, .dark] {
             let variant = Variant(scheme: scheme, size: size)
             attach(try render(voteSection(.notVoted), variant: variant, width: 375), name: "your-vote-watch-row-375-\(variant.name)")
         }
+    }
+
+    /// The width a switch's `Toggle` leaves its label in a row `rowWidth` wide: the row less the switch and the
+    /// spacing between them, measured with a label that takes all it is offered.
+    private static func toggleLabelWidth(rowWidth: CGFloat, isOn: Bool, size: DynamicTypeSize) throws -> CGFloat {
+        final class Width {
+            var value: CGFloat?
+        }
+        let width = Width()
+        let probe = Toggle(isOn: .constant(isOn)) {
+            GeometryReader { proxy in
+                Color.clear.onAppear { width.value = proxy.size.width }
+            }
+            .frame(height: 1)
+        }
+        .billboardToggle()
+        .frame(width: rowWidth)
+        .environment(\.dynamicTypeSize, size)
+        let host = AccessibilityTreeText.Host(probe, size: CGSize(width: rowWidth, height: 200))
+        defer { host.close() }
+        XCTAssertTrue(host.run(until: { width.value != nil }), "the probe's label was laid out")
+        return try XCTUnwrap(width.value)
     }
 
     /// Your vote opens with where the vote stands until one is held, then says nothing about it (the vote

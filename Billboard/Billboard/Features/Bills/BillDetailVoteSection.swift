@@ -185,11 +185,9 @@ struct BillYourVoteSection: View {
         VStack(alignment: .leading, spacing: BillboardStyle.Space.s) {
             Toggle(isOn: Binding(get: { isWatching }, set: { onSetWatch($0) })) {
                 VStack(alignment: .leading, spacing: 2) {
-                    // Wraps beside the switch at AX5 instead of being cut short (UX-47).
                     Text(BillWatchCopy.rowTitle)
                         .textRole(.body)
                         .foregroundStyle(BillboardColors.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
                     Text(watchCaption)
                         .textRole(.caption)
                         .foregroundStyle(BillboardColors.dimText)
