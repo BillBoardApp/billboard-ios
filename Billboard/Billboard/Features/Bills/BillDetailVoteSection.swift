@@ -304,8 +304,9 @@ struct VoteReasonPicker: View {
     static let hint = "Choose up to \(VoteReason.maxSelections) reasons. They're shown only as anonymous counts of "
         + "\(shownReasonMinimum) or more. You can skip this."
 
-    /// After an Abstain: the server counts only a Yea's or a Nay's reasons in Why people voted.
-    static let abstainHint = "It isn't shown to other people. You can skip this."
+    /// After an Abstain: the server counts only a Yea's or a Nay's reasons in Why people voted. "Your reason", so it
+    /// is not read as the Abstain itself being hidden: Abstains are counted (a project decision of 2026-11-23, D24).
+    static let abstainHint = "Your reason isn't shown to other people. You can skip this."
 
     static func hint(for voteType: VoteType?) -> String {
         voteType == .abstain ? abstainHint : hint

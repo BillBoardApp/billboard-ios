@@ -661,7 +661,7 @@ final class BillDetailRenderTests: XCTestCase {
         XCTAssertEqual(VoteReason.offered(for: .yea), VoteReason.yeaNayReasons)
         XCTAssertEqual(VoteReason.offered(for: .nay), VoteReason.yeaNayReasons)
         XCTAssertEqual(VoteReasonPicker.title(for: .abstain), "Why Abstain? (optional)")
-        XCTAssertEqual(VoteReasonPicker.hint(for: .abstain), "It isn't shown to other people. You can skip this.")
+        XCTAssertEqual(VoteReasonPicker.hint(for: .abstain), "Your reason isn't shown to other people. You can skip this.")
         XCTAssertEqual(VoteReasonPicker.hint(for: .yea), VoteReasonPicker.hint)
 
         for picked in [Set<VoteReason>(), [.needMoreInfo]] {
