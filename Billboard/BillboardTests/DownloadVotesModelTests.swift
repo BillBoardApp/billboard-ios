@@ -36,7 +36,7 @@ final class DownloadVotesModelTests: XCTestCase {
         let document = try JSONDecoder().decode(VoteExportDocument.self, from: Data(contentsOf: files.json))
         XCTAssertEqual(csvRows.count - 2, 3, "one header, one row per vote, a final CRLF")
         XCTAssertEqual(document.votes.count, 3)
-        XCTAssertNil(model.announcement, "the approved copy has no line for ready: nothing is said")
+        XCTAssertEqual(model.announcement, "Your votes are ready.")
     }
 
     /// A new load first removes every export on disk, such as one left by an app that was closed while the screen

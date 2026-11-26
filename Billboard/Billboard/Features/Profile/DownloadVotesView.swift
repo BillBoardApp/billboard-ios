@@ -19,6 +19,8 @@ enum DownloadVotesCopy {
     static let empty = "You haven't voted on a bill yet."
     /// VoiceOver's hint on both save buttons.
     static let buttonHint = "Opens options to save or send the file"
+    /// Said to VoiceOver when both files are ready; not shown on screen, where the save buttons light up.
+    static let ready = "Your votes are ready."
 
     static func buttonTitle(_ format: VoteExportFormat) -> String {
         switch format {
@@ -68,13 +70,12 @@ final class DownloadVotesModel: ObservableObject {
         self.timeZone = timeZone
     }
 
-    /// What VoiceOver hears as the phase changes: the loading line, then the empty line or the error. The approved
-    /// copy has no line for the files being ready, so that change says nothing; the save buttons, now enabled, read
-    /// as before.
+    /// What VoiceOver hears as the phase changes, as a queued announcement (`announcesToVoiceOver`): the loading
+    /// line, then that the files are ready, the empty line or the error.
     var announcement: String? {
         switch phase {
         case .preparing: return DownloadVotesCopy.preparing
-        case .ready: return nil
+        case .ready: return DownloadVotesCopy.ready
         case .empty: return DownloadVotesCopy.empty
         case .failed: return DownloadVotesCopy.errorTitle
         }
@@ -159,7 +160,8 @@ nonisolated struct VoteExportJSONFile: Transferable, Sendable {
 /// Download my votes (UX-40 L7), from Profile → Settings: a settings list on paper (spec 3.25). The body, then the
 /// two save buttons, each a ShareLink to its file, with the footer under them; below, while it loads, "Preparing
 /// your votes…", on a failure a Couldn't load notice with Try again, and with no votes the empty line. It loads on
-/// appear and deletes its files when it goes. VoiceOver hears the loading line, then the empty line or the error.
+/// appear and deletes its files when it goes. VoiceOver hears the loading line, then that the files are ready, the
+/// empty line or the error.
 struct DownloadVotesView: View {
     @StateObject private var model: DownloadVotesModel
     /// Bumped by Try again; the load runs as the view's task, so leaving the screen cancels it.

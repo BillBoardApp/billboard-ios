@@ -127,11 +127,10 @@ final class DownloadVotesRenderTests: XCTestCase {
         XCTAssertTrue(ShownTree.first("downloadVotes.json", in: host)?.accessibilityTraits.contains(.notEnabled) ?? false)
     }
 
-    /// VoiceOver hears the loading line, then the empty line or the error. The approved copy has no line for the
-    /// files being ready, so nothing more is said then.
-    func testVoiceOverHearsTheLoadingLineThenTheEmptyLineOrTheError() throws {
+    /// VoiceOver hears the loading line, then that the files are ready, the empty line or the error.
+    func testVoiceOverHearsTheLoadingLineThenTheResult() throws {
         let outcomes: [(FakeVoteExportService, [String])] = [
-            (FakeVoteExportService(.success(votes)), ["Preparing your votes…"]),
+            (FakeVoteExportService(.success(votes)), ["Preparing your votes…", "Your votes are ready."]),
             (FakeVoteExportService(.success([])), ["Preparing your votes…", "You haven't voted on a bill yet."]),
             (FakeVoteExportService(.failure(httpStatusError(500, path: "account-data/votes"))), ["Preparing your votes…", "Couldn't prepare your votes"])
         ]
@@ -172,7 +171,7 @@ final class DownloadVotesRenderTests: XCTestCase {
         XCTAssertFalse(shown.contains("downloadVotes.tryAgain"), ShownTree.dump(host))
         XCTAssertFalse(shown.contains("downloadVotes.preparing"), ShownTree.dump(host))
         XCTAssertFalse(ShownTree.first("downloadVotes.csv", in: host)?.accessibilityTraits.contains(.notEnabled) ?? true, ShownTree.dump(host))
-        XCTAssertEqual(spoken.lines, ["Preparing your votes…", "Couldn't prepare your votes", "Preparing your votes…"])
+        XCTAssertEqual(spoken.lines, ["Preparing your votes…", "Couldn't prepare your votes", "Preparing your votes…", "Your votes are ready."])
     }
 
     /// With no votes, the empty line, and nothing to save.
