@@ -20,8 +20,9 @@ struct ProcessedCongressMember: Decodable {
     /// member stats could not be read.
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
-    /// BillBoard's counts for the Congress the server says they cover (REL-46); absent from services before REL-46
-    /// and when the member has no counts. A member new in the 120th Congress has these and no 119th counts.
+    /// BillBoard's counts for the Congress the server says they cover (REL-46); absent from services before REL-46,
+    /// when the member has no counts and when the member stats could not be read (`toCongressMember` then takes the
+    /// members list's). A member new in the 120th Congress has these and no 119th counts.
     let currentCongressCounts: TrackedCongressCounts?
     let terms: [Term]?
 

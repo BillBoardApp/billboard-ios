@@ -18,8 +18,9 @@ struct CongressMember: Identifiable, Hashable {
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
     /// BillBoard's counts for the Congress the server says they cover (REL-46): the newest Congress the member has
-    /// counts in, else the 119th. Nil from services before REL-46 and when the member has no counts; the page then
-    /// falls back to the 119th Congress counts above.
+    /// counts in, else the 119th. When the member's own payload has no counts (its stats could not be read), these
+    /// are the members list's. Nil from services before REL-46 and when neither has counts; the page then falls back
+    /// to the 119th Congress counts above.
     let currentCongressCounts: TrackedCongressCounts?
 
     // Profile
