@@ -170,13 +170,13 @@ nonisolated enum VoteExportFormat: Sendable {
 }
 
 /// The JSON document (project decision D33, 2026-11-23): when it was made, then each vote's server fields with its
-/// bill number ("bill") and reason labels ("reasonLabels"). Pretty-printed with sorted keys.
-nonisolated struct VoteExportDocument: Codable, Equatable, Sendable {
+/// bill number ("bill") and reason labels ("reasonLabels"). Pretty-printed with sorted keys. The app only writes it.
+nonisolated struct VoteExportDocument: Encodable, Sendable {
     /// ISO 8601 UTC.
     let exportedAt: String
     let votes: [Vote]
 
-    nonisolated struct Vote: Codable, Equatable, Sendable {
+    nonisolated struct Vote: Encodable, Sendable {
         let server: ExportedVote
         /// "H.R. 1285" (`ExportedVote.billLabel`).
         let bill: String
@@ -190,13 +190,6 @@ nonisolated struct VoteExportDocument: Codable, Equatable, Sendable {
 
         private enum AddedKeys: String, CodingKey {
             case bill, reasonLabels
-        }
-
-        init(from decoder: Decoder) throws {
-            server = try ExportedVote(from: decoder)
-            let container = try decoder.container(keyedBy: AddedKeys.self)
-            bill = try container.decode(String.self, forKey: .bill)
-            reasonLabels = try container.decode([String].self, forKey: .reasonLabels)
         }
 
         /// One flat object: the server's keys and the two the app adds.

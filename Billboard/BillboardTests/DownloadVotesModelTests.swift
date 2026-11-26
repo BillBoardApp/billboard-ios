@@ -35,9 +35,9 @@ final class DownloadVotesModelTests: XCTestCase {
         guard case .ready(let files) = model.phase else { return XCTFail("expected ready, got \(model.phase)") }
         XCTAssertEqual(service.calls, 1)
         let csvRows = try XCTUnwrap(String(data: Data(contentsOf: files.csv), encoding: .utf8)).components(separatedBy: "\r\n")
-        let document = try JSONDecoder().decode(VoteExportDocument.self, from: Data(contentsOf: files.json))
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: files.json)) as? [String: Any])
         XCTAssertEqual(csvRows.count - 2, 3, "one header, one row per vote, a final CRLF")
-        XCTAssertEqual(document.votes.count, 3)
+        XCTAssertEqual((document["votes"] as? [Any])?.count, 3)
         XCTAssertEqual(model.announcement, "Your votes are ready.")
     }
 

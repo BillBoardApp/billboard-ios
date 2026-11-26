@@ -461,18 +461,12 @@ final class VoteExportTests: XCTestCase {
     // MARK: - JSON
 
     /// The JSON is pretty-printed with sorted keys: exportedAt, then each vote's server fields (nulls written out) with
-    /// its bill number and reason labels. It reads back as written, and its votes as the server sent them.
-    func testTheJSONRoundTrips() throws {
+    /// its bill number and reason labels. Its votes read back as the server sent them. The app only writes the
+    /// document, so the test reads it as plain JSON.
+    func testTheJSONReadsBackAsWritten() throws {
         let page = try JSONDecoder.usingDefaultKeys().decode(VoteExportPage.self, from: Data(Self.contractFixture.utf8))
         let exportedAt = Date(timeIntervalSince1970: 1_795_000_000)
         let data = try VoteExport.json(page.votes, exportedAt: exportedAt)
-
-        let document = try JSONDecoder().decode(VoteExportDocument.self, from: data)
-        XCTAssertEqual(document, VoteExport.document(page.votes, exportedAt: exportedAt))
-        XCTAssertEqual(document.exportedAt, exportedAt.formatted(.iso8601))
-        XCTAssertEqual(document.votes.map(\.server), page.votes)
-        XCTAssertEqual(document.votes.map(\.bill), ["H.R. 1285", "S. 570"])
-        XCTAssertEqual(document.votes.map(\.reasonLabels), [["Economic Impact / Jobs", "Taxes / Spending"], []])
 
         let text = try XCTUnwrap(String(data: data, encoding: .utf8))
         XCTAssertTrue(text.hasPrefix("{\n  \"exportedAt\" : \""), text)
@@ -480,7 +474,11 @@ final class VoteExportTests: XCTestCase {
 
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["exportedAt", "votes"])
-        let second = try XCTUnwrap((object["votes"] as? [[String: Any]])?.last)
+        XCTAssertEqual(object["exportedAt"] as? String, exportedAt.formatted(.iso8601))
+        let rows = try XCTUnwrap(object["votes"] as? [[String: Any]])
+        XCTAssertEqual(rows.map { $0["bill"] as? String }, ["H.R. 1285", "S. 570"])
+        XCTAssertEqual(rows.map { $0["reasonLabels"] as? [String] }, [["Economic Impact / Jobs", "Taxes / Spending"], []])
+        let second = try XCTUnwrap(rows.last)
         XCTAssertEqual(Set(second.keys), [
             "bill", "billId", "billNumber", "billType", "congress", "district", "firstVotedAt", "reasonLabels", "reasons",
             "state", "title", "verified", "vote", "votedAt"
