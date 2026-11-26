@@ -74,12 +74,9 @@ final class VetoedStatusTests: XCTestCase {
         XCTAssertTrue(bill(Self.house, .failed, vetoed: true).isVetoed)
         XCTAssertTrue(bill(Self.house, .passed, vetoed: true).isVetoed)
         XCTAssertEqual(bill(Self.house, .failed, vetoed: true).billStatus, .failed)
-        XCTAssertEqual(bill(Self.house, .failed, vetoed: true).outcomeLabel, "Vetoed")
         XCTAssertFalse(bill(Self.house, .finalized, vetoed: true).isVetoed, "Finalized always wins")
-        XCTAssertEqual(bill(Self.house, .finalized, vetoed: true).outcomeLabel, "Became law")
         XCTAssertFalse(bill(Self.house, .failed).isVetoed)
         XCTAssertFalse(bill(Self.house, .failed, vetoed: false).isVetoed)
-        XCTAssertEqual(bill(Self.house, .failed).outcomeLabel, "Failed")
     }
 
     // MARK: - Decoding

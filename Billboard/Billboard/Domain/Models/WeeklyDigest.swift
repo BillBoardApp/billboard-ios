@@ -35,10 +35,6 @@ struct WeeklyDigest: Identifiable, Codable, Equatable {
     nonisolated var publishedLabel: String {
         WeeklyDigestDateFormatter.publishedDate(publishedAt)
     }
-
-    nonisolated var totalItemCount: Int {
-        sections.reduce(0) { $0 + $1.items.count }
-    }
 }
 
 struct WeeklyDigestStat: Identifiable, Codable, Equatable {
@@ -162,21 +158,15 @@ extension WeeklyDigestItem {
     }
 
     /// The eyebrow as the Weekly Brief detail shows it (Civic Record spec 4.52): the date alone ("Oct
-    /// 14"), since the docket line's stamp already says the status. The server and app 1.2's on-device builder
-    /// write "Updated Oct 14" or "Became law Oct 14" (the on-device builder "Vetoed Oct 14" for a vetoed bill), so
-    /// a bill item's leading status word is dropped; any other eyebrow is kept as written. Nil for a member item (its eyebrow is a count, "2 relevant
-    /// bills this week", which its summary already says) and when nothing is left.
+    /// 14"), since the docket line's stamp already says the status. The server writes "Updated Oct 14" or "Became
+    /// law Oct 14", a vetoed bill's with its status's word too, so a bill item's leading status word is dropped; any
+    /// other eyebrow is kept as written. Nil for a member item (its eyebrow is a count, "2 relevant bills this
+    /// week", which its summary already says) and when nothing is left.
     nonisolated var dateEyebrow: String? {
         guard kind == .bill, let eyebrow = eyebrow?.trimmingCharacters(in: .whitespacesAndNewlines), !eyebrow.isEmpty else {
             return nil
         }
-        // "Ended with the 119th Congress Jan 8", as the on-device builder (removed in 1.3) wrote it in a brief it
-        // saved (REL-46, `Bill.outcomeLabel(at:)`).
-        if let ended = eyebrow.range(of: #"^Ended with the \d+(st|nd|rd|th) Congress"#, options: [.regularExpression, .caseInsensitive]) {
-            let date = eyebrow[ended.upperBound...].trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "·")))
-            return date.isEmpty ? nil : date
-        }
-        let statusWords = ["Became law", "Finalized", "Updated", "Passed", "Failed", "Vetoed", "New"]
+        let statusWords = ["Became law", "Finalized", "Updated", "Passed", "Failed", "New"]
         for word in statusWords {
             guard eyebrow.range(of: word, options: [.anchored, .caseInsensitive]) != nil else { continue }
             let rest = eyebrow.dropFirst(word.count)
@@ -188,7 +178,7 @@ extension WeeklyDigestItem {
     }
 
     /// What VoiceOver reads for `dateEyebrow` (Civic Record spec 1.7, 7.3): the date named for what it is,
-    /// with its month in full, "Last updated October 14", while the page shows "OCT 14". Both builders date
+    /// with its month in full, "Last updated October 14", while the page shows "OCT 14". The server dates
     /// the eyebrow from the bill's `storedAt`, the date a bill slip reads as "Last updated". An eyebrow
     /// that is not a month and a day is read as written.
     nonisolated var spokenDateEyebrow: String? {

@@ -419,7 +419,7 @@ struct WeeklyDigestDetailView: View {
 /// focus to its title), the dateline and the double rule. Then each section with a sentence-case title
 /// and its items, separated by hairlines. No icons, no section colours, no line limits.
 ///
-/// Item text is the server's (or the local builder's) copy; nothing here adds a vote count or another
+/// Item text is the server's copy; nothing here adds a vote count or another
 /// user's vote (INT-11).
 struct WeeklyBriefDocument: View {
     let digest: WeeklyDigest
