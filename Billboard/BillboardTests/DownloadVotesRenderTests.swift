@@ -389,7 +389,10 @@ private enum ShownTree {
                 }
                 return true
             }
-            current = item.accessibilityContainer as? NSObject
+            // Not exposed on NSObject to Swift; SwiftUI's elements answer it.
+            current = item.responds(to: NSSelectorFromString("accessibilityContainer"))
+                ? item.value(forKey: "accessibilityContainer") as? NSObject
+                : nil
         }
         return true
     }
