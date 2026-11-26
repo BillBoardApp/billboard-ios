@@ -602,10 +602,7 @@ final class UpdatesSearchRenderTests: XCTestCase {
         let digestStore = WeeklyDigestStore(
             scope: scope,
             defaults: defaults,
-            digestService: EmptyWeeklyDigestService(),
-            billsService: FakeBillsService(),
-            votesService: FakeBillVotesService(),
-            congressService: FakeCongressService()
+            digestService: EmptyWeeklyDigestService()
         )
         XCTAssertNotNil(digestStore.digest, "the brief is on Updates")
 

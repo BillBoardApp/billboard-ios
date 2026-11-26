@@ -4,7 +4,7 @@ import XCTest
 /// REL-44: the server marks a bill that became law `Finalized`. The app treats it as a decided outcome,
 /// like Passed: off the Bills list, listed (and cleared) with Updates' passed bills, counted in the
 /// Updates badge and the Passed list, a `.passed` item on Bills that opens with the vote bar (Civic Record
-/// project decision 1), ranked like Passed in the on-device weekly brief, and shown as "Became law".
+/// project decision 1), and shown as "Became law", in the Weekly Brief too.
 @MainActor
 final class FinalizedStatusTests: XCTestCase {
     private static let house = "BILLS-119hjres131"
@@ -232,67 +232,7 @@ final class FinalizedStatusTests: XCTestCase {
         XCTAssertEqual(lawOverVeto.label, "Became law · S.J.Res. 91")
     }
 
-    // MARK: 6. The on-device weekly brief
-
-    func testTheWeeklyBriefRanksALawLikeAPassedBill() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
-        let moved = ISO8601DateFormatter().string(from: window.start.addingTimeInterval(24 * 60 * 60))
-        func item(_ number: String, _ status: String) -> BillsManifestItem {
-            BillsManifestItem(
-                guid: "BILLS-119hr\(number)",
-                congress: "119",
-                billType: "hr",
-                billID: number,
-                updatedAt: moved,
-                subCategories: ["Energy"],
-                lifeAreas: [],
-                sponsors: [],
-                cosponsors: [],
-                title: "Bill \(number)",
-                billStatus: status
-            )
-        }
-        let bills = FakeBillsService()
-        // The bills are not hydrated (`getProcessedBill` fails), so each item uses its manifest row.
-        bills.manifestResults = [.success([
-            item("1", "New"),
-            item("2", "Updated"),
-            item("3", "Finalized"),
-            item("4", "Passed"),
-            item("5", "New")
-        ])]
-        let suite = "finalized-digest-tests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
-        defaults.set(false, forKey: AppNotificationStorage.notificationsEnabledKey)
-        let store = WeeklyDigestStore(
-            scope: "finalized-digest",
-            defaults: defaults,
-            digestService: EmptyWeeklyDigestService(),
-            billsService: bills,
-            votesService: FakeBillVotesService(),
-            congressService: FakeCongressService()
-        )
-        let profile = UserProfile.placeholder().updating(id: "user-1", subscribedSubCategories: ["Energy"])
-
-        await store.refresh(profile: profile, forceRefresh: true)
-
-        let digest = try XCTUnwrap(store.digest)
-        let attention = try XCTUnwrap(digest.sections.first { $0.kind == .needsAttention })
-        XCTAssertEqual(
-            attention.items.compactMap(\.billGuid),
-            ["BILLS-119hr3", "BILLS-119hr4"],
-            "the law and the passed bill need attention and rank first (equal score, then title)"
-        )
-        let movedSection = try XCTUnwrap(digest.sections.first { $0.kind == .movedThisWeek })
-        XCTAssertEqual(movedSection.items.first?.billGuid, "BILLS-119hr2", "the updated bill ranks next")
-        let law = try XCTUnwrap(attention.items.first)
-        XCTAssertEqual(law.billState, .finalized)
-        XCTAssertEqual(law.billState?.title, "Became law")
-        XCTAssertTrue(law.eyebrow?.hasPrefix("Became law ") == true, law.eyebrow ?? "no eyebrow")
-        XCTAssertEqual(law.detail, "Became law this week.")
-        XCTAssertEqual(law.reason, "Matches your topic: Energy")
-    }
+    // MARK: 6. The Weekly Brief's state words
 
     func testTheBriefsStateWordsMatchTheBillCards() {
         XCTAssertEqual(WeeklyDigestItem.BillState.finalized.title, "Became law")

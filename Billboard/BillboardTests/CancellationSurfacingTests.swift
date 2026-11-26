@@ -156,90 +156,31 @@ final class CancellationSurfacingTests: XCTestCase {
         XCTAssertEqual(message, BillVoteStore.checkVoteFailedMessage)
     }
 
+    /// The Weekly Brief is the server's only (UX-28): a cancelled read says nothing and builds nothing, and a
+    /// timeout says the brief could not be loaded.
     @MainActor
-    func testWeeklyBriefStaysQuietAndBuildsNothingWhenItsRequestIsCancelled() async throws {
-        for cancelled in cancelledRequestErrors + [Self.timeout] {
+    func testWeeklyBriefStaysQuietWhenItsRequestIsCancelled() async throws {
+        for failure in cancelledRequestErrors + [Self.timeout] {
             let defaults = try isolatedDefaults()
-            defaults.set(false, forKey: AppNotificationStorage.notificationsEnabledKey)
-            let bills = FakeBillsService()
-            let store = WeeklyDigestStore(
-                scope: "cancellation-tests",
-                defaults: defaults,
-                digestService: WeeklyDigestService.Live(),
-                billsService: bills,
-                votesService: FakeBillVotesService(),
-                congressService: FakeCongressService()
-            )
+            let store = WeeklyDigestStore(scope: "cancellation-tests", defaults: defaults, digestService: WeeklyDigestService.Live())
             let profile = UserProfile.placeholder().updating(id: "user-1", subscribedSubCategories: ["Energy"])
+            let transport = RecordingTransport()
+            transport.failure = { _ in failure }
 
-            await APIClient.$current.withValue(failingClient(with: cancelled)) {
+            await APIClient.$current.withValue(transport.client) {
                 await store.refresh(profile: profile, forceRefresh: true)
             }
 
-            XCTAssertNil(store.errorMessage, "\(cancelled)")
+            XCTAssertEqual(transport.requests.map(\.path), ["weekly-digests/latest"], "the brief's read alone: \(failure)")
             XCTAssertFalse(store.isLoading)
-            if cancelled is URLError, (cancelled as? URLError)?.code == .timedOut {
-                // Unchanged: an unreachable published brief falls back to building one on the device.
-                XCTAssertEqual(bills.manifestRequests.count, 1, "the timeout falls back to the local build")
+            XCTAssertNil(store.digest)
+            XCTAssertFalse(store.foundNoBriefThisWeek, "a failed read is not 'no brief this week': \(failure)")
+            if (failure as? URLError)?.code == .timedOut {
+                XCTAssertEqual(store.errorMessage, "Can't reach Billboard right now. Check your connection and try again.")
             } else {
-                XCTAssertTrue(bills.manifestRequests.isEmpty, "a cancelled refresh does not go on to build locally: \(cancelled)")
+                XCTAssertNil(store.errorMessage, "\(failure)")
             }
         }
-    }
-
-    /// The local build swallows vote and bill fetch failures; a refresh cancelled during them must not
-    /// build and persist a brief from the bills it did not load.
-    @MainActor
-    func testACancelledLocalBuildPersistsNoBrief() async throws {
-        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
-        let moved = ISO8601DateFormatter().string(from: window.start.addingTimeInterval(24 * 60 * 60))
-        let item = BillsManifestItem(
-            guid: "BILLS-119hr77",
-            congress: "119",
-            billType: "hr",
-            billID: "77",
-            updatedAt: moved,
-            subCategories: ["Energy"],
-            lifeAreas: [],
-            sponsors: [],
-            cosponsors: [],
-            title: "Bill 77",
-            billStatus: "Updated"
-        )
-        let profile = UserProfile.placeholder().updating(id: "user-1", subscribedSubCategories: ["Energy"])
-
-        func makeStore(votes: any BillVotesServicing, defaults: UserDefaults) -> WeeklyDigestStore {
-            let bills = FakeBillsService()
-            bills.manifestResults = [.success([item])]
-            return WeeklyDigestStore(
-                scope: "cancellation-tests",
-                defaults: defaults,
-                digestService: EmptyWeeklyDigestService(),
-                billsService: bills,
-                votesService: votes,
-                congressService: FakeCongressService()
-            )
-        }
-
-        // Unchanged: without a cancellation the brief is built from the same data.
-        let builtDefaults = try isolatedDefaults()
-        builtDefaults.set(false, forKey: AppNotificationStorage.notificationsEnabledKey)
-        let built = makeStore(votes: FakeBillVotesService(), defaults: builtDefaults)
-        await built.refresh(profile: profile, forceRefresh: true)
-        XCTAssertNotNil(built.digest, "the control build produces a brief")
-
-        let defaults = try isolatedDefaults()
-        defaults.set(false, forKey: AppNotificationStorage.notificationsEnabledKey)
-        let store = makeStore(votes: TaskCancellingVotesService(), defaults: defaults)
-        let refresh = Task { @MainActor in
-            await store.refresh(profile: profile, forceRefresh: true)
-        }
-        await refresh.value
-
-        XCTAssertNil(store.digest, "no brief from a cancelled build")
-        XCTAssertNil(store.errorMessage)
-        let reopened = makeStore(votes: FakeBillVotesService(), defaults: defaults)
-        XCTAssertNil(reopened.digest, "nothing was persisted")
     }
 
     @MainActor
@@ -351,20 +292,4 @@ private final class HangingPreferencesService: PreferencesServicing {
 
     func putPreferences(_ items: [PreferencesItem]) async throws {}
     func deletePreferences(_ items: [PreferencesItem]) async throws {}
-}
-
-/// Cancels the task that asks for vote states, then fails the request as a cancelled one would.
-@MainActor
-private final class TaskCancellingVotesService: BillVotesServicing {
-    func fetchFeedback(billIds: [String]) async throws -> [String: BillVotesService.RemoteVoteState] {
-        withUnsafeCurrentTask { $0?.cancel() }
-        throw CancellationError()
-    }
-
-    func fetchFeedback(billId: String) async throws -> BillVotesService.RemoteVoteState {
-        withUnsafeCurrentTask { $0?.cancel() }
-        throw CancellationError()
-    }
-
-    func setFeedback(billId: String, feedback: VoteType, reasons: [String]) async throws {}
 }
