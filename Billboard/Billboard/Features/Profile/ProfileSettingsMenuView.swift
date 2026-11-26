@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// Settings, from the gear on Profile (spec D 2.5.7; Civic Record spec 4.68): App settings, About Billboard,
-/// Delete account and data, Sign out, as a settings list on paper (spec 3.25). The header row carries the
-/// user's 34 pt monogram, name and email; the rows have no leading symbols, and the two destructive rows are
-/// in `danger`. What R1 kept under Personal Info and Subscriptions is edited in place on Profile now, and the
-/// in-app roadmap is replaced by a link in About (spec D 2.7).
+/// Download my votes (UX-40 L7), Delete account and data, Sign out, as a settings list on paper (spec 3.25). The
+/// header row carries the user's 34 pt monogram, name and email; the rows have no leading symbols, and the two
+/// destructive rows are in `danger`. What R1 kept under Personal Info and Subscriptions is edited in place on
+/// Profile now, and the in-app roadmap is replaced by a link in About (spec D 2.7).
 struct ProfileSettingsMenuView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var userStore: UserStore
@@ -32,6 +32,18 @@ struct ProfileSettingsMenuView: View {
                     SettingsRowText("About Billboard")
                 }
                 .accessibilityIdentifier("settings.about")
+            }
+            .recordListRows()
+
+            // UX-40 L7: the privacy policy gives this path (Profile → Settings → Download my votes), so the row keeps
+            // that title.
+            Section {
+                NavigationLink {
+                    DownloadVotesView()
+                } label: {
+                    SettingsRowText(DownloadVotesCopy.rowTitle)
+                }
+                .accessibilityIdentifier("settings.downloadVotes")
             }
             .recordListRows()
 
