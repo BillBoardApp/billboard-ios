@@ -76,7 +76,7 @@ extension BillStatus {
     }
 
     /// What a vetoed bill shows and reads in place of its status word (project decision 2026-11-19): the
-    /// VETOED stamp, the companion chip ("Vetoed · H.R. 10") and the on-device brief's eyebrow.
+    /// VETOED stamp and the companion chip ("Vetoed · H.R. 10").
     nonisolated static let vetoedLabel = "Vetoed"
 
     /// The status as the app shows and reads it out: "Became law" for `Finalized` (the server's word
@@ -502,13 +502,7 @@ extension Bill.BillAction {
         Self.vetoActionCodes.contains(trimmedActionCode)
     }
 
-    /// A vote that failed to pass the bill over a veto: in the House (33000) or the Senate (35000).
-    nonisolated var isFailedOverrideAction: Bool {
-        Self.failedOverrideActionCodes.contains(trimmedActionCode)
-    }
-
     nonisolated private static let vetoActionCodes: Set<String> = ["31000", "30000"]
-    nonisolated private static let failedOverrideActionCodes: Set<String> = ["33000", "35000"]
 
     nonisolated private var trimmedActionCode: String {
         (actionCode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

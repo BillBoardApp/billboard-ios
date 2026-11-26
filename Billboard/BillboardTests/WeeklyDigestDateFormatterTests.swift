@@ -21,7 +21,6 @@ final class WeeklyDigestDateFormatterTests: XCTestCase {
     func testAWeekInsideOneMonth() {
         let start = eastern(2026, 10, 11)
         let end = eastern(2026, 10, 17)
-        XCTAssertEqual(WeeklyDigestDateFormatter.rangeString(start: start, end: end), "Oct 11\u{2013}17, 2026")
         XCTAssertEqual(WeeklyDigestDateFormatter.shortRangeString(start: start, end: end), "Oct 11\u{2013}17")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end), "October 11\u{2013}17, 2026")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end, includesYear: false), "October 11\u{2013}17")
@@ -33,7 +32,6 @@ final class WeeklyDigestDateFormatterTests: XCTestCase {
     func testAWeekAcrossTwoMonths() {
         let start = eastern(2026, 9, 27)
         let end = eastern(2026, 10, 3)
-        XCTAssertEqual(WeeklyDigestDateFormatter.rangeString(start: start, end: end), "Sep 27\u{2013}Oct 3, 2026")
         XCTAssertEqual(WeeklyDigestDateFormatter.shortRangeString(start: start, end: end), "Sep 27\u{2013}Oct 3")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end), "September 27\u{2013}October 3, 2026")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end, includesYear: false), "September 27\u{2013}October 3")
@@ -45,7 +43,6 @@ final class WeeklyDigestDateFormatterTests: XCTestCase {
     func testAWeekAcrossTwoYears() {
         let start = eastern(2026, 12, 27)
         let end = eastern(2027, 1, 2)
-        XCTAssertEqual(WeeklyDigestDateFormatter.rangeString(start: start, end: end), "Dec 27, 2026\u{2013}Jan 2, 2027")
         XCTAssertEqual(WeeklyDigestDateFormatter.shortRangeString(start: start, end: end), "Dec 27\u{2013}Jan 2")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end), "December 27, 2026\u{2013}January 2, 2027")
         XCTAssertEqual(WeeklyDigestDateFormatter.longRangeString(start: start, end: end, includesYear: false), "December 27\u{2013}January 2")
@@ -64,14 +61,6 @@ final class WeeklyDigestDateFormatterTests: XCTestCase {
         XCTAssertEqual(
             WeeklyDigestDateFormatter.shortRangeString(start: eastern(2026, 10, 11, hour: 23), end: eastern(2026, 10, 17, hour: 23)),
             "Oct 11\u{2013}17"
-        )
-    }
-
-    /// The local fallback's title and the push text use the same range, so they have the en dash too.
-    func testTheFallbackTitleUsesTheSameRange() {
-        XCTAssertEqual(
-            WeeklyDigestDateFormatter.title(weekStart: eastern(2026, 3, 15), weekEnd: eastern(2026, 3, 21)),
-            "Your Week in Congress | Mar 15\u{2013}21, 2026"
         )
     }
 

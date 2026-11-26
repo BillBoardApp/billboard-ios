@@ -216,31 +216,12 @@ enum WeeklyDigestDateFormatter {
         return "\(fullMonth) \(rest)"
     }
 
-
-    nonisolated static func title(weekStart: Date, weekEnd: Date) -> String {
-        "Your Week in Congress | \(rangeString(start: weekStart, end: weekEnd))"
-    }
-
     nonisolated static func publishedDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = WeeklyDigestSchedule.timeZone
         formatter.dateFormat = "EEEE, MMMM d 'at' h:mm a"
         return "Published \(formatter.string(from: date)) ET"
-    }
-
-    nonisolated static func shortDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = WeeklyDigestSchedule.timeZone
-        formatter.setLocalizedDateFormatFromTemplate("MMM d")
-        return formatter.string(from: date)
-    }
-
-    /// The week in Eastern time, with an en dash (Civic Record spec 3.26): "Oct 11–17, 2026",
-    /// "Sep 27–Oct 3, 2026", "Dec 27, 2026–Jan 2, 2027".
-    nonisolated static func rangeString(start: Date, end: Date) -> String {
-        range(start: start, end: end, month: .short, includesYear: true, separator: enDash)
     }
 
     /// The week as the Weekly Brief front page's docket line gives it, without the year: "Oct 11–17",
