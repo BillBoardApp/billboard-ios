@@ -432,18 +432,45 @@ final class CongressMemberCongressCountsTests: XCTestCase {
         XCTAssertEqual(lenient.trackedSponsoredCount, 3)
     }
 
-    /// The members manifest carries the field from the contract, and its disk cache keeps it.
+    /// The members manifest carries the field from the contract, and its disk cache keeps it. A member new in the
+    /// 120th Congress, added to the fixture's members, has only the field, and keeps those counts through the cache.
     @MainActor
     func testTheManifestMapsAndCachesTheCounts() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.manifestFixture.utf8)) as? [String: Any])
+        var members = try XCTUnwrap(object["members"] as? [[String: Any]])
+        members.append([
+            "bioguideId": "N000001", "name": "N", "chamber": "House", "state": "VA", "party": "D",
+            "currentCongressCounts": ["congress": 120, "sponsored": 0, "supported": 3]
+        ])
+        object["members"] = members
         let manifest = try JSONDecoder.convertingFromSnakeCase().decode(
             UserAPIContractsV1.CongressMembersManifest.self,
-            from: Data(Self.manifestFixture.utf8)
+            from: JSONSerialization.data(withJSONObject: object)
         )
         let items = manifest.members.map(CongressMemberManifestItem.init(dto:))
-        XCTAssertEqual(items.map(\.currentCongressCounts), [TrackedCongressCounts(congress: 120, sponsored: 1, supported: 4), nil])
-        XCTAssertEqual(items.map(\.trackedSponsoredCount), [2, nil])
+        XCTAssertEqual(items.map(\.id), ["D000001", "S000001", "N000001"])
+        XCTAssertEqual(
+            items.map(\.currentCongressCounts),
+            [TrackedCongressCounts(congress: 120, sponsored: 1, supported: 4), nil, TrackedCongressCounts(congress: 120, sponsored: 0, supported: 3)]
+        )
+        XCTAssertEqual(items.map(\.trackedSponsoredCount), [2, nil, nil])
 
         let cached = try JSONDecoder.convertingFromSnakeCase().decode([CongressMemberManifestItem].self, from: JSONEncoder().encode(items))
         XCTAssertEqual(cached, items)
+
+        let newMember = try XCTUnwrap(cached.last)
+        XCTAssertNil(newMember.trackedSponsoredCount, "no 119th counts")
+        XCTAssertNil(newMember.trackedSupportedCount)
+        XCTAssertNil(newMember.currentCongressBillsSupportedCount)
+        XCTAssertEqual(newMember.currentCongressCounts, TrackedCongressCounts(congress: 120, sponsored: 0, supported: 3))
+
+        // Their page, when the member's own payload has no counts, takes the cached row's 120th counts.
+        let payload = try processedPayload(
+            removing: ["trackedSponsoredCount", "trackedSupportedCount", "currentCongressBillsSupportedCount", "currentCongressCounts"],
+            setting: ["bioguideId": "N000001"]
+        )
+        let member = try CongressService.decodeProcessedCongressMember(from: payload).toCongressMember(fallback: newMember)
+        XCTAssertEqual(member.trackedCongress, 120)
+        XCTAssertEqual(rows(member), ["Sponsored in 120th Congress=0", "Supported in 120th Congress=3"])
     }
 }
