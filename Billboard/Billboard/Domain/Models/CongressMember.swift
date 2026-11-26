@@ -85,16 +85,33 @@ struct CongressMember: Identifiable, Hashable {
         return rows
     }
 
-    /// BillBoard's own counters: 119th Congress bills it tracks that this member sponsored or
-    /// cosponsored. Payloads without the tracked counts (services before APPF-03) still show the
-    /// supported count from `currentCongressBillsSupportedCount`.
+    /// The Congress the Tracked by Billboard counts cover, which their labels and their caption both name: the
+    /// server's `currentCongressCounts.congress`, else the 119th, the Congress the older count fields cover. Never
+    /// computed from the date (a project decision, 2026-11-23).
+    var trackedCongress: Int {
+        currentCongressCounts?.congress ?? TrackedCongressCounts.fieldsCongress
+    }
+
+    /// BillBoard's own counters: bills of `trackedCongress` it tracks that this member sponsored or
+    /// cosponsored, "Sponsored in 120th Congress". `currentCongressCounts` gives both rows, zeros
+    /// included. Without it the 119th Congress fields do, and payloads without the tracked counts
+    /// (services before APPF-03) still show the supported count from
+    /// `currentCongressBillsSupportedCount`. Empty when the member has no counts, and the page then has
+    /// no Tracked by Billboard section.
     var trackedActivityRows: [(label: String, value: String)] {
+        let congress = SpokenForm.ordinal(trackedCongress)
+        if let currentCongressCounts {
+            return [
+                (label: "Sponsored in \(congress) Congress", value: "\(currentCongressCounts.sponsored)"),
+                (label: "Supported in \(congress) Congress", value: "\(currentCongressCounts.supported)")
+            ]
+        }
         var rows: [(label: String, value: String)] = []
         if let trackedSponsoredCount {
-            rows.append((label: "Sponsored in 119th Congress", value: "\(trackedSponsoredCount)"))
+            rows.append((label: "Sponsored in \(congress) Congress", value: "\(trackedSponsoredCount)"))
         }
         if let supported = trackedSupportedCount ?? currentCongressBillsSupportedCount {
-            rows.append((label: "Supported in 119th Congress", value: "\(supported)"))
+            rows.append((label: "Supported in \(congress) Congress", value: "\(supported)"))
         }
         return rows
     }

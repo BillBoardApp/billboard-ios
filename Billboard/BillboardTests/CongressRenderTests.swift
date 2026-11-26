@@ -92,7 +92,13 @@ final class CongressRenderTests: XCTestCase {
         ]
     }
 
-    private func pageMember(party: PoliticalParty = .republican, imageUrl: URL? = nil) -> CongressMember {
+    private func pageMember(
+        party: PoliticalParty = .republican,
+        imageUrl: URL? = nil,
+        trackedSponsoredCount: Int? = 3,
+        trackedSupportedCount: Int? = 12,
+        currentCongressCounts: TrackedCongressCounts? = nil
+    ) -> CongressMember {
         CongressMember(
             id: UUID(),
             name: "Jordan Ellis",
@@ -102,8 +108,9 @@ final class CongressRenderTests: XCTestCase {
             imageUrl: imageUrl,
             sponsoredLegislationCount: 14,
             cosponsoredLegislationCount: 41,
-            trackedSponsoredCount: 3,
-            trackedSupportedCount: 12,
+            trackedSponsoredCount: trackedSponsoredCount,
+            trackedSupportedCount: trackedSupportedCount,
+            currentCongressCounts: currentCongressCounts,
             biography: "Jordan Ellis has represented the 7th district of Texas since 2019. Before Congress, Ellis taught civics at a public high school.",
             party: party,
             district: "7",
@@ -504,14 +511,52 @@ final class CongressRenderTests: XCTestCase {
         XCTAssertTrue(text.contains("Party: Republican"), text)
         XCTAssertTrue(text.contains("District: 7th"), text)
         XCTAssertTrue(text.contains("Proposed Legislation: 14"), text)
-        XCTAssertTrue(text.contains(CongressMemberPageContent.trackedCaption), text)
+        XCTAssertTrue(text.contains("Sponsored in 119th Congress: 3"), text)
+        XCTAssertTrue(text.contains("Counts only 119th Congress bills in Billboard."), text)
         XCTAssertTrue(text.contains("Civic Profile"), text)
     }
 
-    /// Billboard tracks only the 119th Congress, so the caption names it as a fixed number.
-    func testTrackedCaptionNamesThe119thCongress() {
-        XCTAssertEqual(CongressMemberPageContent.trackedCaption, "Counts only 119th Congress bills in Billboard.")
+    /// Without the server's Congress (services before REL-46), the counts are the 119th Congress's, and the caption
+    /// names the 119th.
+    func testTrackedCaptionFallsBackToThe119thCongress() {
+        XCTAssertEqual(CongressMemberPageContent.trackedCaption(congress: pageMember().trackedCongress), "Counts only 119th Congress bills in Billboard.")
         XCTAssertEqual(CongressMemberPageContent.careerCaption, "Career totals from Congress.gov.")
+    }
+
+    /// The Tracked by Billboard labels and caption name the Congress the server's counts cover (REL-46 A6), the
+    /// 120th here, and the 119th Congress counts are not shown beside them.
+    func testTrackedSectionNamesTheCongressItsCountsCover() throws {
+        let store = CivicProfileStore(service: FakeCivicService())
+        let member = pageMember(currentCongressCounts: TrackedCongressCounts(congress: 120, sponsored: 1, supported: 4))
+        let page = CongressMemberPageContent(member: member, civicProfileMode: .unavailable).environmentObject(store)
+        let text = AccessibilityTreeText.text(of: page, size: CGSize(width: 390, height: 2400))
+        XCTAssertTrue(text.contains("Tracked by Billboard"), text)
+        XCTAssertTrue(text.contains("Sponsored in 120th Congress: 1"), text)
+        XCTAssertTrue(text.contains("Supported in 120th Congress: 4"), text)
+        XCTAssertTrue(text.contains("Counts only 120th Congress bills in Billboard."), text)
+        XCTAssertFalse(text.contains("119th"), text)
+
+        for variant in [Self.variants[0], Self.variants[3], Self.ax5] {
+            let view = CongressMemberPageContent(member: member, civicProfileMode: .unavailable)
+                .background(BillboardColors.document)
+                .environmentObject(store)
+            let width = variant.size == .accessibility5 ? Self.narrowWidth : 390
+            attach(try render(view, variant: variant, width: width), name: "member-page-tracked-120th-\(variant.name)")
+        }
+    }
+
+    /// A member with no counts gets no Tracked by Billboard section (REL-46 D8).
+    func testAMemberWithNoCountsHasNoTrackedSection() {
+        let store = CivicProfileStore(service: FakeCivicService())
+        let member = pageMember(trackedSponsoredCount: nil, trackedSupportedCount: nil)
+        let text = AccessibilityTreeText.text(
+            of: CongressMemberPageContent(member: member, civicProfileMode: .unavailable).environmentObject(store),
+            size: CGSize(width: 390, height: 2400)
+        )
+        XCTAssertTrue(text.contains("Career activity"), text)
+        XCTAssertFalse(text.contains("Tracked by Billboard"), text)
+        XCTAssertFalse(text.contains("Counts only"), text)
+        XCTAssertFalse(text.contains("Congress:"), text)
     }
 
     func testLockedMemberCivicProfileRenders() throws {
@@ -789,10 +834,30 @@ final class CongressRenderTests: XCTestCase {
         XCTAssertFalse(strings.contains("Service"), text)
     }
 
-    /// A member page whose record fails to load (offline), after "Use basic profile", once `until` shows. The Civic
-    /// Profile read answers `civicProfile`, or fails when it is nil.
-    private func basicProfileStrings(civicProfile: Data?, until expected: String) throws -> [String] {
-        let manifest = try member("K000384", "Tim Kaine", chamber: "Senate", state: "VA", party: "D")
+    /// The basic profile's tracked counts are the members list's, labelled with the Congress they cover (REL-46 A6).
+    func testTheBasicProfileNamesTheCongressOfTheListsCounts() throws {
+        let manifest = try JSONDecoder().decode(CongressMemberManifestItem.self, from: Data(#"""
+        {"bioguideId": "K000384", "name": "Tim Kaine", "chamber": "Senate", "state": "VA", "party": "D",
+         "trackedSponsoredCount": 2, "trackedSupportedCount": 7,
+         "currentCongressCounts": {"congress": 120, "sponsored": 1, "supported": 4}}
+        """#.utf8))
+        let strings = try basicProfileStrings(manifest: manifest, civicProfile: nil, until: "Official votes aren't available right now.")
+        let text = strings.joined(separator: " | ")
+        XCTAssertTrue(text.contains("Sponsored in 120th Congress: 1"), text)
+        XCTAssertTrue(text.contains("Supported in 120th Congress: 4"), text)
+        XCTAssertTrue(text.contains("Counts only 120th Congress bills in Billboard."), text)
+        XCTAssertFalse(text.contains("119th"), text)
+    }
+
+    /// A member page whose record fails to load (offline), after "Use basic profile", once `until` shows. The page
+    /// opens with `manifest`, Tim Kaine's members list row when it is nil. The Civic Profile read answers
+    /// `civicProfile`, or fails when it is nil.
+    private func basicProfileStrings(
+        manifest: CongressMemberManifestItem? = nil,
+        civicProfile: Data?,
+        until expected: String
+    ) throws -> [String] {
+        let manifest = try manifest ?? member("K000384", "Tim Kaine", chamber: "Senate", state: "VA", party: "D")
         let transport = RecordingTransport()
         transport.failure = { request -> Error? in
             if civicProfile != nil, request.path.contains("civic-profile") { return nil }
