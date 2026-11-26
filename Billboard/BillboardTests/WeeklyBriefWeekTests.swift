@@ -10,8 +10,8 @@ import XCTest
 ///
 /// Since 1.3 (UX-28, a project decision of 2026-11-23) the brief is the server's only: no brief is built on the
 /// device and no local notification is posted. A 204 means no brief this week, except in the half hour after the
-/// release, a failed read keeps the brief on screen, and a brief for another week changes nothing. The Updates badge
-/// counts an unopened brief on Sunday and Monday only, New York time.
+/// release, a failed read keeps the brief on screen, and a brief for another week changes nothing. A brief app 1.2
+/// built is never shown. The Updates badge counts an unopened brief on Sunday and Monday only, New York time.
 ///
 /// The stores run on a fixed clock (`now`, a Wednesday), so no test depends on the day it runs.
 @MainActor
@@ -96,7 +96,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
         var saved = brief(id: window.id, window: window, source: .localFallback)
         saved.isRead = true
         let (store, defaults, scope) = try makeStore(service: service, saved: saved)
-        XCTAssertEqual(store.digest?.source, .localFallback, "precondition: 1.2's brief, read, is on screen")
+        XCTAssertNil(store.digest, "1.2's brief, read, is saved but not shown")
 
         await store.refresh(profile: profile)
         XCTAssertEqual(service.fetchCount, 1, "1.2's brief does not count as this week's")
@@ -112,7 +112,7 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(relaunched.digest?.isRead, true)
     }
 
-    /// The same for 1.2's brief kept in memory and on the device: neither early return takes it for this week's.
+    /// The same for an unread 1.2 brief: neither early return takes it for this week's.
     func testAnUnreadOnDeviceBriefIsReplacedAndStaysUnread() async throws {
         let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
         let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
@@ -122,6 +122,34 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(service.fetchCount, 1)
         XCTAssertEqual(store.digest?.source, .remote)
         XCTAssertEqual(store.digest?.isRead, false)
+    }
+
+    /// A brief app 1.2 built can name a member by an id (REL-46 A4), so 1.3 never shows it: not when the first read
+    /// fails, and not when the server answers with another week's brief. It stays on the device until the server
+    /// answers for this week, so the server's brief still takes its read state.
+    func testAnOnDeviceBriefIsNeverShown() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let lastWeek = Self.lastWeeksWindow()
+        var saved = brief(id: window.id, window: window, source: .localFallback)
+        saved.isRead = true
+        let service = FakeWeeklyDigestService()
+        service.result = .failure(URLError(.timedOut))
+        let (store, defaults, scope) = try makeStore(service: service, saved: saved)
+
+        await store.refresh(profile: profile)
+        XCTAssertNil(store.digest, "a failed read shows no 1.2 brief")
+        XCTAssertNotNil(store.errorMessage, "Updates says the brief could not be loaded")
+        XCTAssertNil(relaunch(scope, defaults, service).digest, "nor does the next launch")
+
+        service.answer(brief(id: serverID(for: lastWeek), window: lastWeek))
+        await store.refresh(profile: profile)
+        XCTAssertNil(store.digest, "another week's answer shows no 1.2 brief")
+
+        service.answer(brief(id: serverID(for: window), window: window))
+        await store.refresh(profile: profile)
+        XCTAssertEqual(store.digest?.source, .remote)
+        XCTAssertEqual(store.digest?.isRead, true, "1.2's read state, kept on the device until now")
+        XCTAssertEqual(service.fetchCount, 3)
     }
 
     // MARK: - The server's answer

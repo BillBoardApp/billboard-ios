@@ -18,6 +18,11 @@ final class WeeklyDigestStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "BillBoard", category: "weeklyDigest")
 
+    /// A brief app 1.2 built on the device and saved (`.localFallback`). It is never shown, since it can name a
+    /// member by an id (REL-46 A4); only its week and read state are used, so the server's brief for that week
+    /// stays read if it was opened (`normalizeReadState`). It goes once the server answers for this week.
+    private var savedOnDeviceBrief: WeeklyDigest?
+
     /// - Parameter now: the clock, which tests set.
     init(
         scope: String,
@@ -31,7 +36,12 @@ final class WeeklyDigestStore: ObservableObject {
         self.now = now
         self.settings = Self.loadSettings(scope: scope, defaults: defaults) ?? .default
         self.encoder.dateEncodingStrategy = .iso8601
-        self.digest = Self.loadDigest(scope: scope, defaults: defaults)
+        let saved = Self.loadDigest(scope: scope, defaults: defaults)
+        if saved?.source == .localFallback {
+            self.savedOnDeviceBrief = saved
+        } else {
+            self.digest = saved
+        }
     }
 
     /// What the brief adds to the Updates badge at `now` (feature review N5; UX-28, a project decision of
@@ -167,6 +177,7 @@ final class WeeklyDigestStore: ObservableObject {
             }
             // Otherwise the server has no brief for this person this week.
             digest = nil
+            savedOnDeviceBrief = nil
             noBriefReleaseID = targetWindow.id
             clearPersistedDigest()
             return
@@ -182,6 +193,7 @@ final class WeeklyDigestStore: ObservableObject {
 
         let normalized = normalizeReadState(for: remote)
         digest = normalized
+        savedOnDeviceBrief = nil
         noBriefReleaseID = nil
         persistDigest(normalized)
     }
@@ -193,10 +205,10 @@ final class WeeklyDigestStore: ObservableObject {
         digest.source != .localFallback && isSameRelease(digest.id, window.id)
     }
 
-    /// The new brief keeps the read state of the one on screen for the same week, whichever wrote it: a brief
-    /// opened as app 1.2's on-device version stays read when the server's arrives.
+    /// The new brief keeps the read state of the one on screen for the same week, or of app 1.2's on-device brief
+    /// for that week (`savedOnDeviceBrief`): a brief opened in 1.2 stays read when the server's arrives.
     private func normalizeReadState(for newDigest: WeeklyDigest) -> WeeklyDigest {
-        guard let existing = digest, Self.isSameRelease(existing.id, newDigest.id) else { return newDigest }
+        guard let existing = digest ?? savedOnDeviceBrief, Self.isSameRelease(existing.id, newDigest.id) else { return newDigest }
         var merged = newDigest
         merged.isRead = existing.isRead
         return merged
