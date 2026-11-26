@@ -40,6 +40,11 @@ enum DownloadVotesCopy {
 // MARK: - Model
 
 /// Loads the caller's votes once per showing of the screen and writes both files from that one response.
+///
+/// The files stay when the screen goes. The share sheet reads a file only when the app or extension it goes to asks
+/// for it, which can be after the screen has gone: an extension shown full screen covers the screen, and SwiftUI
+/// reports that as a disappear. They go when the screen next loads, which removes every earlier export first, so the
+/// folder holds one export at most, and at sign-out (`UserLocalDataPurge`).
 @MainActor
 final class DownloadVotesModel: ObservableObject {
     enum Phase: Equatable {
@@ -69,8 +74,8 @@ final class DownloadVotesModel: ObservableObject {
     private let now: () -> Date
     private let timeZone: TimeZone
     private let writer: Writer
-    /// The files on disk now, if any.
-    private var files: VoteExportFileSet?
+    /// The Try again count whose load ran to an end (ready, empty or failed), if any.
+    private var finishedRequest: Int?
 
     init(
         service: any VoteExportServicing = VoteExportService.Live(),
@@ -97,11 +102,20 @@ final class DownloadVotesModel: ObservableObject {
         }
     }
 
-    /// Reads every page, then writes the CSV and the JSON. Any export already on disk goes first: only one screen
-    /// exports at a time, and files left by an app that was closed while the screen showed must not stay. A
-    /// cancelled load (the screen went, or Try again started another) stays quiet: no error, no files.
+    /// `load()` for the screen's request (its Try again count), unless that request has already loaded to an end. The
+    /// screen's task runs again whenever it shows again, as after an extension shown full screen goes: loading again
+    /// would page through every vote once more and replace the files that extension was given.
+    func load(request: Int) async {
+        guard request != finishedRequest else { return }
+        await load()
+        if phase != .preparing { finishedRequest = request }
+    }
+
+    /// Reads every page, then writes the CSV and the JSON. Every export already on disk goes first, so one export at
+    /// most is ever kept: the last screen's, which stayed for the share sheet, or one left by an app that was closed
+    /// while the screen showed. A cancelled load (the screen went, or Try again started another) stays quiet: no
+    /// error, no files.
     func load() async {
-        files = nil
         folder.removeAll()
         phase = .preparing
         do {
@@ -117,7 +131,6 @@ final class DownloadVotesModel: ObservableObject {
                 folder.remove(written.folder)
                 return
             }
-            files = written
             phase = .ready(written)
         } catch {
             if error is CancellationError || Task.isCancelled { return }
@@ -136,14 +149,6 @@ final class DownloadVotesModel: ObservableObject {
         timeZone: TimeZone
     ) async throws -> VoteExportFileSet {
         try folder.write(votes, exportedAt: exportedAt, timeZone: timeZone)
-    }
-
-    /// Deletes the files (the screen went). The phase stays, so nothing is said to VoiceOver on the screen it went
-    /// back to; the next showing loads again (`load`), which writes new files.
-    func discardFiles() {
-        guard let files else { return }
-        folder.remove(files.folder)
-        self.files = nil
     }
 }
 
@@ -176,11 +181,12 @@ nonisolated struct VoteExportJSONFile: Transferable, Sendable {
 /// Download my votes (UX-40 L7), from Profile → Settings: a settings list on paper (spec 3.25). The body, then the
 /// two save buttons, each a ShareLink to its file, with the footer under them; below, while it loads, "Preparing
 /// your votes…", on a failure a Couldn't load notice with Try again, and with no votes the empty line. It loads on
-/// appear and deletes its files when it goes. VoiceOver hears the loading line, then that the files are ready, the
-/// empty line or the error.
+/// appear, which first deletes the files of its last showing (`DownloadVotesModel`). VoiceOver hears the loading
+/// line, then that the files are ready, the empty line or the error.
 struct DownloadVotesView: View {
     @StateObject private var model: DownloadVotesModel
-    /// Bumped by Try again; the load runs as the view's task, so leaving the screen cancels it.
+    /// Bumped by Try again; the load runs as the view's task, so leaving the screen cancels it, and runs once per
+    /// count (`DownloadVotesModel.load(request:)`).
     @State private var loadRequest = 0
 
     init() {
@@ -222,10 +228,7 @@ struct DownloadVotesView: View {
         .glassNavigationBar()
         .accessibilityIdentifier("downloadVotes.screen")
         .task(id: loadRequest) {
-            await model.load()
-        }
-        .onDisappear {
-            model.discardFiles()
+            await model.load(request: loadRequest)
         }
     }
 
