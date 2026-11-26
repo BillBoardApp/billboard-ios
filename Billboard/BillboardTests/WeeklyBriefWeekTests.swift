@@ -68,6 +68,22 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertEqual(relaunched.digest?.isRead, true)
     }
 
+    /// The server writes each person's brief on Sunday and keeps it all week, so a change to the profile reads
+    /// nothing: the tabs no longer force a refresh on one, and a refresh with the changed profile (an Updates visit)
+    /// keeps this week's brief without asking the server.
+    func testAProfileChangeDoesNotReadTheBriefAgain() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Date())
+        let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let (store, _, _) = try makeStore(service: service)
+        await store.refresh(profile: profile)
+        XCTAssertEqual(service.fetchCount, 1)
+
+        let changed = profile.updating(subscribedSubCategories: ["Energy", "Health"], subscribedMemberIDs: [UUID()])
+        await store.refresh(profile: changed)
+        XCTAssertEqual(service.fetchCount, 1, "a profile change used to force a new read")
+        XCTAssertEqual(store.digest?.id, serverID(for: window))
+    }
+
     /// A brief app 1.2 built on the device and saved for this week is replaced by the server's, and stays read if it
     /// was opened.
     func testReadStateCarriesFromTheOnDeviceBriefToTheServers() async throws {
