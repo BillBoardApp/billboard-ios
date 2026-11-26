@@ -165,7 +165,12 @@ struct DownloadVotesView: View {
     /// Bumped by Try again; the load runs as the view's task, so leaving the screen cancels it.
     @State private var loadRequest = 0
 
-    init(model: @autoclosure @escaping () -> DownloadVotesModel = DownloadVotesModel()) {
+    init() {
+        _model = StateObject(wrappedValue: DownloadVotesModel())
+    }
+
+    /// With a given model (tests give one with a fake service).
+    init(model: @autoclosure @escaping () -> DownloadVotesModel) {
         _model = StateObject(wrappedValue: model())
     }
 
