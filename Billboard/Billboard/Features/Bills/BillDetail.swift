@@ -300,6 +300,7 @@ private struct BillDetailContent: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.watchNotificationAccess) private var watchNotificationAccess
     @Environment(\.announceToVoiceOver) private var announceToVoiceOver
+    @Environment(\.announceToVoiceOverNow) private var announceToVoiceOverNow
     @Environment(\.voteStripAlert) private var voteStripAlert
     /// Set by the tour's "Open this bill" until a vote is saved or the user taps Not now (spec D 2.5.5).
     @AppStorage(FirstRunStorage.voteCoachMarkPendingKey) private var voteCoachMarkPending = false
@@ -630,8 +631,8 @@ private struct BillDetailContent: View {
     /// After Watch is turned on (UX-47): reads iOS's permission, then shows iOS's notification prompt when the app has
     /// never asked, once, as Profile and the Updates card do. Otherwise, when the watch can't notify on this device,
     /// VoiceOver hears "Watching this bill. " and the row's caption (D8 (b)), queued after the switch's new value.
-    /// Nothing is said while the prompt is about to show, or when nothing blocks the watch. The watch is kept
-    /// whatever the answer; the Watch row says when it can't notify.
+    /// Nothing is said while the prompt is about to show, when nothing blocks the watch, or when the watch's save has
+    /// already failed. The watch is kept whatever the answer; the Watch row says when it can't notify.
     private func watchTurnedOn(_ toggle: UUID) {
         Task {
             let permission = await watchNotificationAccess.permission()
@@ -647,8 +648,9 @@ private struct BillDetailContent: View {
                 return
             }
             hasAskedNotificationPermission = hasAsked
-            // A later toggle says its own words.
-            guard latestWatchToggle == toggle else { return }
+            // A later toggle says its own words. A save that failed first put the watch back, and the Watch row says
+            // so (UX-48): "Watching this bill" would be false.
+            guard latestWatchToggle == toggle, watchSaveError == nil, currentWatchValue else { return }
             let block = BillWatchNotificationBlock.make(
                 permission: permission,
                 settings: savedNotificationSettings,
@@ -976,7 +978,7 @@ private struct BillDetailContent: View {
         if watch {
             watchTurnedOn(toggle)
         } else if let line = BillWatchCopy.announcement(isWatching: false, blockedBy: nil) {
-            AccessibilityNotification.Announcement(line).post()
+            announceToVoiceOverNow(line)
         }
         Task {
             guard await !save.value, latestWatchToggle == toggle else { return }

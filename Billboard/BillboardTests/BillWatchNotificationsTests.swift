@@ -198,7 +198,7 @@ final class BillWatchNotificationsTests: XCTestCase {
             let spoken = SpokenLines()
             try APIClient.$current.withValue(Self.offlineClient()) {
                 let host = AccessibilityTreeText.Host(
-                    page.view.environment(\.announceToVoiceOver, spoken.announce),
+                    recording(page.view, spoken),
                     size: CGSize(width: 390, height: 5000),
                     settle: 0.5
                 )
@@ -211,14 +211,15 @@ final class BillWatchNotificationsTests: XCTestCase {
 
                 let expected = try block.map { [try XCTUnwrap(BillWatchCopy.announcement(isWatching: true, blockedBy: $0))] } ?? []
                 XCTAssertEqual(spoken.lines, expected, name)
+                XCTAssertEqual(spoken.linesNow, [], "\(name): nothing is said at once")
                 XCTAssertEqual(notifications.prompts, askedBefore ? 0 : 1, "\(name): the prompt only when never asked")
                 XCTAssertEqual(page.user.profile.watchedBillGUIDs, [Self.guid], "\(name): the watch is kept")
             }
         }
     }
 
-    /// Turning Watch off is said as before ("Stopped watching this bill", straight to VoiceOver), never with a
-    /// block's words, whatever blocks a watch.
+    /// Turning Watch off is said as before ("Stopped watching this bill", at once), never with a block's words,
+    /// whatever blocks a watch.
     func testTurningWatchOffSaysNoBlock() throws {
         let notifications = try fakeNotifications(.denied)
         notifications.defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
@@ -226,7 +227,7 @@ final class BillWatchNotificationsTests: XCTestCase {
         let spoken = SpokenLines()
         APIClient.$current.withValue(Self.offlineClient()) {
             let host = AccessibilityTreeText.Host(
-                page.view.environment(\.announceToVoiceOver, spoken.announce),
+                recording(page.view, spoken),
                 size: CGSize(width: 390, height: 5000),
                 settle: 0.5
             )
@@ -235,8 +236,35 @@ final class BillWatchNotificationsTests: XCTestCase {
             XCTAssertTrue(host.run(until: { page.preferences.deleteCalls.count == 1 }), host.text())
             host.run(0.3)
 
+            XCTAssertEqual(spoken.linesNow, ["Stopped watching this bill"], "the stop is said at once, as before")
             XCTAssertEqual(spoken.lines, [], "no block's words after a stop")
             XCTAssertEqual(page.user.profile.watchedBillGUIDs, [])
+        }
+    }
+
+    /// A watch whose save fails before iOS's permission is read (offline): the stores put the watch back and the
+    /// Watch row says so (UX-48), and VoiceOver hears only that, never "Watching this bill. " with a block's words.
+    func testAFailedWatchSaysNoBlock() throws {
+        let notifications = try fakeNotifications(.denied)
+        notifications.defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+        let page = billPage(watched: false, notifications: notifications)
+        page.preferences.putError = URLError(.notConnectedToInternet)
+        let spoken = SpokenLines()
+        try APIClient.$current.withValue(Self.offlineClient()) {
+            let host = AccessibilityTreeText.Host(recording(page.view, spoken), size: CGSize(width: 390, height: 5000), settle: 0.5)
+            defer { host.close() }
+            // The page has read the permission once; the next read, after the tap, comes after the failure.
+            notifications.permissionDelay = .milliseconds(600)
+            let failure = BillWatchCopy.saveFailedText(isWatching: true)
+
+            XCTAssertTrue(host.activate(identifier: BillWatchCopy.rowIdentifier), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillWatchCopy.errorIdentifier) != nil }), host.text())
+            XCTAssertEqual(try XCTUnwrap(host.label(ofIdentifier: BillWatchCopy.errorIdentifier)), failure)
+            host.run(1)
+
+            XCTAssertEqual(spoken.lines, [failure], "the failure only")
+            XCTAssertEqual(spoken.linesNow, [])
+            XCTAssertEqual(page.user.profile.watchedBillGUIDs, [], "the watch was put back")
         }
     }
 
@@ -276,14 +304,26 @@ final class BillWatchNotificationsTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// The lines the page said to VoiceOver through `announceToVoiceOver`.
+    /// The lines the page said to VoiceOver: queued (`announceToVoiceOver`) and at once (`announceToVoiceOverNow`).
     @MainActor
     private final class SpokenLines {
         private(set) var lines: [String] = []
+        private(set) var linesNow: [String] = []
 
         var announce: @MainActor @Sendable (String) -> Void {
             { [self] line in lines.append(line) }
         }
+
+        var announceNow: @MainActor @Sendable (String) -> Void {
+            { [self] line in linesNow.append(line) }
+        }
+    }
+
+    /// `view` with both of VoiceOver's announcement paths recorded by `spoken`.
+    private func recording(_ view: AnyView, _ spoken: SpokenLines) -> some View {
+        view
+            .environment(\.announceToVoiceOver, spoken.announce)
+            .environment(\.announceToVoiceOverNow, spoken.announceNow)
     }
 
     /// iOS permission and the device's saved switches for the page, on a defaults suite of its own, and the prompts
@@ -291,6 +331,8 @@ final class BillWatchNotificationsTests: XCTestCase {
     @MainActor
     private final class FakeNotifications {
         var permission: UNAuthorizationStatus
+        /// How long reading the permission takes.
+        var permissionDelay: Duration = .zero
         let defaults: UserDefaults
         private(set) var prompts = 0
 
@@ -301,7 +343,12 @@ final class BillWatchNotificationsTests: XCTestCase {
 
         var access: WatchNotificationAccess {
             WatchNotificationAccess(
-                permission: { [self] in permission },
+                permission: { [self] in
+                    if permissionDelay > .zero {
+                        try? await Task.sleep(for: permissionDelay)
+                    }
+                    return permission
+                },
                 defaults: defaults,
                 showPrompt: { [self] in prompts += 1 }
             )
