@@ -115,8 +115,8 @@ nonisolated struct VoteExportFileSet: Equatable, Sendable {
 }
 
 /// Where Download my votes writes its files: a fresh folder per export under the app's temporary directory, excluded
-/// from backup. One export is removed when its screen goes; every export is removed before the next one starts (so
-/// files left by an app that was closed while the screen showed do not stay) and at sign-out (`UserLocalDataPurge`).
+/// from backup. An export stays after its screen goes, for a share extension that reads its file late; every export
+/// is removed before the next one starts, so the folder holds one at most, and at sign-out (`UserLocalDataPurge`).
 /// Nothing goes to UserDefaults or the vote cache.
 nonisolated struct VoteExportFolder: Sendable {
     let root: URL

@@ -4,9 +4,9 @@ import XCTest
 @testable import Billboard
 
 /// Download my votes (UX-40 L7), the screen's model: one response written as both files, what VoiceOver is told in
-/// each state, the files deleted when the screen goes and before the next load, a cancelled load (while it waits or
-/// while it writes) that stays quiet and leaves no files, Try again, and sign-out deleting every export. No network:
-/// the model gets a fake service.
+/// each state, the files kept after the screen goes until it shows again (one export at most on disk), a cancelled
+/// load (while it waits or while it writes) that stays quiet and leaves no files, Try again, and sign-out deleting
+/// every export. No network: the model gets a fake service.
 @MainActor
 final class DownloadVotesModelTests: XCTestCase {
     private var folder: VoteExportFolder!
@@ -39,6 +39,24 @@ final class DownloadVotesModelTests: XCTestCase {
         XCTAssertEqual(csvRows.count - 2, 3, "one header, one row per vote, a final CRLF")
         XCTAssertEqual(document.votes.count, 3)
         XCTAssertEqual(model.announcement, "Your votes are ready.")
+    }
+
+    /// The files stay after the screen goes, for a share extension that reads its file late. The next showing
+    /// removes them before it writes its own, so the folder never holds more than one export.
+    func testAnExportStaysUntilTheNextShowingWhichReplacesIt() async throws {
+        var earlier: VoteExportFileSet?
+        for showing in 1...3 {
+            let model = DownloadVotesModel(service: FakeVoteExportService(.success([vote("BILLS-119hr\(showing)")])), folder: folder)
+            if let earlier {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: earlier.csv.path), "showing \(showing): the last export is still there")
+                XCTAssertTrue(FileManager.default.fileExists(atPath: earlier.json.path), "showing \(showing)")
+            }
+            await model.load()
+            guard case .ready(let files) = model.phase else { return XCTFail("showing \(showing): expected ready, got \(model.phase)") }
+            let kept = (try? FileManager.default.contentsOfDirectory(atPath: folder.root.path)) ?? []
+            XCTAssertEqual(kept, [files.folder.lastPathComponent], "showing \(showing): one export at most")
+            earlier = files
+        }
     }
 
     /// A load cancelled while it writes the files (the screen went) removes what it wrote and stays quiet.
@@ -119,15 +137,37 @@ final class DownloadVotesModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.root.path))
     }
 
-    /// The model deletes its files when the screen goes, and sign-out deletes every export (both purge paths).
-    func testTheFilesAreDeletedOnDisappearAndAtSignOut() async throws {
-        let model = DownloadVotesModel(service: FakeVoteExportService(.success([vote("BILLS-119hr1")])), folder: folder)
-        await model.load()
-        guard case .ready(let files) = model.phase else { return XCTFail("expected ready, got \(model.phase)") }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: files.csv.path))
-        model.discardFiles()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: files.folder.path))
+    /// The screen's task runs again whenever the screen shows again (after a full-screen extension, say): a request
+    /// that loaded to an end is not loaded again, so its files stay. Try again's new request loads; so does a request
+    /// whose load was cancelled before it ended.
+    func testARequestLoadsOnceUnlessItWasCancelled() async throws {
+        let service = FakeVoteExportService(.success([vote("BILLS-119hr1")]))
+        let model = DownloadVotesModel(service: service, folder: folder)
 
+        await model.load(request: 0)
+        guard case .ready(let files) = model.phase else { return XCTFail("expected ready, got \(model.phase)") }
+        await model.load(request: 0)
+        XCTAssertEqual(service.calls, 1)
+        XCTAssertEqual(model.phase, .ready(files))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: files.csv.path), "the files stay")
+
+        await model.load(request: 1)
+        XCTAssertEqual(service.calls, 2, "Try again loads")
+
+        service.waitsForCancellation = true
+        let task = Task { await model.load(request: 2) }
+        while service.calls == 2 { await Task.yield() }
+        task.cancel()
+        await task.value
+        XCTAssertEqual(model.phase, .preparing)
+        service.waitsForCancellation = false
+        await model.load(request: 2)
+        XCTAssertEqual(service.calls, 4, "a cancelled request loads when the screen shows again")
+        guard case .ready = model.phase else { return XCTFail("expected ready, got \(model.phase)") }
+    }
+
+    /// Sign-out deletes every export, on both purge paths (an account, and no account).
+    func testSignOutDeletesEveryExport() throws {
         let suiteName = "DownloadVotesModelTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }

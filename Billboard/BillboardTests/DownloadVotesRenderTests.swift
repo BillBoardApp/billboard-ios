@@ -5,8 +5,9 @@ import XCTest
 
 /// Download my votes (UX-40 L7) on screen: drawn in light and dark at the default text size and AX5, each state
 /// attached to the result bundle for review; what VoiceOver reads (the save buttons' labels and hint, the loading line
-/// and the result said aloud); Try again; the files deleted when the screen goes; and the Settings row, above Delete
-/// account and data, titled as the privacy policy's path ends. No network: the screen's model gets a fake service.
+/// and the result said aloud); Try again; the files kept while the screen is covered or gone, until it shows again;
+/// and the Settings row, above Delete account and data, titled as the privacy policy's path ends. No network: the
+/// screen's model gets a fake service.
 @MainActor
 final class DownloadVotesRenderTests: XCTestCase {
     /// The privacy policy's sentence in held backend #39 (approved 2026-11-25).
@@ -187,10 +188,18 @@ final class DownloadVotesRenderTests: XCTestCase {
 
     // MARK: - Files
 
-    /// The files are written while the screen shows and deleted when it goes.
-    func testTheFilesAreDeletedWhenTheScreenGoes() throws {
-        let model = makeModel(FakeVoteExportService(.success(votes)))
-        let host = try onScreen(screen(model), size: CGSize(width: 390, height: 1400))
+    /// The files stay while something covers the screen full screen (as an extension that asks for full screen
+    /// does, before it reads its file; SwiftUI reports the cover as a disappear) and after the screen goes. The
+    /// screen does not load again when the cover goes. Showing the screen again replaces the files, so one export at
+    /// most is on disk.
+    func testTheFilesStayUntilTheScreenShowsAgain() throws {
+        let service = FakeVoteExportService(.success(votes))
+        let spoken = SpokenLines()
+        let model = makeModel(service)
+        let host = try onScreen(
+            screen(model).environment(\.announceToVoiceOver, spoken.announce),
+            size: CGSize(width: 390, height: 1400)
+        )
         XCTAssertTrue(host.run(until: { model.phase.isReady }), "\(model.phase)")
         let written = exportFolders()
         XCTAssertEqual(written.count, 1)
@@ -198,10 +207,31 @@ final class DownloadVotesRenderTests: XCTestCase {
         XCTAssertEqual(names.map { ($0 as NSString).pathExtension }.sorted(), ["csv", "json"], "\(names)")
         XCTAssertTrue(names.allSatisfy { $0.hasPrefix("Billboard votes ") }, "\(names)")
 
+        let root = try XCTUnwrap(host.window.rootViewController)
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        root.present(cover, animated: false)
+        XCTAssertTrue(host.run(until: { root.presentedViewController === cover && root.view.window == nil }), "the cover hides the screen")
+        host.run(0.3)
+        XCTAssertEqual(exportFolders(), written, "kept while the screen is covered")
+        cover.dismiss(animated: false)
+        XCTAssertTrue(host.run(until: { root.presentedViewController == nil && root.view.window != nil }))
+        host.run(0.3)
+        XCTAssertEqual(service.calls, 1, "no second load when the cover goes")
+        XCTAssertTrue(model.phase.isReady, "\(model.phase)")
+        XCTAssertEqual(exportFolders(), written, "the same files")
+        XCTAssertEqual(spoken.lines, ["Preparing your votes…", "Your votes are ready."], "nothing said again")
+
         host.close()
         RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(exportFolders(), written, "kept once the screen is gone")
 
-        XCTAssertEqual(exportFolders(), [], "no file is left once the screen is gone")
+        let next = makeModel(FakeVoteExportService(.success(votes)))
+        let again = try onScreen(screen(next), size: CGSize(width: 390, height: 1400))
+        defer { again.close() }
+        XCTAssertTrue(again.run(until: { next.phase.isReady }), "\(next.phase)")
+        guard case .ready(let files) = next.phase else { return XCTFail("\(next.phase)") }
+        XCTAssertEqual(exportFolders().map(\.lastPathComponent), [files.folder.lastPathComponent], "only the new export")
     }
 
     // MARK: - Settings row
