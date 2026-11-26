@@ -237,6 +237,53 @@ final class CongressMemberFormattingTests: XCTestCase {
         XCTAssertNil(CongressMemberLabel.districtWords(state: "VA", district: nil, chamber: .house))
     }
 
+    /// The Tracked by Billboard labels and caption name the Congress the server's counts cover (REL-46 A6), in
+    /// ordinal form, both rows given even at zero. Without that Congress, the 119th Congress counts keep their 119th
+    /// labels, and a member with no counts gets no rows.
+    @MainActor
+    func testTrackedLabelsAndCaptionNameTheCountsCongress() {
+        func member(
+            sponsored: Int? = nil,
+            supported: Int? = nil,
+            billsSupported: Int? = nil,
+            counts: TrackedCongressCounts? = nil
+        ) -> CongressMember {
+            CongressMember(
+                id: UUID(),
+                name: "Jordan Ellis",
+                state: "TX",
+                chamber: "House",
+                currentCongressBillsSupportedCount: billsSupported,
+                trackedSponsoredCount: sponsored,
+                trackedSupportedCount: supported,
+                currentCongressCounts: counts
+            )
+        }
+        func rows(_ member: CongressMember) -> [String] {
+            member.trackedActivityRows.map { "\($0.label)=\($0.value)" }
+        }
+
+        for (congress, ordinal) in [(119, "119th"), (120, "120th"), (121, "121st"), (122, "122nd"), (123, "123rd")] {
+            let counted = member(sponsored: 7, supported: 8, counts: TrackedCongressCounts(congress: congress, sponsored: 1, supported: 4))
+            XCTAssertEqual(counted.trackedCongress, congress)
+            XCTAssertEqual(rows(counted), ["Sponsored in \(ordinal) Congress=1", "Supported in \(ordinal) Congress=4"])
+            XCTAssertEqual(
+                CongressMemberPageContent.trackedCaption(congress: counted.trackedCongress),
+                "Counts only \(ordinal) Congress bills in Billboard."
+            )
+        }
+
+        let zeros = member(counts: TrackedCongressCounts(congress: 120, sponsored: 0, supported: 0))
+        XCTAssertEqual(rows(zeros), ["Sponsored in 120th Congress=0", "Supported in 120th Congress=0"])
+
+        let older = member(sponsored: 2, supported: 9)
+        XCTAssertEqual(older.trackedCongress, 119)
+        XCTAssertEqual(rows(older), ["Sponsored in 119th Congress=2", "Supported in 119th Congress=9"])
+        XCTAssertEqual(rows(member(billsSupported: 5)), ["Supported in 119th Congress=5"])
+
+        XCTAssertEqual(rows(member()), [])
+    }
+
     @MainActor
     func testDirectoryOpensOnTheTabsFilter() {
         typealias Selection = CongressMembersDirectoryView.ExploreSelection

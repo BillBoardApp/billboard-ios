@@ -707,8 +707,9 @@ struct CongressMemberPageContent: View {
     /// Career totals and Billboard's tracked counts are different measures, so each gets its own
     /// section and caption.
     static let careerCaption = "Career totals from Congress.gov."
-    /// Fixed at the 119th: the server polls only the 119th Congress, so this is not computed from the date.
-    static let trackedCaption = "Counts only 119th Congress bills in Billboard."
+    /// Names the Congress the tracked counts and their labels cover (`CongressMember.trackedCongress`), the server's
+    /// and never one computed from the date: "Counts only 120th Congress bills in Billboard."
+    static func trackedCaption(congress: Int) -> String { "Counts only \(SpokenForm.ordinal(congress)) Congress bills in Billboard." }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -760,7 +761,7 @@ struct CongressMemberPageContent: View {
 
             let trackedRows = member.trackedActivityRows
             if !trackedRows.isEmpty {
-                activitySection("Tracked by Billboard", rows: trackedRows, caption: Self.trackedCaption)
+                activitySection("Tracked by Billboard", rows: trackedRows, caption: Self.trackedCaption(congress: member.trackedCongress))
             }
 
             CongressMemberCivicProfileCard(mode: civicProfileMode, memberName: member.name)
