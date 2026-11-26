@@ -645,10 +645,77 @@ final class WeeklyBriefWeekTests: XCTestCase {
     }
 }
 
-// MARK: - Sign-out
+// MARK: - The tabs' reads and sign-out
 
-/// A read that answers after sign-out.
+/// The reads `TabsBar` makes (`WeeklyBriefReads`), and a read that answers after sign-out.
 extension WeeklyBriefWeekTests {
+    /// The tabs' first read waits for the profile to load with its id: a profile still loading, or one that loaded
+    /// with no id, reads nothing and leaves the first read to the next load. A later read (a return to the app) waits
+    /// for the first. That `TabsBar` calls these from its `.task`, when the profile loads and on `scenePhase`
+    /// `.active` (it has no unit test) is checked in review.
+    func testTheTabsFirstReadWaitsForAProfileWithAnID() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let (store, _, _) = try makeStore(service: service)
+        let reads = WeeklyBriefReads()
+
+        reads.readAgain(store: store, profile: profile)
+        await reads.laterRead?.value
+        XCTAssertEqual(service.fetchCount, 0, "no later read before the first")
+
+        await reads.firstReadIfReady(store: store, profile: profile, profileHasLoaded: false)
+        XCTAssertEqual(service.fetchCount, 0, "the profile is still loading")
+        await reads.firstReadIfReady(store: store, profile: .placeholder(), profileHasLoaded: true)
+        XCTAssertEqual(service.fetchCount, 0, "a profile that loaded with no id")
+        XCTAssertFalse(reads.hasCompletedFirstRead)
+
+        await reads.firstReadIfReady(store: store, profile: profile, profileHasLoaded: true)
+        XCTAssertEqual(service.fetchCount, 1)
+        XCTAssertTrue(reads.hasCompletedFirstRead)
+        XCTAssertEqual(store.digest?.id, serverID(for: window))
+        await reads.firstReadIfReady(store: store, profile: profile, profileHasLoaded: true)
+        XCTAssertEqual(service.fetchCount, 1, "the first read is made once")
+    }
+
+    /// A later read runs one at a time. When the tabs go (sign-out), the read that is out is cancelled
+    /// (`WeeklyBriefReads.cancel`, from `TabsBar.onDisappear`) and leaves nothing: no brief, no error, nothing
+    /// saved. A later read after it reads this week's brief as usual.
+    func testTheTabsLaterReadIsCancelledWhenTheyGo() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let clock = BriefClock(window.releaseAt.addingTimeInterval(2 * 60 * 60))
+        let service = FakeWeeklyDigestService()
+        service.result = .failure(URLError(.timedOut))
+        let (store, defaults, scope) = try makeStore(service: service, clock: clock)
+        let reads = WeeklyBriefReads()
+        await reads.firstReadIfReady(store: store, profile: profile, profileHasLoaded: true)
+        XCTAssertNotNil(store.errorMessage, "precondition: the first read failed")
+
+        let hold = CancellableGate()
+        service.hold = hold
+        service.answer(brief(id: serverID(for: window), window: window))
+        reads.readAgain(store: store, profile: profile)
+        await waitUntil { service.fetchCount == 2 }
+        reads.readAgain(store: store, profile: profile)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(service.fetchCount, 2, "one later read at a time")
+
+        let read = try XCTUnwrap(reads.laterRead)
+        reads.cancel()
+        await read.value
+        XCTAssertNil(reads.laterRead)
+        XCTAssertNil(store.digest)
+        XCTAssertNil(store.errorMessage, "a cancelled read says nothing")
+        XCTAssertNil(defaults.data(forKey: "BillBoard.weeklyDigest.v1.digest.\(scope)"), "nothing saved")
+
+        service.hold = nil
+        reads.readAgain(store: store, profile: profile)
+        await reads.laterRead?.value
+        XCTAssertEqual(service.fetchCount, 3)
+        XCTAssertEqual(store.digest?.id, serverID(for: window))
+    }
+
+    // MARK: - Sign-out
+
     /// Sign-out clears the account's saved brief (`UserLocalDataPurge`) before the tabs go. A read still out then,
     /// from a return to the app or from Updates, must not put the signed-out account's brief back on the device,
     /// since its sections reflect what the person follows: when it answers, nothing is saved or shown, and the
