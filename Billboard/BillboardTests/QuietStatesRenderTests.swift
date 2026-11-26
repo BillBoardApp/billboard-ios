@@ -414,10 +414,7 @@ final class QuietStatesRenderTests: XCTestCase {
         let digestStore = WeeklyDigestStore(
             scope: scope,
             defaults: defaults,
-            digestService: digestService ?? EmptyWeeklyDigestService(),
-            billsService: FakeBillsService(),
-            votesService: FakeBillVotesService(),
-            congressService: FakeCongressService()
+            digestService: digestService ?? EmptyWeeklyDigestService()
         )
         XCTAssertNil(digestStore.digest)
         let civicService = FakeCivicService()

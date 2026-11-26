@@ -228,6 +228,36 @@ final class FakeCivicService: CivicServicing {
     func fetchCivicProfile() async throws -> CivicProfileResponse { try profileResult.get() }
 }
 
+// MARK: - Weekly Brief
+
+/// The published brief (`GET /weekly-digests/latest`), counting how often it is asked for. `result` answers each
+/// read: a brief, nil for the empty answer (204), or an error.
+@MainActor
+final class FakeWeeklyDigestService: WeeklyDigestServicing {
+    var result: Result<WeeklyDigest?, Error>
+    private(set) var fetchCount = 0
+
+    init(digest: WeeklyDigest? = nil) {
+        result = .success(digest)
+    }
+
+    /// Answers each later read with `digest`.
+    func answer(_ digest: WeeklyDigest?) {
+        result = .success(digest)
+    }
+
+    func fetchLatest() async throws -> WeeklyDigest? {
+        fetchCount += 1
+        return try result.get()
+    }
+}
+
+/// A published brief that is never there: each read is the empty answer (204).
+@MainActor
+final class EmptyWeeklyDigestService: WeeklyDigestServicing {
+    func fetchLatest() async throws -> WeeklyDigest? { nil }
+}
+
 // MARK: - Device notification settings
 
 @MainActor

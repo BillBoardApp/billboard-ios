@@ -16,6 +16,8 @@ enum WeeklyDigestSchedule {
 struct WeeklyDigest: Identifiable, Codable, Equatable {
     enum Source: String, Codable {
         case remote
+        /// A brief app 1.2 built on the device. App 1.3 builds none; the case stays so a brief 1.2 saved still
+        /// decodes, and the server's brief for its week replaces it (`WeeklyDigestStore.refresh`).
         case localFallback = "local_fallback"
     }
 
@@ -160,15 +162,16 @@ extension WeeklyDigestItem {
     }
 
     /// The eyebrow as the Weekly Brief detail shows it (Civic Record spec 4.52): the date alone ("Oct
-    /// 14"), since the docket line's stamp already says the status. The server and the local builder
-    /// write "Updated Oct 14" or "Became law Oct 14" (the local builder "Vetoed Oct 14" for a vetoed bill), so
+    /// 14"), since the docket line's stamp already says the status. The server and app 1.2's on-device builder
+    /// write "Updated Oct 14" or "Became law Oct 14" (the on-device builder "Vetoed Oct 14" for a vetoed bill), so
     /// a bill item's leading status word is dropped; any other eyebrow is kept as written. Nil for a member item (its eyebrow is a count, "2 relevant
     /// bills this week", which its summary already says) and when nothing is left.
     nonisolated var dateEyebrow: String? {
         guard kind == .bill, let eyebrow = eyebrow?.trimmingCharacters(in: .whitespacesAndNewlines), !eyebrow.isEmpty else {
             return nil
         }
-        // The local builder's "Ended with the 119th Congress Jan 8" (REL-46, `Bill.outcomeLabel(at:)`).
+        // "Ended with the 119th Congress Jan 8", as the on-device builder (removed in 1.3) wrote it in a brief it
+        // saved (REL-46, `Bill.outcomeLabel(at:)`).
         if let ended = eyebrow.range(of: #"^Ended with the \d+(st|nd|rd|th) Congress"#, options: [.regularExpression, .caseInsensitive]) {
             let date = eyebrow[ended.upperBound...].trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "·")))
             return date.isEmpty ? nil : date

@@ -831,55 +831,6 @@ final class BillModelTests: XCTestCase {
         XCTAssertEqual(window.releaseAt, easternDate(year: 2026, month: 3, day: 22, hour: 10))
     }
 
-    func testWeeklyDigestNotificationSchedulingRequiresUnreadEnabledAndNewDigest() {
-        let digest = makeDigest()
-
-        XCTAssertTrue(
-            WeeklyDigestStore.shouldScheduleNotification(
-                for: digest,
-                digestNotificationsEnabled: true,
-                appNotificationsEnabled: true,
-                lastNotifiedDigestID: nil
-            )
-        )
-
-        XCTAssertFalse(
-            WeeklyDigestStore.shouldScheduleNotification(
-                for: digest,
-                digestNotificationsEnabled: false,
-                appNotificationsEnabled: true,
-                lastNotifiedDigestID: nil
-            )
-        )
-
-        XCTAssertFalse(
-            WeeklyDigestStore.shouldScheduleNotification(
-                for: digest,
-                digestNotificationsEnabled: true,
-                appNotificationsEnabled: false,
-                lastNotifiedDigestID: nil
-            )
-        )
-
-        XCTAssertFalse(
-            WeeklyDigestStore.shouldScheduleNotification(
-                for: digest,
-                digestNotificationsEnabled: true,
-                appNotificationsEnabled: true,
-                lastNotifiedDigestID: digest.id
-            )
-        )
-
-        XCTAssertFalse(
-            WeeklyDigestStore.shouldScheduleNotification(
-                for: makeDigest(isRead: true),
-                digestNotificationsEnabled: true,
-                appNotificationsEnabled: true,
-                lastNotifiedDigestID: nil
-            )
-        )
-    }
-
     func testPushNotificationPayloadRecognizesWeeklyDigestNotification() {
         let payload = PushNotificationPayload(
             userInfo: [
@@ -957,23 +908,5 @@ final class BillModelTests: XCTestCase {
         components.timeZone = WeeklyDigestSchedule.timeZone
 
         return try! XCTUnwrap(calendar.date(from: components))
-    }
-
-    private func makeDigest(
-        id: String = "2026-03-22T10:00:00-04:00",
-        isRead: Bool = false
-    ) -> WeeklyDigest {
-        WeeklyDigest(
-            id: id,
-            title: "Your Week in Congress | Mar 15-21, 2026",
-            summary: "One bill needs your attention this week.",
-            weekStart: easternDate(year: 2026, month: 3, day: 15),
-            weekEnd: easternDate(year: 2026, month: 3, day: 21),
-            publishedAt: easternDate(year: 2026, month: 3, day: 22, hour: 10),
-            source: .remote,
-            isRead: isRead,
-            stats: [],
-            sections: []
-        )
     }
 }
