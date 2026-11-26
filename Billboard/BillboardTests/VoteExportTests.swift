@@ -537,8 +537,10 @@ final class VoteExportTests: XCTestCase {
 
         XCTAssertEqual(VoteExportCSVFile.exportedContentTypes(), [.commaSeparatedText])
         XCTAssertEqual(VoteExportJSONFile.exportedContentTypes(), [.json])
-        XCTAssertEqual(try await csvItem.exported(as: .commaSeparatedText), try Data(contentsOf: written.csv))
-        XCTAssertEqual(try await jsonItem.exported(as: .json), try Data(contentsOf: written.json))
+        let csvData = try await csvItem.exported(as: .commaSeparatedText)
+        let jsonData = try await jsonItem.exported(as: .json)
+        XCTAssertEqual(csvData, try Data(contentsOf: written.csv))
+        XCTAssertEqual(jsonData, try Data(contentsOf: written.json))
         let csvName = try await csvItem.withExportedFile(contentType: .commaSeparatedText) { $0.lastPathComponent }
         let jsonName = try await jsonItem.withExportedFile(contentType: .json) { $0.lastPathComponent }
         XCTAssertEqual(csvName, written.csv.lastPathComponent)
