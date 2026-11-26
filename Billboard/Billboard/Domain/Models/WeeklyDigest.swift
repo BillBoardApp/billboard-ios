@@ -16,8 +16,8 @@ enum WeeklyDigestSchedule {
 struct WeeklyDigest: Identifiable, Codable, Equatable {
     enum Source: String, Codable {
         case remote
-        /// A brief app 1.2 built on the device. App 1.3 builds none; the case stays so a brief 1.2 saved still
-        /// decodes, and the server's brief for its week replaces it (`WeeklyDigestStore.refresh`).
+        /// A brief app 1.2 built on the device. App 1.3 builds none and shows none; the case stays so a brief 1.2
+        /// saved still decodes, and the server's brief for its week keeps its read state (`WeeklyDigestStore`).
         case localFallback = "local_fallback"
     }
 
