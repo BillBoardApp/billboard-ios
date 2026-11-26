@@ -1,10 +1,12 @@
 import Foundation
+import os
 import XCTest
 @testable import Billboard
 
 /// Download my votes (UX-40 L7), the screen's model: one response written as both files, what VoiceOver is told in
-/// each state, the files deleted when the screen goes and before the next load, a cancelled load that stays quiet
-/// and leaves no files, Try again, and sign-out deleting every export. No network: the model gets a fake service.
+/// each state, the files deleted when the screen goes and before the next load, a cancelled load (while it waits or
+/// while it writes) that stays quiet and leaves no files, Try again, and sign-out deleting every export. No network:
+/// the model gets a fake service.
 @MainActor
 final class DownloadVotesModelTests: XCTestCase {
     private var folder: VoteExportFolder!
@@ -37,6 +39,30 @@ final class DownloadVotesModelTests: XCTestCase {
         XCTAssertEqual(csvRows.count - 2, 3, "one header, one row per vote, a final CRLF")
         XCTAssertEqual(document.votes.count, 3)
         XCTAssertEqual(model.announcement, "Your votes are ready.")
+    }
+
+    /// A load cancelled while it writes the files (the screen went) removes what it wrote and stays quiet.
+    func testACancelWhileTheFilesAreWrittenLeavesNoFiles() async throws {
+        let written = OSAllocatedUnfairLock<VoteExportFileSet?>(initialState: nil)
+        let model = DownloadVotesModel(
+            service: FakeVoteExportService(.success([vote("BILLS-119hr1")])),
+            folder: folder,
+            writer: { votes, folder, exportedAt, timeZone in
+                let files = try folder.write(votes, exportedAt: exportedAt, timeZone: timeZone)
+                written.withLock { $0 = files }
+                // The screen goes while the files are written.
+                withUnsafeCurrentTask { $0?.cancel() }
+                return files
+            }
+        )
+
+        let task = Task { await model.load() }
+        await task.value
+
+        let files = try XCTUnwrap(written.withLock { $0 }, "the writer ran")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: files.folder.path), "what was written is removed")
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath: folder.root.path)) ?? [], [])
+        XCTAssertEqual(model.phase, .preparing, "no error, no files offered")
     }
 
     /// A new load first removes every export on disk, such as one left by an app that was closed while the screen

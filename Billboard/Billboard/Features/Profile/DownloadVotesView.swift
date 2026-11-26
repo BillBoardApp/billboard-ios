@@ -51,10 +51,24 @@ final class DownloadVotesModel: ObservableObject {
 
     @Published private(set) var phase: Phase = .preparing
 
+    /// Writes both files of an export into `folder`. Tests give one that cancels the load while it writes.
+    typealias Writer = @Sendable (
+        _ votes: [ExportedVote],
+        _ folder: VoteExportFolder,
+        _ exportedAt: Date,
+        _ timeZone: TimeZone
+    ) async throws -> VoteExportFileSet
+
+    /// The app's writer, off the main actor (`write(_:to:exportedAt:timeZone:)`).
+    nonisolated static let liveWriter: Writer = { votes, folder, exportedAt, timeZone in
+        try await DownloadVotesModel.write(votes, to: folder, exportedAt: exportedAt, timeZone: timeZone)
+    }
+
     private let service: any VoteExportServicing
     private let folder: VoteExportFolder
     private let now: () -> Date
     private let timeZone: TimeZone
+    private let writer: Writer
     /// The files on disk now, if any.
     private var files: VoteExportFileSet?
 
@@ -62,12 +76,14 @@ final class DownloadVotesModel: ObservableObject {
         service: any VoteExportServicing = VoteExportService.Live(),
         folder: VoteExportFolder = .standard,
         now: @escaping () -> Date = Date.init,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        writer: @escaping Writer = DownloadVotesModel.liveWriter
     ) {
         self.service = service
         self.folder = folder
         self.now = now
         self.timeZone = timeZone
+        self.writer = writer
     }
 
     /// What VoiceOver hears as the phase changes, as a queued announcement (`announcesToVoiceOver`): the loading
@@ -95,9 +111,9 @@ final class DownloadVotesModel: ObservableObject {
                 phase = .empty
                 return
             }
-            let written = try await Self.write(votes, to: folder, exportedAt: now(), timeZone: timeZone)
+            let written = try await writer(votes, folder, now(), timeZone)
             guard !Task.isCancelled else {
-                // The screen went while the files were written.
+                // The screen went while the files were written; nothing was offered to share.
                 folder.remove(written.folder)
                 return
             }
