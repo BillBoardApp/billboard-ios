@@ -645,6 +645,52 @@ final class WeeklyBriefWeekTests: XCTestCase {
     }
 }
 
+// MARK: - Sign-out
+
+/// A read that answers after sign-out.
+extension WeeklyBriefWeekTests {
+    /// Sign-out clears the account's saved brief (`UserLocalDataPurge`) before the tabs go. A read still out then,
+    /// from a return to the app or from Updates, must not put the signed-out account's brief back on the device,
+    /// since its sections reflect what the person follows: when it answers, nothing is saved or shown, and the
+    /// settings are not written back either. The next sign-in to the same account saves its brief as usual.
+    func testAReadThatAnswersAfterSignOutLeavesNothingOnTheDevice() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let hold = CancellableGate()
+        service.hold = hold
+        let (store, defaults, scope) = try makeStore(service: service)
+        let digestKey = "BillBoard.weeklyDigest.v1.digest.\(scope)"
+        let settingsKey = "BillBoard.weeklyDigest.v1.settings.\(scope)"
+
+        let read = Task { await store.refreshOnReturnToApp(profile: profile) }
+        await waitUntil { service.fetchCount == 1 }
+        UserLocalDataPurge.purge(userId: scope, defaults: defaults)
+        hold.open()
+        await read.value
+
+        XCTAssertNil(defaults.data(forKey: digestKey), "the brief came back after sign-out cleared it")
+        XCTAssertNil(store.digest)
+        store.setEnabled(false)
+        XCTAssertNil(defaults.data(forKey: settingsKey), "and so did its settings")
+
+        // The next sign-in to the same account.
+        service.hold = nil
+        let next = relaunch(scope, defaults, service)
+        await next.refresh(profile: profile)
+        XCTAssertEqual(next.digest?.id, serverID(for: window))
+        XCTAssertNotNil(defaults.data(forKey: digestKey), "a new sign-in saves its brief")
+    }
+
+    /// Lets other tasks run until `condition` holds (at most 1,000 turns).
+    private func waitUntil(_ condition: () -> Bool) async {
+        var turns = 0
+        while !condition(), turns < 1_000 {
+            turns += 1
+            await Task.yield()
+        }
+    }
+}
+
 /// The Weekly Brief store's clock, which a test moves.
 private final class BriefClock {
     var now: Date

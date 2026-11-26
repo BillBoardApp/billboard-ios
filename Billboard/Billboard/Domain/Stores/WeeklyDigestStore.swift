@@ -23,6 +23,11 @@ final class WeeklyDigestStore: ObservableObject {
     /// stays read if it was opened (`normalizeReadState`). It goes once the server answers for this week.
     private var savedOnDeviceBrief: WeeklyDigest?
 
+    /// How many times each account's saved brief was cleared in this run of the app (`clearCache`: sign-out and
+    /// account deletion, `UserLocalDataPurge`), and the count for this store's account when the store was made.
+    private static var clearCounts: [String: Int] = [:]
+    private let clearCountAtInit: Int
+
     /// - Parameter now: the clock, which tests set.
     init(
         scope: String,
@@ -34,6 +39,7 @@ final class WeeklyDigestStore: ObservableObject {
         self.defaults = defaults
         self.digestService = digestService
         self.now = now
+        self.clearCountAtInit = Self.clearCounts[scope, default: 0]
         self.settings = Self.loadSettings(scope: scope, defaults: defaults) ?? .default
         self.encoder.dateEncodingStrategy = .iso8601
         let saved = Self.loadDigest(scope: scope, defaults: defaults)
@@ -169,6 +175,12 @@ final class WeeklyDigestStore: ObservableObject {
             return
         }
 
+        // The account signed out while the read was out: its brief must not come back after sign-out cleared it.
+        guard isAccountStillHere else {
+            logger.notice("A Weekly Brief read answered after sign-out; nothing is kept")
+            return
+        }
+
         guard let remote else {
             // An empty answer (204) on Sunday before 10:30 AM ET may only mean the server has not stored this
             // person's brief yet. Like another week's brief, it changes nothing, and the next refresh asks again.
@@ -223,17 +235,26 @@ final class WeeklyDigestStore: ObservableObject {
         return merged
     }
 
+    /// False once this store's account was signed out or deleted (`clearCache`) after the store was made. A store
+    /// then writes nothing on the device for it: a brief read that answers after sign-out, from the tabs or from
+    /// Updates and Profile, must not put the signed-out account's brief back (its sections reflect what the person
+    /// follows). A later sign-in to the same account makes a new store, which saves as usual.
+    private var isAccountStillHere: Bool {
+        Self.clearCounts[scope, default: 0] == clearCountAtInit
+    }
+
     private func persistDigest(_ digest: WeeklyDigest) {
-        guard let data = try? encoder.encode(digest) else { return }
+        guard isAccountStillHere, let data = try? encoder.encode(digest) else { return }
         defaults.set(data, forKey: Self.digestKey(scope: scope))
     }
 
     private func persistSettings() {
-        guard let data = try? encoder.encode(settings) else { return }
+        guard isAccountStillHere, let data = try? encoder.encode(settings) else { return }
         defaults.set(data, forKey: Self.settingsKey(scope: scope))
     }
 
     private func clearPersistedDigest() {
+        guard isAccountStillHere else { return }
         defaults.removeObject(forKey: Self.digestKey(scope: scope))
     }
 
@@ -261,8 +282,11 @@ final class WeeklyDigestStore: ObservableObject {
         "BillBoard.weeklyDigest.v1.lastNotified.\(scope)"
     }
 
+    /// Clears an account's saved brief and settings, at sign-out and account deletion (`UserLocalDataPurge`). A store
+    /// made before this writes nothing more for the account (`isAccountStillHere`).
     static func clearCache(scope: String?, defaults: UserDefaults = .standard) {
         guard let scope = scope.trimmedNonEmpty else { return }
+        clearCounts[scope, default: 0] += 1
         defaults.removeObject(forKey: digestKey(scope: scope))
         defaults.removeObject(forKey: settingsKey(scope: scope))
         defaults.removeObject(forKey: lastNotifiedDigestKey(scope: scope))

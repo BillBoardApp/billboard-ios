@@ -231,10 +231,12 @@ final class FakeCivicService: CivicServicing {
 // MARK: - Weekly Brief
 
 /// The published brief (`GET /weekly-digests/latest`), counting how often it is asked for. `result` answers each
-/// read: a brief, nil for the empty answer (204), or an error.
+/// read: a brief, nil for the empty answer (204), or an error. With `hold` set, each read waits for it to open, and
+/// a cancelled read throws `CancellationError`, as a cancelled request does.
 @MainActor
 final class FakeWeeklyDigestService: WeeklyDigestServicing {
     var result: Result<WeeklyDigest?, Error>
+    var hold: CancellableGate?
     private(set) var fetchCount = 0
 
     init(digest: WeeklyDigest? = nil) {
@@ -248,6 +250,7 @@ final class FakeWeeklyDigestService: WeeklyDigestServicing {
 
     func fetchLatest() async throws -> WeeklyDigest? {
         fetchCount += 1
+        if let hold { try await hold.wait() }
         return try result.get()
     }
 }
