@@ -813,9 +813,11 @@ final class BillboardUITests: XCTestCase {
 
     // MARK: - Updates
 
+    /// Opens the Weekly Brief when Updates has one. The brief is the server's only (UX-28), and the smoke account
+    /// may have none in a given week, so Updates passes with or without it.
     private func openWeeklyBriefIfAvailable(in app: XCUIApplication) {
         let weeklyBrief = app.buttons["updates.weeklyBrief.open"]
-        XCTAssertTrue(weeklyBrief.waitForExistence(timeout: 20))
+        guard weeklyBrief.waitForExistence(timeout: 20) else { return }
         scrollIntoView(weeklyBrief, in: app)
         tap(weeklyBrief)
 
