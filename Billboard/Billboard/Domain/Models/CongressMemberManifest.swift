@@ -14,7 +14,7 @@ struct CongressMemberManifestItem: Codable, Identifiable, Equatable, Hashable {
     let trackedSponsoredCount: Int?
     let trackedSupportedCount: Int?
     /// BillBoard's counts for the Congress the server says they cover (REL-46); absent from services before REL-46,
-    /// from caches written before 1.3 and when the member has no counts.
+    /// from caches written before 1.3, when the member has no counts and when the member stats could not be read.
     let currentCongressCounts: TrackedCongressCounts?
 
     enum CodingKeys: String, CodingKey {
