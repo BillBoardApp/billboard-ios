@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Yea / Nay split every tally draws (spec 3.7, 4.40): 8 pt tall with square ends, Yea from the
 /// leading edge, a 2 pt gap, then Nay, the widths in proportion to Yea and Nay only. One view for all of
-/// them: Results' rows (`VoteSplitBar`), How Congress voted and Compare with Congress (`CongressSplitBar`).
+/// them: Results' rows (`VoteSplitBar`) and How Congress voted (`CongressSplitBar`).
 ///
 /// `progress` grows the segments from the centre gap: Yea is anchored at its trailing end and Nay at its
 /// leading end (spec 5.1). `tick` stands the 2 pt 50% `MajorityTick` over the bar, which then sits in the

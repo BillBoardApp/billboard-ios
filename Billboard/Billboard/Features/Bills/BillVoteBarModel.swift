@@ -786,6 +786,41 @@ enum BillWatchCopy {
     static let errorIdentifier = "bill.watch.error"
 }
 
+/// What happens next's copy (UX-41 concept 1, `BillAfterVoteSection`), approved with the block by a project decision
+/// of 2026-11-23 (D83 (a)). The promise reuses the Watch row's caption when a block applies (UX-47).
+enum AfterVoteCopy {
+    static let title = "What happens next"
+    static let latestActionLabel = "Latest action"
+    static let representativesTitle = "Your representatives"
+    static let you = "You"
+
+    /// "You, Yea.", "You, Abstain.": the "You" row, read by VoiceOver.
+    static func youAccessibilityLabel(_ choice: VoteChoice) -> String {
+        "\(you), \(choice.title)."
+    }
+
+    /// "The House hasn't held a recorded vote on this bill."
+    static func noRecordedVote(in chamber: CongressChamber) -> String {
+        "The \(CongressMemberLabel.chamberWord(chamber)) hasn't held a recorded vote on this bill."
+    }
+
+    /// When neither chamber has held one.
+    static let noRecordedVoteYet = "Congress hasn't held a recorded vote on this bill yet."
+
+    /// "The Senate passed it without a recorded vote, so there are no member votes."
+    static func passedWithoutRecordedVote(in chamber: CongressChamber) -> String {
+        "The \(CongressMemberLabel.chamberWord(chamber)) passed it without a recorded vote, so there are no member votes."
+    }
+
+    static let addAddress = "Add your address in Profile to see how your representatives voted."
+    static let voterPromise = "You'll get notified when Congress acts on it."
+
+    /// The promise, or why this device won't be notified (`BillWatchCopy.rowSubtitle(blockedBy:)`).
+    static func promise(blockedBy block: BillWatchNotificationBlock?) -> String {
+        block == nil ? voterPromise : BillWatchCopy.rowSubtitle(blockedBy: block)
+    }
+}
+
 // MARK: - Vote saved event
 
 extension BillVoteBarModel {

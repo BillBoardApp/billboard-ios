@@ -4,7 +4,7 @@ import SwiftUI
 //
 // The bill page's official roll calls: each chamber's tally, then how its members voted, with the user's own
 // members tagged (UX-39a). Official Congress data, not other users' votes, so INT-11 does not seal them.
-// `CongressSplitBar`, which Compare with Congress draws too, is in `BillDetailStatsSections.swift`.
+// `CongressSplitBar`, which its tallies draw, is in `BillDetailStatsSections.swift`.
 
 /// How Congress voted (spec 4.45): each chamber's roll call as a tally in the TallySheet style, then how
 /// its members voted, the user's representatives first, tagged "Your senator" or "Your representative"

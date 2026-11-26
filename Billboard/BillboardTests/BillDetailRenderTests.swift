@@ -1,12 +1,13 @@
 import CoreGraphics
 import SwiftUI
 import UIKit
+import UserNotifications
 import XCTest
 @testable import Billboard
 
 /// Renders the bill page (spec D 5.3; Civic Record spec 4.28 to 4.48, 10.1): the vote panel in every state,
 /// the document's front matter and sections (Sponsor, Why it matters, the Breakdown ledger, Summary, In
-/// Congress, Your vote in every state, How Congress voted, Compare with Congress, Committees, Actions,
+/// Congress, Your vote in every state, How Congress voted, What happens next, Committees, Actions,
 /// Source, loading, error and not found), Results with fixtures (no votes, withheld, both rows, state
 /// missing), locked Results (INT-11) and the vote map, in light and dark at the default text size and at
 /// accessibility sizes, and attaches each image for review. No network, no credentials, no baselines;
@@ -2313,20 +2314,78 @@ final class BillDetailRenderTests: XCTestCase {
         }
     }
 
-    // MARK: Compare with Congress
+    // MARK: What happens next (UX-41 concept 1)
 
-    func testCompareWithCongressRendersWithSquareBars() throws {
-        let bill = Self.documentBill()
-        for variant in Self.variants(.accessibility3) {
-            let image = try render(onDocument(BillCongressVotedSection(bill: bill)), variant: variant, width: 390)
-            attach(image, name: "compare-with-congress-\(variant.name)")
+    /// What happens next for a TX-7 voter on the document bill with both chambers' roll calls: the latest action, the
+    /// "You" row, Texas's senators and TX-7's member, and the promise.
+    private static func whatHappensNext(vote: VoteChoice = .yea) throws -> AfterVoteSummary {
+        AfterVoteSummary(
+            bill: billWithBothChambers(),
+            vote: vote,
+            representatives: .known(state: "TX", district: "7", manifest: try yourMembersManifest()),
+            block: nil,
+            isWatching: false,
+            isVoteSaved: true,
+            locale: Locale(identifier: "en_US"),
+            timeZone: TimeZone(identifier: "America/New_York")!
+        )
+    }
+
+    /// What happens next in light and dark at the default size and AX5, on a 375 pt phone: drawn in ink but for the
+    /// vote symbols and words (no party colour: the party is a letter), and the same after Yea, Nay and Abstain but for
+    /// the "You" row. VoiceOver reads the title (a header), the latest action, the subhead (a header), "You, Yea.", the
+    /// members, then the promise.
+    func testWhatHappensNextRendersInLightDarkAndAX5() throws {
+        let summary = try Self.whatHappensNext()
+        let looks = Self.variants(.accessibility5)
+        for variant in looks {
+            for vote in VoteChoice.allCases {
+                let image = try render(onDocument(BillAfterVoteSection(summary: try Self.whatHappensNext(vote: vote))), variant: variant, width: 375)
+                attach(image, name: "what-happens-next-\(vote.rawValue)-375-\(variant.name)")
+                XCTAssertEqual(image.width, 375, variant.name)
+                let dark = variant.scheme == .dark
+                let party = [BillboardPalette.partyDemocratic, BillboardPalette.partyRepublican].map { $0.resolved(dark: dark).rgb }
+                let pixels = try bitmap(image)
+                let partyPixels = pixels.reduce(0) { count, row in
+                    count + row.filter { pixel in party.contains { distance(pixel, $0) < 0.05 } }.count
+                }
+                XCTAssertEqual(partyPixels, 0, "\(vote.rawValue) \(variant.name): no party colour")
+            }
         }
-        let text = AccessibilityTreeText.text(of: onDocument(BillCongressVotedSection(bill: bill)))
-        XCTAssertEqual(text, "Compare with Congress | House: 231 Yea, 196 Nay")
-        var noVotes = bill
-        noVotes.congressHouseYeaCount = nil
-        noVotes.congressHouseNayCount = nil
-        XCTAssertTrue(BillCongressVotedSection.tallies(for: noVotes).isEmpty, "only when Congress has voted")
+
+        let host = AccessibilityTreeText.Host(onDocument(BillAfterVoteSection(summary: summary)), size: CGSize(width: 375, height: 2000))
+        defer { host.close() }
+        let strings = host.strings()
+        let members = try XCTUnwrap(summary.representatives?.members.map(\.accessibilityLabel))
+        XCTAssertEqual(members.count, 3, "\(strings)")
+        XCTAssertEqual(strings, [
+            AfterVoteCopy.title,
+            "Latest action: Subcommittee hearings held. October 14.",
+            AfterVoteCopy.representativesTitle,
+            "You, Yea."
+        ] + members + [AfterVoteCopy.voterPromise])
+        XCTAssertEqual(host.traits(of: AfterVoteCopy.title)?.contains(.header), true)
+        XCTAssertEqual(host.traits(of: AfterVoteCopy.representativesTitle)?.contains(.header), true)
+        XCTAssertEqual(host.label(ofIdentifier: BillAfterVoteSection.youIdentifier), "You, Yea.")
+        for label in strings {
+            XCTAssertFalse(label.contains("your senator") || label.contains("your representative"), label)
+        }
+    }
+
+    /// At AX5 on 375 pt every row of the block stays in the column, its position on a line of its own.
+    func testWhatHappensNextStaysInTheColumnAtAX5() throws {
+        let summary = try Self.whatHappensNext(vote: .abstain)
+        let host = AccessibilityTreeText.Host(
+            onDocument(BillAfterVoteSection(summary: summary)).environment(\.dynamicTypeSize, .accessibility5),
+            size: CGSize(width: 375, height: 4000)
+        )
+        defer { host.close() }
+        let labels = ["You, Abstain."] + (summary.representatives?.members.map(\.accessibilityLabel) ?? [])
+        for label in labels {
+            let frame = try XCTUnwrap(host.frame(of: label), "\(label): \(host.text())")
+            XCTAssertLessThanOrEqual(frame.maxX, 375 - BillboardStyle.Space.xl + 0.5, label)
+            XCTAssertGreaterThanOrEqual(frame.minX, BillboardStyle.Space.xl - 0.5, label)
+        }
     }
 
     // MARK: Loading, error, not found
@@ -2404,9 +2463,10 @@ final class BillDetailRenderTests: XCTestCase {
     }
 
     /// The page in spec 4.28's order, before and after a vote made on it: the front matter, the bill's text,
-    /// Your vote, Results (sealed until the vote, INT-11), then Compare with Congress and Done (only after
-    /// the vote), How Congress voted (never sealed), Committees, Actions and Source. No "Vote saved", no
-    /// "Watch for changes", no "Not voted yet"; Done has its id.
+    /// Your vote, Results (sealed until the vote, INT-11), then What happens next and Done (only after the vote),
+    /// How Congress voted (never sealed), Committees, Actions and Source. No "Vote saved", no "Watch for changes",
+    /// no "Not voted yet", no "Compare with Congress"; Done has its id. The profile has not loaded, so What happens
+    /// next leaves Your representatives out.
     func testThePageSetsItsSectionsInTheDocumentOrder() {
         let offline = APIClient(transport: { _ in throw URLError(.notConnectedToInternet) })
         let bill = Self.documentBill()
@@ -2424,7 +2484,7 @@ final class BillDetailRenderTests: XCTestCase {
                 BillOfficialVotesSection.title, "House: 231 Yea, 196 Nay",
                 BillCommitteesSection.title, BillActionsSection.title, BillLinkSection.title, BillLinkSection.linkTitle
             ], in: before, "before the vote")
-            for gone in [BillCongressVotedSection.title, BillDetail.doneTitle, "Vote saved", "Watch for changes", "Not voted yet"] {
+            for gone in [AfterVoteCopy.title, BillDetail.doneTitle, "Vote saved", "Watch for changes", "Not voted yet"] {
                 XCTAssertNil(position(of: gone, in: before), "\(gone) before the vote: \(before)")
             }
 
@@ -2433,17 +2493,63 @@ final class BillDetailRenderTests: XCTestCase {
             let after = host.strings()
             assertInOrder([
                 BillYourVoteSection.title, BillWatchCopy.rowTitle, "Why Yea? (optional)",
-                BillCongressVotedSection.title, "House: 231 Yea, 196 Nay",
+                AfterVoteCopy.title, "Latest action: Subcommittee hearings held.", AfterVoteCopy.noRecordedVote(in: .senate),
                 BillDetail.doneTitle,
-                BillOfficialVotesSection.title, BillCommitteesSection.title
+                BillOfficialVotesSection.title, "House: 231 Yea, 196 Nay", BillCommitteesSection.title
             ], in: after, "after the vote")
+            XCTAssertNil(position(of: AfterVoteCopy.representativesTitle, in: after), "the profile has not loaded: \(after)")
             XCTAssertEqual(host.label(ofIdentifier: BillDetail.doneIdentifier), BillDetail.doneTitle)
             for gone in [
                 BillYourVoteSection.notVotedText, BillYourVoteSection.privacyText, Self.sealedNotVoted, VoteResultsFormatting.sealedLabel,
-                "Vote saved", "Watch for changes", "Not voted yet"
+                "Vote saved", "Watch for changes", "Not voted yet", "Compare with Congress"
             ] {
                 XCTAssertNil(position(of: gone, in: after), "\(gone) after the vote: \(after)")
             }
+        }
+    }
+
+    /// After a vote on the page, for a TX-7 voter whose profile and members manifest have loaded: What happens next
+    /// lists the "You" row, Texas's senators in roster order and TX-7's member under the latest action, with the
+    /// promise, between Results and Done; How Congress voted follows with its tags.
+    func testWhatHappensNextOnThePageListsYourRepresentatives() throws {
+        let offline = APIClient(transport: { _ in throw URLError(.notConnectedToInternet) })
+        let bill = Self.billWithBothChambers()
+        let (billsStore, voteStore) = stores([bill])
+        let profile = UserProfile.placeholder().updating(id: "after-vote-tests-\(UUID().uuidString)", state: "TX", district: "7")
+        UserProfileDiskCache.store(try JSONEncoder().encode(profile), userId: profile.id)
+        addTeardownBlock { @MainActor in UserStore.clearCachedProfile(userId: profile.id) }
+        let user = UserStore(preferencesService: StaticPreferencesService(items: []), congressService: FakeCongressService())
+        user.hydrateCachedProfileIfAvailable(userId: profile.id)
+        let congress = FakeCongressService()
+        congress.cachedManifest = try Self.yourMembersManifest()
+        let suite = "after-vote-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: AppNotificationStorage.pushPermissionPromptedKey)
+        let notifications = WatchNotificationAccess(permission: { .authorized }, defaults: defaults, showPrompt: {})
+        let view = NavigationStack { BillDetail(billID: bill.id) }
+            .environment(\.watchNotificationAccess, notifications)
+            .environmentObject(billsStore)
+            .environmentObject(voteStore)
+            .environmentObject(AppReadState(scope: .user("bill-document-tests"), store: InMemoryReadStateStore()))
+            .environmentObject(user)
+            .environmentObject(CongressMembersManifestStore(service: congress))
+        APIClient.$current.withValue(offline) {
+            let host = AccessibilityTreeText.Host(view, size: CGSize(width: 390, height: 8000), settle: 0.5)
+            defer { host.close() }
+            XCTAssertNil(position(of: AfterVoteCopy.title, in: host.strings()), "not before the vote")
+            XCTAssertTrue(host.activate("Vote Yea", settle: 1.0), host.text())
+            XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillAfterVoteSection.youIdentifier) != nil }), host.text())
+            let after = host.strings()
+            assertInOrder([
+                BillYourVoteSection.title, AfterVoteCopy.title, "Latest action:", AfterVoteCopy.representativesTitle, "You, Yea.",
+                "Senator Riley Hart, Republican, Texas, Nay", "Senator Avery Stone, Republican, Texas, Yea",
+                "Representative Jordan Ellis, Republican, Texas's 7th district, Yea",
+                AfterVoteCopy.voterPromise, BillDetail.doneTitle,
+                BillOfficialVotesSection.title, "Senator Riley Hart, Republican, Texas, your senator, Nay"
+            ], in: after, "after the vote")
+            XCTAssertNil(position(of: AfterVoteCopy.noRecordedVoteYet, in: after), "both chambers voted: \(after)")
+            XCTAssertNil(position(of: "Casey Moore, Democrat, Ohio, Yea", in: Array(after.prefix { $0 != BillDetail.doneTitle })), "not the voter's")
         }
     }
 

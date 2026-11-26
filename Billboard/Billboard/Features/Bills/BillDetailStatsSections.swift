@@ -4,11 +4,11 @@ import SwiftUI
 //
 // Results (everyone beside verified voters, the user's state and district, the map) is
 // `BillResultsSection` in `BillResultsComparison.swift`; Why people voted, the sealed tally sheet and the
-// Results area that chooses between them are here, with Compare with Congress. How Congress voted is in
-// `BillOfficialVotesSection.swift`. Both show the official roll calls, which are not other users' votes, so
-// INT-11 does not seal them.
+// Results area that chooses between them are here. How Congress voted is in `BillOfficialVotesSection.swift`
+// and What happens next in `BillAfterVoteSection.swift`. Both show official Congress data, not other users'
+// votes, so INT-11 does not seal them.
 
-/// The Yea / Nay split of an official roll call (How Congress voted, Compare with Congress): the shared split
+/// The Yea / Nay split of an official roll call (How Congress voted's tallies): the shared split
 /// (`TallySplitBar`) under the 2 pt 50% tick, a `well` fill when the roll call has no Yea or Nay. A part:
 /// the rows that draw it show the vote symbols and words. Hidden from VoiceOver.
 struct CongressSplitBar: View {
@@ -134,84 +134,6 @@ struct BillVoteReasonsSection: View {
             return voteReason.title
         }
         return key.replacingOccurrences(of: "_", with: " ").capitalized
-    }
-}
-
-/// Compare with Congress (spec 4.47): shown only right after a vote made on the page, and only when Congress
-/// has voted. Per chamber, "HOUSE" and "220–210" in the figures face, the split bar with its 50% tick, and
-/// "✓ Yea 220" and "✕ Nay 210" in the vote colours. It fades in (nothing moves); with Reduce Motion it
-/// appears at once.
-struct BillCongressVotedSection: View {
-    let bill: Bill
-    var showsRule = true
-
-    static let title = "Compare with Congress"
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// The chambers that voted, House first.
-    static func tallies(for bill: Bill) -> [CongressChamberTally] {
-        let chambers: [(CongressChamber, Int?, Int?)] = [
-            (.house, bill.congressHouseYeaCount, bill.congressHouseNayCount),
-            (.senate, bill.congressSenateYeaCount, bill.congressSenateNayCount)
-        ]
-        return chambers.compactMap { chamber, yea, nay in
-            guard let yea, let nay, yea + nay > 0 else { return nil }
-            return CongressChamberTally(chamber: chamber, yea: yea, nay: nay)
-        }
-    }
-
-    var body: some View {
-        let tallies = Self.tallies(for: bill)
-        if !tallies.isEmpty {
-            RecordSection(Self.title, showsRule: showsRule) {
-                VStack(alignment: .leading, spacing: BillboardStyle.Space.l) {
-                    ForEach(tallies, id: \.chamber) { tally in
-                        chamberRow(tally)
-                    }
-                }
-            }
-            .transition(reduceMotion ? .identity : .opacity)
-        }
-    }
-
-    private func chamberRow(_ tally: CongressChamberTally) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: BillboardStyle.Space.s) {
-                Text(tally.chamberWord)
-                    .textRole(.label)
-                    .foregroundStyle(BillboardColors.secondaryText)
-                Spacer(minLength: BillboardStyle.Space.s)
-                Text("\(tally.yea)–\(tally.nay)")
-                    .textRole(.figure)
-                    .foregroundStyle(BillboardColors.primaryText)
-                    .fixedSize()
-            }
-            CongressSplitBar(yea: tally.yea, nay: tally.nay)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: BillboardStyle.Space.s) {
-                    side(.yea, tally.yea).fixedSize()
-                    Spacer(minLength: BillboardStyle.Space.s)
-                    side(.nay, tally.nay).fixedSize()
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    side(.yea, tally.yea)
-                    side(.nay, tally.nay)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(tally.chamberWord): \(tally.yea) Yea, \(tally.nay) Nay")
-    }
-
-    /// "✓ Yea 220" in the vote colour.
-    private func side(_ choice: VoteChoice, _ count: Int) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: choice.symbolName)
-            Text("\(choice.title) \(count)")
-        }
-        .textRole(.subheadline)
-        .foregroundStyle(choice.color)
     }
 }
 
