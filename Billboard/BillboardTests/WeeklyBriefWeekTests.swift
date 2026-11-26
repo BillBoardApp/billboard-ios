@@ -292,6 +292,48 @@ final class WeeklyBriefWeekTests: XCTestCase {
         XCTAssertNil(store.errorMessage)
     }
 
+    // MARK: - A return to the app
+
+    /// The app left in the background before Sunday 10 AM ET still holds last week's brief. A return to the app
+    /// after the release reads this week's, so the badge can count it; once it is here, or once this week's check
+    /// found none, a return asks nothing. With Weekly Brief in Updates off, nothing is read.
+    func testAReturnToTheAppReadsThisWeeksBriefOnce() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let lastWeek = Self.lastWeeksWindow()
+        let sundayNoon = window.releaseAt.addingTimeInterval(2 * 60 * 60)
+        let clock = BriefClock(sundayNoon)
+        let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let (store, _, _) = try makeStore(service: service, saved: brief(id: serverID(for: lastWeek), window: lastWeek), clock: clock)
+        XCTAssertEqual(
+            WeeklyDigestStore.unreadDigestCount(digest: store.digest, isEnabled: true, now: sundayNoon),
+            0,
+            "precondition: last week's brief"
+        )
+
+        await store.refreshOnReturnToApp(profile: profile)
+        XCTAssertEqual(service.fetchCount, 1)
+        XCTAssertEqual(store.digest?.id, serverID(for: window))
+        XCTAssertEqual(WeeklyDigestStore.unreadDigestCount(digest: store.digest, isEnabled: true, now: sundayNoon), 1)
+
+        await store.refreshOnReturnToApp(profile: profile)
+        XCTAssertEqual(service.fetchCount, 1, "this week's brief is here")
+
+        // This week's check found none: a return asks nothing more.
+        let empty = FakeWeeklyDigestService()
+        let (none, _, _) = try makeStore(service: empty, clock: clock)
+        await none.refresh(profile: profile)
+        XCTAssertTrue(none.foundNoBriefThisWeek)
+        await none.refreshOnReturnToApp(profile: profile)
+        XCTAssertEqual(empty.fetchCount, 1)
+
+        // Weekly Brief in Updates off.
+        let off = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let (disabled, _, _) = try makeStore(service: off, clock: clock)
+        disabled.setEnabled(false)
+        await disabled.refreshOnReturnToApp(profile: profile)
+        XCTAssertEqual(off.fetchCount, 0)
+    }
+
     // MARK: - The Updates badge: Sunday and Monday only
 
     /// An unopened brief counts in the Updates badge from its release, Sunday 10:00 ET, through Monday 23:59:59 ET,

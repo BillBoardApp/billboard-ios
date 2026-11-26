@@ -173,17 +173,29 @@ struct TabsBar: View {
         Tab(rawValue: appState.selectedTab) ?? .home
     }
 
-    /// The Weekly Brief's first read, once the profile has loaded. A later change to the profile reads nothing: the
-    /// server writes each person's brief on Sunday and keeps it as written all week (UX-28).
+    /// The Weekly Brief's first read, once the profile has loaded with its id; a profile load that leaves no id
+    /// leaves it to the next load. A later change to the profile reads nothing: the server writes each person's
+    /// brief on Sunday and keeps it as written all week (UX-28).
     @MainActor
     private func bootstrapWeeklyDigestIfNeeded() async {
         guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
         guard userStore.hasRefreshedOnce else { return }
         guard !userStore.isLoading else { return }
         guard !hasCompletedInitialWeeklyDigestBootstrap else { return }
+        guard !userStore.profile.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         await weeklyDigestStore.refresh(profile: userStore.profile)
         hasCompletedInitialWeeklyDigestBootstrap = true
+    }
+
+    /// A return to the app may come after Sunday 10 AM ET with last week's brief still in hand: this week's is read
+    /// then, so the Sunday and Monday badge counts it (UX-28). Only after the first read; the store asks nothing
+    /// when this week's brief is here or this week's check found none (`refreshOnReturnToApp`).
+    @MainActor
+    private func refreshWeeklyDigestOnReturnToApp() {
+        guard !AppLaunchOptions.shouldStreamlineStartupForUITests else { return }
+        guard hasCompletedInitialWeeklyDigestBootstrap else { return }
+        Task { await weeklyDigestStore.refreshOnReturnToApp(profile: userStore.profile) }
     }
 
     /// UX-51 (project decision 2026-11-19): once after the update to 1.3, the full manifest, so the bills held
@@ -612,8 +624,10 @@ struct TabsBar: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 // A return to the app may cross Sunday 10 AM or Tuesday 00:00 ET, where the brief's count changes.
+                // A brief read now refreshes the badge again through `$digest`.
                 guard phase == .active else { return }
                 scheduleTabBadgeRefresh()
+                refreshWeeklyDigestOnReturnToApp()
             }
             .onChange(of: userStore.profile.watchedBillGUIDs) { _, watched in
                 billsStore.reconcileWatchesFromProfile(watched)

@@ -199,6 +199,14 @@ final class WeeklyDigestStore: ObservableObject {
         persistDigest(normalized)
     }
 
+    /// A return to the app (UX-28): reads this week's brief if it is not here yet, for example after the app was
+    /// last open before Sunday 10 AM ET, so the Sunday and Monday badge can count it. It asks the server nothing
+    /// when this week's brief is here (`refresh`'s early returns) or this week's check found none.
+    func refreshOnReturnToApp(profile: UserProfile) async {
+        guard !foundNoBriefThisWeek else { return }
+        await refresh(profile: profile)
+    }
+
     /// Whether `digest` is the server's brief for `window`'s week. Weeks are compared by release time, since the
     /// server's id and the app's are written differently (`isSameRelease`). A brief app 1.2 built on the device
     /// (`.localFallback`) is not the server's, so a refresh asks the server for it.
