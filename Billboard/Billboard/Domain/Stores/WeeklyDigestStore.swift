@@ -30,11 +30,23 @@ final class WeeklyDigestStore: ObservableObject {
         self.digest = Self.loadDigest(scope: scope, defaults: defaults)
     }
 
-    /// 1 while Updates shows the brief as its UNREAD front page (the brief is on and not yet opened), else 0:
-    /// the Updates badge counts it like a row (feature review N5).
-    var unreadDigestCount: Int {
-        guard settings.isEnabled, let digest, !digest.isRead else { return 0 }
+    /// What the brief adds to the Updates badge at `now` (feature review N5; UX-28, a project decision of
+    /// 2026-11-23): 1 for this week's brief (`latestPublishedWindow(relativeTo: now)`) not yet opened, from its
+    /// release on Sunday at 10 AM until Tuesday 00:00, New York time; else 0. Updates still shows an unopened brief
+    /// as its UNREAD front page all week; only the badge stops on Tuesday.
+    static func unreadDigestCount(digest: WeeklyDigest?, now: Date) -> Int {
+        guard let digest, !digest.isRead else { return 0 }
+        let window = latestPublishedWindow(relativeTo: now)
+        guard isSameRelease(digest.id, window.id), now < badgeEnd(forReleaseAt: window.releaseAt) else { return 0 }
         return 1
+    }
+
+    /// Tuesday 00:00 in New York time after the Sunday release at `releaseAt`: two calendar days after the release
+    /// day starts, so a clock change that weekend moves it with the clocks.
+    private static func badgeEnd(forReleaseAt releaseAt: Date) -> Date {
+        let calendar = WeeklyDigestSchedule.calendar
+        let releaseDay = calendar.startOfDay(for: releaseAt)
+        return calendar.date(byAdding: .day, value: 2, to: releaseDay) ?? releaseDay.addingTimeInterval(2 * 24 * 60 * 60)
     }
 
     /// The release (a window id) whose last finished refresh found no brief: the server answered with none for

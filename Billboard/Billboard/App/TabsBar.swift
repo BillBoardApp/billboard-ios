@@ -15,6 +15,7 @@ struct TabsBar: View {
     @StateObject private var readState: AppReadState
     @StateObject private var weeklyDigestStore: WeeklyDigestStore
     @EnvironmentObject private var userStore: UserStore
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(BillboardDisplayStorage.historyWindowDaysKey) private var billboardHistoryWindowDays = BillboardHistoryWindow.default.rawValue
     // Read to hold deep links back during the tour; `ProductTutorialPresenter` writes them.
     @AppStorage(ProductTutorialStorage.pendingAutoShowKey) private var pendingAutoShowTutorial = false
@@ -370,7 +371,12 @@ struct TabsBar: View {
             dismissedBillIDs: readState.dismissedBillIDs,
             readBillAlertIDs: readState.readBillAlertIDs,
             userProfile: userStore.profile,
-            unreadDigestCount: weeklyDigestStore.unreadDigestCount,
+            // The brief counts on Sunday and Monday only (UX-28): worked out for the time of each refresh, and
+            // refreshed when the app becomes active.
+            unreadDigestCount: WeeklyDigestStore.unreadDigestCount(
+                digest: weeklyDigestStore.settings.isEnabled ? weeklyDigestStore.digest : nil,
+                now: Date()
+            ),
             historyWindow: selectedBillboardHistoryWindow,
             voteStatesByBillID: billVoteStore.statesByBillId,
             companions: billsStore.companionGroupIndex
@@ -599,6 +605,11 @@ struct TabsBar: View {
                 scheduleTabBadgeRefresh()
             }
             .onChange(of: billboardHistoryWindowDays) { _, _ in
+                scheduleTabBadgeRefresh()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // A return to the app may cross Sunday 10 AM or Tuesday 00:00 ET, where the brief's count changes.
+                guard phase == .active else { return }
                 scheduleTabBadgeRefresh()
             }
             .onChange(of: userStore.profile.watchedBillGUIDs) { _, watched in
