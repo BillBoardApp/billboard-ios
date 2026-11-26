@@ -351,20 +351,6 @@ extension Bill {
         vetoed == true && billStatus != .finalized
     }
 
-    /// The outcome as the app shows and reads it now (`outcomeLabel(at:)`).
-    nonisolated var outcomeLabel: String {
-        outcomeLabel(at: CongressCalendar.now())
-    }
-
-    /// The outcome as the app shows and reads it at `now`: "Vetoed" for a vetoed bill, "Ended with the 119th
-    /// Congress" for a bill with no outcome whose Congress has ended (`endedCongress(at:)`, REL-46), else the
-    /// status's label. The on-device Weekly Brief's eyebrow starts with it, so it agrees with the stamp.
-    nonisolated func outcomeLabel(at now: Date) -> String {
-        if isVetoed { return BillStatus.vetoedLabel }
-        if let congress = endedCongress(at: now) { return EndedCongress.stampWord(congress: congress) }
-        return billStatus.displayLabel
-    }
-
     nonisolated var hasActivePriority: Bool {
         guard isPriority else { return false }
         guard let priorityExpiresAt else { return true }

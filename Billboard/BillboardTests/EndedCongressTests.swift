@@ -173,7 +173,6 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertNil(vetoed.endedNote(at: Self.noon))
         XCTAssertEqual(vetoed.endedNote(at: Self.februaryFirst), Self.billNote)
         XCTAssertNil(vetoed.endedCongress(at: Self.februaryFirst), "VETOED stands over the ended stamp")
-        XCTAssertEqual(vetoed.outcomeLabel(at: Self.februaryFirst), "Vetoed")
     }
 
     // MARK: - The stamp
@@ -192,10 +191,6 @@ final class EndedCongressTests: XCTestCase {
         XCTAssertEqual(bill("hr", .updated, actions: [housePassage]).endedCongress(at: Self.februaryFirst), 119)
         // An agreed-to resolution is finished, not ended.
         XCTAssertNil(bill("hres", .updated, actions: [housePassage]).endedCongress(at: Self.februaryFirst))
-
-        XCTAssertEqual(bill("hr", .updated).outcomeLabel(at: Self.noon), "Ended with the 119th Congress")
-        XCTAssertEqual(bill("hr", .updated).outcomeLabel(at: Self.beforeNoon), "Updated")
-        XCTAssertEqual(bill("hr", .failed).outcomeLabel(at: Self.noon), "Failed")
     }
 
     func testTheStampIsLongInInk3SingleRuledAndReadTheSame() {
@@ -251,7 +246,7 @@ final class EndedCongressTests: XCTestCase {
                 primaryMemberBioguideID: nil
             )
         }
-        let updated = item(.updated, eyebrow: "Ended with the 119th Congress Jan 8")
+        let updated = item(.updated, eyebrow: "Updated Jan 8")
         XCTAssertEqual(updated.endedCongress(at: Self.noon), 119)
         XCTAssertNil(updated.endedCongress(at: Self.beforeNoon))
         XCTAssertNil(item(.passed, eyebrow: "Passed Jan 8").endedCongress(at: Self.februaryFirst))

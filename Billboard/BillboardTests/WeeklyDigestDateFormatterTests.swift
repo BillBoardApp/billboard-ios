@@ -90,8 +90,8 @@ final class WeeklyDigestDateFormatterTests: XCTestCase {
         XCTAssertEqual(item(eyebrow: "New Mar 20", state: .new).dateEyebrow, "Mar 20")
         XCTAssertEqual(item(eyebrow: "passed Oct 2", state: .passed).dateEyebrow, "Oct 2")
         XCTAssertEqual(item(eyebrow: "Failed · Oct 3", state: .failed).dateEyebrow, "Oct 3")
-        // The on-device brief writes "Vetoed" for a vetoed bill (project decision 2026-11-19); its stamp says VETOED.
-        XCTAssertEqual(item(eyebrow: "Vetoed Jan 8", state: .failed).dateEyebrow, "Jan 8")
+        // The server keeps a vetoed bill's status word (project decision 2026-11-19); its stamp says VETOED.
+        XCTAssertEqual(item(eyebrow: "Failed Jan 8", state: .failed).dateEyebrow, "Jan 8")
         XCTAssertEqual(item(eyebrow: "Oct 14").dateEyebrow, "Oct 14", "an eyebrow that is already a date stays")
         XCTAssertNil(item(eyebrow: "Updated").dateEyebrow, "a status word alone leaves nothing")
         XCTAssertNil(item(eyebrow: nil).dateEyebrow)
