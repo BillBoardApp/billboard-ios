@@ -142,6 +142,12 @@ final class NotificationSettingsStore: ObservableObject {
     /// Mirrors the settings locally so foreground pushes respect both the master switch
     /// and the per-type toggles (see `PushPresentationSettings`).
     private func persistLocalSettings(_ settings: DeviceNotificationSettings) {
+        Self.saveLocally(settings, defaults: defaults)
+    }
+
+    /// Saves the switches on this device as `savedSettings(defaults:)` reads them back: the master switch under its
+    /// own key, and the types' snapshot.
+    static func saveLocally(_ settings: DeviceNotificationSettings, defaults: UserDefaults) {
         defaults.set(settings.notificationsEnabled, forKey: AppNotificationStorage.notificationsEnabledKey)
         PushPresentationSettings.save(settings, defaults: defaults)
     }
