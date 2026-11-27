@@ -178,6 +178,110 @@ final class CongressMemberCivicProfileTests: XCTestCase {
         XCTAssertNil(CivicProfileCopy.themeLock(missing), "no themesReady, no line")
     }
 
+    // MARK: - UX-40 L4: each theme's count under its bar
+
+    /// billboard-backend contracts/fixtures/openapi/UserCivicProfile.valid.json, inlined: a profile held by its themes
+    /// that sends `themeVotes`, all six themes, the two with 8 votes being the two in `axes`.
+    private static let userProfileFixture = """
+    {
+      "axes": {
+        "individualVsCommunity": 0.75,
+        "localVsFederal": 0.375
+      },
+      "votesUsed": 25,
+      "totalVotesWithProfile": 25,
+      "minVotesRequired": 26,
+      "isReady": false,
+      "lockedBy": "themes",
+      "themesReady": 2,
+      "minThemesRequired": 3,
+      "minThemeVotes": 8,
+      "themeVotes": {
+        "individualVsCommunity": 8,
+        "localVsFederal": 8,
+        "freeMarketVsRegulated": 7,
+        "traditionalVsProgressive": 5,
+        "interventionistVsRestrained": 3,
+        "privacyVsSecurity": 2
+      }
+    }
+    """
+
+    /// The contract's sample decodes with its six counts, and your profile reads its count from them.
+    @MainActor
+    func testThemeVotesDecodeFromTheContractSample() throws {
+        let decoded = try userProfile(Self.userProfileFixture)
+        XCTAssertEqual(decoded.themeVotes, [
+            "individualVsCommunity": 8,
+            "localVsFederal": 8,
+            "freeMarketVsRegulated": 7,
+            "traditionalVsProgressive": 5,
+            "interventionistVsRestrained": 3,
+            "privacyVsSecurity": 2
+        ])
+        XCTAssertFalse(decoded.isMemberProfile, "GET /civic-profile is yours")
+        XCTAssertEqual(CivicProfileAxis.allCases.map { decoded.themeCount(for: $0) }, [8, 8, 7, 5, 3, 2])
+        XCTAssertTrue(decoded.isLockedByThemes, "the rest of the profile reads as before")
+        XCTAssertEqual(decoded.themesReady, 2)
+        XCTAssertEqual(decoded.minThemeVotes, 8)
+        XCTAssertEqual(decoded.axes.count, 2)
+    }
+
+    /// A server without the field (an older one, or a rollback), a null, a field of the wrong type, a count that is a
+    /// string, a fraction or negative: the profile always decodes, an unreadable count is left out on its own, and a
+    /// field the app cannot read at all is left out whole, so the bars hide the count line.
+    @MainActor
+    func testUnreadableThemeVotesNeverFailTheProfile() throws {
+        let base = #""axes":{"individualVsCommunity":0.6},"votesUsed":30,"totalVotesWithProfile":30,"minVotesRequired":25,"isReady":true,"minThemeVotes":8"#
+
+        let absent = try userProfile("{\(base)}")
+        XCTAssertNil(absent.themeVotes)
+        XCTAssertNil(absent.themeCount(for: .individualVsCommunity))
+        XCTAssertEqual(absent.signalValue(for: .individualVsCommunity), 0.6)
+
+        let null = try userProfile(#"{\#(base),"themeVotes":null}"#)
+        XCTAssertNil(null.themeVotes)
+        XCTAssertTrue(null.isReady)
+
+        for wrongType in [#""twelve""#, "12", "[12, 3]", "true"] {
+            let decoded = try userProfile(#"{\#(base),"themeVotes":\#(wrongType)}"#)
+            XCTAssertNil(decoded.themeVotes, wrongType)
+            XCTAssertEqual(decoded.votesUsed, 30, wrongType)
+        }
+
+        let mixed = try userProfile(
+            #"{\#(base),"themeVotes":{"individualVsCommunity":12,"localVsFederal":"9","freeMarketVsRegulated":-3,"traditionalVsProgressive":null,"interventionistVsRestrained":2.5,"privacyVsSecurity":0}}"#
+        )
+        XCTAssertEqual(mixed.themeVotes, ["individualVsCommunity": 12, "privacyVsSecurity": 0], "only the whole numbers of 0 or more")
+        XCTAssertEqual(mixed.themeCount(for: .individualVsCommunity), 12)
+        XCTAssertNil(mixed.themeCount(for: .localVsFederal), "a string")
+        XCTAssertNil(mixed.themeCount(for: .freeMarketVsRegulated), "a negative count")
+        XCTAssertNil(mixed.themeCount(for: .traditionalVsProgressive), "null")
+        XCTAssertNil(mixed.themeCount(for: .interventionistVsRestrained), "a fraction")
+        XCTAssertEqual(mixed.themeCount(for: .privacyVsSecurity), 0, "zero is a count")
+        XCTAssertEqual(mixed.signalValue(for: .individualVsCommunity), 0.6)
+    }
+
+    /// A member's count comes from the diagnostics (votes and bills), never from `themeVotes`; without diagnostics a
+    /// member has none.
+    @MainActor
+    func testAMembersThemeCountIsItsVotesAndBills() throws {
+        let coverage = #""axisCoverage":{"individualVsCommunity":{"evidenceCount":24,"weightedEvidence":19.5,"isReady":true}}"#
+        let diagnostics = #""diagnostics":{"rollingWindow":100,"evidenceWeights":{"voteYea":1,"voteNay":1,"sponsor":0.5,"cosponsor":0.25},"weightedEvidenceUsed":35.5,"totalWeightedEvidenceWithProfile":52,"minWeightedEvidenceRequired":25,"minAxisWeightedEvidenceRequired":6,"minAxesRequired":3,"axesWithSufficientSignal":6,\#(coverage),"readinessReasons":[],"latestEvidenceAt":null}"#
+        let member = try userProfile(
+            #"{"axes":{"individualVsCommunity":0.7},"votesUsed":33,"totalVotesWithProfile":50,"sponsoredBillsUsed":3,"cosponsoredBillsUsed":4,"minEvidenceRequired":25,"isReady":true,\#(diagnostics),"themeVotes":{"individualVsCommunity":99}}"#
+        )
+        XCTAssertTrue(member.isMemberProfile)
+        XCTAssertEqual(member.themeCount(for: .individualVsCommunity), 24)
+        XCTAssertNil(member.themeCount(for: .localVsFederal), "no coverage for that theme")
+
+        let noDiagnostics = try userProfile(
+            #"{"axes":{"individualVsCommunity":0.7},"votesUsed":33,"totalVotesWithProfile":50,"sponsoredBillsUsed":3,"cosponsoredBillsUsed":4,"isReady":true}"#
+        )
+        XCTAssertTrue(noDiagnostics.isMemberProfile)
+        XCTAssertNil(noDiagnostics.themeCount(for: .individualVsCommunity))
+    }
+
     // MARK: - Member card copy (spec D 2.4.2: themes, votes and bills; no signal or weights)
 
     @MainActor
