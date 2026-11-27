@@ -204,10 +204,9 @@ private struct ThemeBarRow: View {
 
     private var stackedEndWords: some View {
         VStack(spacing: 2) {
-            captionText(axis.lowLabel, color: BillboardColors.secondaryText)
+            captionText(axis.lowLabel, color: BillboardColors.secondaryText, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            captionText(axis.highLabel, color: BillboardColors.secondaryText)
-                .multilineTextAlignment(.trailing)
+            captionText(axis.highLabel, color: BillboardColors.secondaryText, alignment: .trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
@@ -274,11 +273,12 @@ private struct ThemeBarRow: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func captionText(_ text: String, color: Color) -> some View {
+    /// A `caption` line, centred (leading at accessibility sizes) unless `alignment` says otherwise.
+    private func captionText(_ text: String, color: Color, alignment: TextAlignment? = nil) -> some View {
         Text(text)
             .textRole(.caption)
             .foregroundStyle(color)
-            .multilineTextAlignment(dynamicTypeSize.isAccessibilitySize ? .leading : .center)
+            .multilineTextAlignment(alignment ?? (dynamicTypeSize.isAccessibilitySize ? .leading : .center))
             .fixedSize(horizontal: false, vertical: true)
     }
 
