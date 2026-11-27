@@ -449,6 +449,38 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertEqual(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), marks, "the mark as it was")
     }
 
+    /// A reasons update for the vote is still out when the resend's read comes back (the server has not stored it yet, so
+    /// the read keeps the vote not saved): the vote is not sent a second time behind it, and its resend is not used. The
+    /// update, once stored, saves the vote with its Bill row; nothing else is sent.
+    func testAReasonsUpdateStillOutWhenTheReadIsBackSendsNoSecondWrite() async throws {
+        let disk = try makeDisk()
+        let voted = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .notVoted])
+        let updateGate = Gate()
+        votes.holdSetFeedback = updateGate
+        let preferences = FakePreferencesService()
+        let (store, voteStore) = launch(disk, bills: [voted], votes: votes, preferences: preferences)
+        let update = Task { await voteStore.updateReasons(billId: Self.guid, vote: .yea, reasons: [.education]) }
+        for _ in 0..<500 where votes.setFeedbackCalls.isEmpty { await Task.yield() }
+
+        let resend = Task { await store.resendUnsavedVotesOnce() }
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid], "its resend not used")
+        updateGate.open()
+        let sent = await resend.value
+        let stored = await update.value
+
+        XCTAssertEqual(votes.batchRequests, [[Self.guid]], "read first")
+        XCTAssertEqual(sent, [:], "nothing sent behind the update")
+        XCTAssertTrue(stored)
+        XCTAssertEqual(votes.setFeedbackCalls, [.init(billId: Self.guid, feedback: .yea, reasons: ["education"])], "the update only")
+        XCTAssertEqual(voteStore.unsavedVotes, [:], "the update saved the vote")
+        await waitForPuts(preferences, count: 1)
+        await settleBillsCache(scope: disk.scope)
+    }
+
     // MARK: - Sign-out
 
     /// The tabs' launch read, as their `.task` holds it, when sign-out ends it while the request is out: the purge, then

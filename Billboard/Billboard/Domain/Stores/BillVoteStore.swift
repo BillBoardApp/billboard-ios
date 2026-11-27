@@ -834,6 +834,11 @@ extension BillVoteStore {
         return nil
     }
 
+    /// True while a write for `billId` (a vote, or a reasons update) is queued or out (`writeChains`).
+    func hasWriteOut(on billId: String) -> Bool {
+        BillsStore.trimmedOrNil(billId).map { writeChains[$0] != nil } ?? false
+    }
+
     /// The votes not saved yet that have not had their one automatic resend (project decision 2026-11-23), with the
     /// reasons they were sent with, by guid.
     func votesAwaitingAutomaticResend() -> [(guid: String, vote: VoteType, reasons: [VoteReason])] {
