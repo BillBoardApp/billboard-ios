@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-/// SwiftUI-friendly store for the user's Civic Profile (radar chart data).
+/// SwiftUI-friendly store for the user's Civic Profile (the theme bars' data).
 ///
 /// Views observe `profile`, `isLoading`, and `phase` (UX-39 N11: `profile` is `.empty`, a locked profile
 /// with no votes, until the first read ends, so Profile shows a loading line, not "Vote on 25 more

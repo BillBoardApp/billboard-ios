@@ -1,7 +1,7 @@
 import Foundation
 
-/// Axes for the civic profile radar chart.
-/// Each axis is a spectrum between two ideological positions.
+/// The six themes of the Civic Profile chart.
+/// Each is a spectrum between two positions, its low end (a score of 1) and its high end (10).
 enum CivicProfileAxis: String, CaseIterable, Codable, Hashable {
     case individualVsCommunity
     case localVsFederal
@@ -120,6 +120,11 @@ struct CivicProfileResponse: Codable, Equatable {
     let minThemesRequired: Int?
     /// UX-32: votes on bills scored on a theme before the theme gets a score (8).
     let minThemeVotes: Int?
+    /// UX-40 L4, additive (GET /civic-profile only; the contract's `UserCivicProfileThemeVotes`): your Yea and Nay
+    /// votes on bills scored on each theme, in the same window as `votesUsed`, zeros included. A bill scored on two
+    /// themes counts for each, so the counts can add up to more than `votesUsed`. Nil from a server without it, for a
+    /// member, and in `.empty`: the bars then hide the count line. Only whole numbers of 0 or more are kept.
+    let themeVotes: [String: Int]?
 
     private enum CodingKeys: String, CodingKey {
         case axes
@@ -138,6 +143,7 @@ struct CivicProfileResponse: Codable, Equatable {
         case themesReady
         case minThemesRequired
         case minThemeVotes
+        case themeVotes
     }
 
     init(
@@ -156,7 +162,8 @@ struct CivicProfileResponse: Codable, Equatable {
         lockedBy: String? = nil,
         themesReady: Int? = nil,
         minThemesRequired: Int? = nil,
-        minThemeVotes: Int? = nil
+        minThemeVotes: Int? = nil,
+        themeVotes: [String: Int]? = nil
     ) {
         self.axes = axes
         self.votesUsed = votesUsed
@@ -174,6 +181,7 @@ struct CivicProfileResponse: Codable, Equatable {
         self.themesReady = themesReady
         self.minThemesRequired = minThemesRequired
         self.minThemeVotes = minThemeVotes
+        self.themeVotes = themeVotes
     }
 
     static let empty = CivicProfileResponse(
@@ -220,6 +228,21 @@ struct CivicProfileResponse: Codable, Equatable {
         themesReady = try? container.decodeIfPresent(Int.self, forKey: .themesReady)
         minThemesRequired = try? container.decodeIfPresent(Int.self, forKey: .minThemesRequired)
         minThemeVotes = try? container.decodeIfPresent(Int.self, forKey: .minThemeVotes)
+        // UX-40 L4: the counts only add a line under each bar, so what the app cannot read is left out, like UX-32's
+        // fields: a count that is not a whole number of 0 or more drops that theme's count, and a field that is not
+        // an object (or null) drops the map. Neither fails the profile.
+        themeVotes = (try? container.decodeIfPresent([String: ThemeVoteCount].self, forKey: .themeVotes))?
+            .map { counts in counts.compactMapValues(\.value) }
+    }
+
+    /// One theme's count in `themeVotes` as sent: nil for anything but a whole number of 0 or more.
+    private struct ThemeVoteCount: Decodable {
+        let value: Int?
+
+        init(from decoder: Decoder) throws {
+            let count = try? decoder.singleValueContainer().decode(Int.self)
+            value = count.flatMap { $0 >= 0 ? $0 : nil }
+        }
     }
 
     /// UX-32: the server says the profile is held by its themes, not its votes. Any other `lockedBy`, or none, is
@@ -302,5 +325,20 @@ struct CivicProfileResponse: Codable, Equatable {
 
     func coverage(for axis: CivicProfileAxis) -> CivicProfileAxisCoverage? {
         diagnostics?.axisCoverage[axis.rawValue]
+    }
+
+    /// UX-40 L4: a member's profile (GET /congress-member-civic-profile, counted in votes and bills), not yours
+    /// (GET /civic-profile, counted in votes). Only a member's carries the diagnostics or the sponsored bills.
+    var isMemberProfile: Bool {
+        diagnostics != nil || sponsoredBillsUsed != nil
+    }
+
+    /// UX-40 L4: the count under a theme's bar, a member's votes and bills on it (`axisCoverage[theme].evidenceCount`)
+    /// or your votes on it (`themeVotes`); nil when the server sent none, and the bar then has no count line.
+    func themeCount(for axis: CivicProfileAxis) -> Int? {
+        if isMemberProfile {
+            return coverage(for: axis)?.evidenceCount
+        }
+        return themeVotes?[axis.rawValue]
     }
 }

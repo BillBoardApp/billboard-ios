@@ -7,16 +7,16 @@ enum CongressMemberCivicProfileCardMode: Equatable {
     case unavailable
 }
 
-/// The member page's Civic Profile section (Civic Record spec 3.27, 4.59): a ruled document section
-/// with the title and the ink info button, then the member's chart in ink and the AI note (UX-37). "Compare to you" adds your
-/// chart as a dashed line, a legend by line style and the scores by theme; "Details" shows the data
-/// behind the chart. A member without enough votes and bills shows the locked state with a square-ended
+/// The member page's Civic Profile section (Civic Record spec 3.27, 4.59): a ruled document section with the title
+/// and the ink info button, then the member's six theme bars in ink and the AI note (UX-37). "Compare to you" draws
+/// your bars dashed beside the member's solid ones, a legend by line style and the scores by theme; "Details" shows
+/// the data behind the chart. A member without enough votes and bills shows the locked state with a square-ended
 /// progress bar. No pie or lock symbols, no glow border, no hues.
 struct CongressMemberCivicProfileCard: View {
     @EnvironmentObject private var civicProfileStore: CivicProfileStore
 
     let mode: CongressMemberCivicProfileCardMode
-    /// The member's name, for the legend ("Tim Kaine" beside the solid line).
+    /// The member's name, for the legend ("Tim Kaine" beside the solid bar).
     var memberName: String = "Member"
 
     @State private var isShowingInfo = false
@@ -27,11 +27,11 @@ struct CongressMemberCivicProfileCard: View {
 
     static let title = "Civic Profile"
 
-    /// The member as the solid line and you as the dashed one (spec 3.27).
-    static func comparisonDatasets(member: CivicProfileResponse, user: CivicProfileResponse, memberName: String) -> [RadarChartDataset] {
+    /// The member as the solid bars and you as the dashed ones (spec 3.27).
+    static func comparisonDatasets(member: CivicProfileResponse, user: CivicProfileResponse, memberName: String) -> [ThemeChartDataset] {
         [
-            RadarChartDataset(profile: member, label: memberName, style: .solid),
-            RadarChartDataset(profile: user, label: "You", style: .dashed)
+            ThemeChartDataset(profile: member, label: memberName, style: .solid),
+            ThemeChartDataset(profile: user, label: "You", style: .dashed)
         ]
     }
 
@@ -125,7 +125,7 @@ struct CongressMemberCivicProfileCard: View {
             if isShowingComparison, case .ready(let userProfile) = comparisonState {
                 CongressMemberCivicProfileComparison(memberProfile: profile, userProfile: userProfile, memberName: memberName)
             } else {
-                RadarChartView(profile: profile, scoreSubjectLabel: "Member")
+                ThemeBarsView(profile: profile, scoreSubjectLabel: "Member")
                     .frame(maxWidth: 430)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
@@ -238,9 +238,9 @@ struct CongressMemberCivicProfileCard: View {
     }
 }
 
-/// Compare to you on the member page (spec 3.27): the member solid and you dashed on one chart, the legend by line
-/// style, what your chart is based on ("Your chart is based on 47 bill votes.", or "Your chart is based on your last
-/// 100 bill votes." when your count is capped, as Profile says) and the scores by theme.
+/// Compare to you on the member page (spec 3.27): the member's bars solid and yours dashed on one chart, the legend
+/// by line style, what your chart is based on ("Your chart is based on 47 bill votes.", or "Your chart is based on
+/// your last 100 bill votes." when your count is capped, as Profile says) and the scores by theme.
 struct CongressMemberCivicProfileComparison: View {
     let memberProfile: CivicProfileResponse
     let userProfile: CivicProfileResponse
@@ -249,11 +249,11 @@ struct CongressMemberCivicProfileComparison: View {
     var body: some View {
         let datasets = CongressMemberCivicProfileCard.comparisonDatasets(member: memberProfile, user: userProfile, memberName: memberName)
         VStack(alignment: .leading, spacing: BillboardStyle.Space.m) {
-            RadarChartView(datasets: datasets)
+            ThemeBarsView(datasets: datasets)
                 .frame(maxWidth: 430)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            RadarLegend(datasets: datasets)
+            ThemeBarsLegend(datasets: datasets)
 
             Text(CongressMemberCivicProfileCopy.yourChartBasis(userProfile))
                 .textRole(.caption)
@@ -269,8 +269,8 @@ struct CongressMemberCivicProfileComparison: View {
 }
 
 /// Hides a view from VoiceOver while `isHidden` and adds nothing otherwise. `.accessibilityHidden(false)`
-/// is not neutral: it shows again what a view inside hid, so the radar's plot became an empty VoiceOver
-/// stop between the theme labels.
+/// is not neutral: it shows again what a view inside hid, so a chart's hidden drawing became an empty
+/// VoiceOver stop between the themes.
 private struct AccessibilityHiddenWhile: ViewModifier {
     let isHidden: Bool
 
@@ -342,10 +342,11 @@ struct CivicProfileProgressBar: View {
     }
 }
 
-/// The chart's legend when two profiles are drawn (spec 3.27): a 16 pt sample of each line style and
-/// its name in `caption` `ink2`, centred.
-struct RadarLegend: View {
-    let datasets: [RadarChartDataset]
+/// The chart's legend in Compare to you (spec 3.27): a 16 pt sample of each profile's bar, solid or dashed as the
+/// bars draw it, and its name in `caption` `ink2`, centred. VoiceOver reads "Jordan Ellis, solid bar" and "You,
+/// dashed bar".
+struct ThemeBarsLegend: View {
+    let datasets: [ThemeChartDataset]
 
     static let sampleWidth: CGFloat = 16
 
@@ -353,38 +354,27 @@ struct RadarLegend: View {
         HStack(spacing: 18) {
             ForEach(Array(datasets.enumerated()), id: \.offset) { _, dataset in
                 HStack(spacing: 6) {
-                    LineSample(style: dataset.style)
-                        .frame(width: Self.sampleWidth, height: 2)
+                    BarSample(style: dataset.style)
+                        .frame(width: Self.sampleWidth, height: ThemeBarTrack.thinBarHeight)
                     Text(dataset.label)
                         .textRole(.caption)
                         .foregroundStyle(BillboardColors.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(dataset.style == .solid ? "\(dataset.label), solid line" : "\(dataset.label), dashed line")
+                .accessibilityLabel(ThemeBarsCopy.spokenLegendSample(dataset))
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    private struct LineSample: View {
-        let style: RadarChartDataset.Style
+    /// A bar in a style, as `ThemeBarTrack` draws it in Compare to you.
+    private struct BarSample: View {
+        let style: ThemeChartDataset.Style
 
         var body: some View {
             Canvas { context, size in
-                var line = Path()
-                line.move(to: CGPoint(x: 0, y: size.height / 2))
-                line.addLine(to: CGPoint(x: size.width, y: size.height / 2))
-                switch style {
-                case .solid:
-                    context.stroke(line, with: .color(BillboardColors.primaryText), lineWidth: RadarPlot.solidLineWidth)
-                case .dashed:
-                    context.stroke(
-                        line,
-                        with: .color(BillboardColors.secondaryText),
-                        style: StrokeStyle(lineWidth: RadarPlot.dashedLineWidth, dash: RadarPlot.dash)
-                    )
-                }
+                ThemeBarTrack.drawBar(CGRect(origin: .zero, size: size), style: style, in: context)
             }
         }
     }
@@ -685,7 +675,7 @@ enum CongressMemberCivicProfileCopy {
                     "freeMarketVsRegulated": 0.6,
                     "traditionalVsProgressive": 0.5,
                     "interventionistVsRestrained": 0.3,
-                    "privacyVsSecurity": 0.8,
+                    "privacyVsSecurity": 0.8
                 ],
                 votesUsed: 33,
                 totalVotesWithProfile: 50,

@@ -22,10 +22,11 @@ struct CivicProfileInfoButton: View {
     }
 }
 
-/// The chart explanation (spec D 2.4.2: "theme" and "data", never "axis" or "signal").
+/// The chart explanation (spec D 2.4.2: "theme" and "data", never "axis" or "signal"). The body explains the six
+/// theme bars (UX-40 L4, approved copy D31).
 enum CivicProfileInfoCopy {
     static let title = "How to read this chart"
-    static let body = "Each spoke is one theme, scored from 1 to 10. A point farther from the center means a higher score on that theme, and the label at the end of each spoke shows the exact score. Themes without enough data are marked Not enough data."
+    static let body = "Each bar is one theme, scored from 1 to 10. The line down the middle is halfway: a bar to the right is a score above halfway, toward the word on the right, and a bar to the left is a score below halfway, toward the word on the left. Under each bar is how many votes (and, for a member, bills) its score is based on. Themes without enough data are marked Not enough data."
     /// Under both theme charts, yours on Profile and a member's (UX-37, feature review N3): each bill's theme
     /// scores were set by the AI summarizer, and the chart puts ideology-like labels on named members.
     static let aiNote = "Theme scores come from AI ratings of each bill."

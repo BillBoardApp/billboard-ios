@@ -409,14 +409,15 @@ final class CivicStoresTests: XCTestCase {
 
     // MARK: - Civic profile chart and copy (spec D 2.4.2)
 
-    /// Civic Record spec 3.27: the chart is ink only, so two profiles are told apart by line style, the
-    /// member solid and you dashed, never by hue.
+    /// Civic Record spec 3.27: the theme bars are ink only, so two profiles are told apart by line style, the
+    /// member's bars solid and yours dashed, never by hue; the legend says which is which.
     @MainActor
-    func testRadarTellsTwoProfilesApartByLineStyle() {
+    func testThemeBarsTellTwoProfilesApartByLineStyle() {
         let datasets = CongressMemberCivicProfileCard.comparisonDatasets(member: .empty, user: .empty, memberName: "Tim Kaine")
         XCTAssertEqual(datasets.map(\.label), ["Tim Kaine", "You"])
         XCTAssertEqual(datasets.map(\.style), [.solid, .dashed])
-        XCTAssertEqual(RadarChartDataset(profile: .empty, label: "You").style, .solid, "one profile is the solid line")
+        XCTAssertEqual(ThemeChartDataset(profile: .empty, label: "You").style, .solid, "one profile is the solid bar")
+        XCTAssertEqual(datasets.map(ThemeBarsCopy.spokenLegendSample), ["Tim Kaine, solid bar", "You, dashed bar"])
     }
 
     /// UX-40 L4a (feature review, accepted 2026-10-28): the fourth theme is named by the rubric's own meaning,
@@ -439,10 +440,14 @@ final class CivicStoresTests: XCTestCase {
     }
 
     @MainActor
-    func testRadarScoreLineSaysNotEnoughDataInsteadOfSignal() {
-        XCTAssertEqual(RadarChartView.scoreText(subjectLabel: "You", score: 7), "You: 7/10")
-        XCTAssertEqual(RadarChartView.scoreText(subjectLabel: "Member", score: nil), "Not enough data")
-        XCTAssertEqual(RadarChartView.notEnoughDataText, "Not enough data")
+    func testThemeBarScoreSaysNotEnoughDataInsteadOfSignal() {
+        XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "You", score: 7), "You: 7/10")
+        XCTAssertEqual(ThemeBarsCopy.notEnoughData, "Not enough data")
+        XCTAssertEqual(ThemeBarsCopy.notEnoughDataLine(shortfall: nil), "Not enough data")
+        XCTAssertEqual(
+            ThemeBarsCopy.spokenScore(.privacyVsSecurity, subjectLabel: "Member", value: nil, score: nil),
+            "Member: not enough data."
+        )
     }
 
     @MainActor
@@ -456,7 +461,7 @@ final class CivicStoresTests: XCTestCase {
             CivicProfileInfoCopy.body
         ]
         for text in copy {
-            for retired in ["axis", "axes", "signal", "dimension", "lean"] {
+            for retired in ["axis", "axes", "signal", "dimension", "lean", "spoke", "spokes"] {
                 XCTAssertNil(
                     text.range(of: "\\b\(retired)\\b", options: [.regularExpression, .caseInsensitive]),
                     "\"\(text)\" uses \(retired)"
@@ -478,7 +483,13 @@ final class CivicStoresTests: XCTestCase {
         XCTAssertEqual(CivicProfileCopy.basedOn(profile(47, of: 47)), "Based on 47 votes")
         XCTAssertEqual(CivicProfileCopy.basedOn(profile(1, of: 1)), "Based on 1 vote")
         XCTAssertEqual(CivicProfileCopy.unlockPrompt(votesRemaining: 1), "Vote on 1 more bill to unlock your Civic Profile")
-        XCTAssertTrue(CivicProfileInfoCopy.body.contains(RadarChartView.notEnoughDataText))
+        // UX-40 L4 (approved copy D31): the info explains the bars, and still says how a theme without a score reads.
+        XCTAssertEqual(
+            CivicProfileInfoCopy.body,
+            "Each bar is one theme, scored from 1 to 10. The line down the middle is halfway: a bar to the right is a score above halfway, toward the word on the right, and a bar to the left is a score below halfway, toward the word on the left. Under each bar is how many votes (and, for a member, bills) its score is based on. Themes without enough data are marked Not enough data."
+        )
+        XCTAssertTrue(CivicProfileInfoCopy.body.contains(ThemeBarsCopy.notEnoughData))
+        XCTAssertEqual(CivicProfileInfoCopy.title, "How to read this chart")
     }
 
     /// Compare to you on a member page says your chart is capped exactly when Profile does (project decision of
