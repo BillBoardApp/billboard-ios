@@ -60,7 +60,7 @@ enum ThemeBarsCopy {
     /// "in the middle" for exactly halfway (0.5). Taken from the value, as the bar is drawn, so a 5 (0.389 up to
     /// 0.5) is toward the left-hand word and a 6 toward the right-hand one.
     static func direction(_ axis: CivicProfileAxis, value: Double) -> String {
-        if abs(value - 0.5) < 0.000_001 { return "in the middle" }
+        if ThemeBarTrack.isHalfway(value) { return "in the middle" }
         return value > 0.5 ? "toward \(axis.highLabel)" : "toward \(axis.lowLabel)"
     }
 
@@ -357,8 +357,9 @@ struct ThemeBarTrack: View {
     static let middleTickWidth: CGFloat = 2
     /// Room at each end for the end ticks' strokes.
     static let endInset: CGFloat = 1
-    /// A bar narrower than this is not drawn (a score at exactly the middle has none).
-    static let minimumBarWidth: CGFloat = 0.5
+    /// A bar is at least this wide, so a score just off halfway still shows on its side, 3 pt past the 2 pt middle
+    /// tick drawn over it; only exactly halfway has no bar.
+    static let minimumBarWidth: CGFloat = 4
     /// The solid bar's fill: `ink` at 8%.
     static let solidFillOpacity = 0.08
     /// The dashed bar's outline: 1.5 pt, 4 on and 3 off.
@@ -382,6 +383,11 @@ struct ThemeBarTrack: View {
         barsHeight(profileCount: profileCount) + 2 * overhang
     }
 
+    /// Exactly halfway (0.5, within rounding): no bar, a displayed 5, and "in the middle" for VoiceOver.
+    static func isHalfway(_ value: Double) -> Bool {
+        abs(value - 0.5) < 0.000_001
+    }
+
     /// Where a value sits between the track's ends, clamped to them.
     static func x(for value: Double, minX: CGFloat, maxX: CGFloat) -> CGFloat {
         minX + CGFloat(min(max(value, 0), 1)) * (maxX - minX)
@@ -395,17 +401,19 @@ struct ThemeBarTrack: View {
     }
 
     /// Each profile's bar in a drawing of `size`, in the order of `marks`: nil for a profile without a score, and
-    /// for a score at exactly the middle, which has no bar. One profile's bar is centred on the track; two profiles'
-    /// thin bars sit either side of it, the first above.
+    /// for a score at exactly the middle, which has no bar. Any other bar is at least `minimumBarWidth` wide on its
+    /// side of the middle. One profile's bar is centred on the track; two profiles' thin bars sit either side of it,
+    /// the first above.
     static func barRects(for marks: [Mark?], in size: CGSize) -> [CGRect?] {
         let minX = endInset
         let maxX = size.width - endInset
         let midY = size.height / 2
         let isCompare = marks.count > 1
         return marks.enumerated().map { index, mark in
-            guard let mark, maxX > minX else { return nil }
+            guard let mark, maxX > minX, !isHalfway(mark.value) else { return nil }
             let edges = barEdges(value: mark.value, minX: minX, maxX: maxX)
-            guard edges.right - edges.left >= minimumBarWidth else { return nil }
+            let width = max(edges.right - edges.left, min(minimumBarWidth, (maxX - minX) / 2))
+            let left = mark.value > 0.5 ? edges.left : edges.right - width
             let height = isCompare ? thinBarHeight : barHeight
             let top: CGFloat
             if isCompare {
@@ -413,7 +421,7 @@ struct ThemeBarTrack: View {
             } else {
                 top = midY - height / 2
             }
-            return CGRect(x: edges.left, y: top, width: edges.right - edges.left, height: height)
+            return CGRect(x: left, y: top, width: width, height: height)
         }
     }
 

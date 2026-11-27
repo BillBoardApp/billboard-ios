@@ -171,6 +171,17 @@ final class ThemeBarsTests: XCTestCase {
         XCTAssertEqual(left.maxX, 101, accuracy: 0.000_1)
 
         XCTAssertEqual(ThemeBarTrack.barRects(for: [ThemeBarTrack.Mark(value: 0.5, style: .solid)], in: size), [nil], "no bar at exactly halfway")
+        XCTAssertEqual(ThemeBarTrack.barRects(for: [ThemeBarTrack.Mark(value: 0.500_000_1, style: .solid)], in: size), [nil], "nor within rounding of it")
+
+        // Just off halfway a bar is still drawn, at least 4 pt wide on its side, so it shows past the 2 pt middle
+        // tick drawn over it, with room for the dashed outline.
+        XCTAssertGreaterThan(ThemeBarTrack.minimumBarWidth, ThemeBarTrack.middleTickWidth / 2 + ThemeBarTrack.dashedLineWidth)
+        let justRight = try XCTUnwrap(ThemeBarTrack.barRects(for: [ThemeBarTrack.Mark(value: 0.504, style: .solid)], in: size).first ?? nil)
+        XCTAssertEqual(justRight.minX, 101, accuracy: 0.000_1, "from the middle")
+        XCTAssertEqual(justRight.width, ThemeBarTrack.minimumBarWidth, accuracy: 0.000_1, "0.8 pt widened to the minimum")
+        let justLeft = try XCTUnwrap(ThemeBarTrack.barRects(for: [ThemeBarTrack.Mark(value: 0.496, style: .solid)], in: size).first ?? nil)
+        XCTAssertEqual(justLeft.maxX, 101, accuracy: 0.000_1, "to the middle")
+        XCTAssertEqual(justLeft.width, ThemeBarTrack.minimumBarWidth, accuracy: 0.000_1)
         XCTAssertEqual(ThemeBarTrack.barRects(for: [nil], in: size), [nil], "no bar without a score")
         XCTAssertTrue(ThemeBarTrack(marks: [nil]).isEmpty, "a dashed track without a score")
         XCTAssertTrue(ThemeBarTrack(marks: [nil, nil]).isEmpty)
@@ -188,6 +199,14 @@ final class ThemeBarsTests: XCTestCase {
         XCTAssertEqual(yourBar.height, ThemeBarTrack.thinBarHeight)
         XCTAssertEqual(memberBar.maxY + ThemeBarTrack.barGap, yourBar.minY, accuracy: 0.000_1, "the first above the track, the second under it")
         XCTAssertEqual(yourBar.maxX, 101, accuracy: 0.000_1)
+
+        let nearMiddle = ThemeBarTrack.barRects(
+            for: [ThemeBarTrack.Mark(value: 0.75, style: .solid), ThemeBarTrack.Mark(value: 0.504, style: .dashed)],
+            in: compareSize
+        )
+        let yourShortBar = try XCTUnwrap(nearMiddle[1])
+        XCTAssertEqual(yourShortBar.minX, 101, accuracy: 0.000_1, "your 6 just off halfway is to the right")
+        XCTAssertEqual(yourShortBar.width, ThemeBarTrack.minimumBarWidth, accuracy: 0.000_1, "and shows past the tick")
 
         let oneMissing = ThemeBarTrack.barRects(for: [ThemeBarTrack.Mark(value: 0.75, style: .solid), nil], in: compareSize)
         XCTAssertNotNil(oneMissing[0])
@@ -237,6 +256,8 @@ final class ThemeBarsTests: XCTestCase {
         XCTAssertEqual(ThemeBarsCopy.direction(.individualVsCommunity, value: 0.66), "toward Community")
         XCTAssertEqual(ThemeBarsCopy.direction(.individualVsCommunity, value: 0.2), "toward Individual")
         XCTAssertEqual(ThemeBarsCopy.direction(.individualVsCommunity, value: 0.5), "in the middle")
+        XCTAssertEqual(ThemeBarsCopy.direction(.individualVsCommunity, value: 0.500_000_1), "in the middle", "as the bar: none")
+        XCTAssertEqual(ThemeBarsCopy.direction(.individualVsCommunity, value: 0.504), "toward Community", "as the bar: a short one")
 
         for value in [0.389, 0.45, 0.499] {
             let fiveBelow = Self.profile(.interventionistVsRestrained, value)
