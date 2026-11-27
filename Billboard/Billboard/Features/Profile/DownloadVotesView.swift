@@ -44,7 +44,7 @@ enum DownloadVotesCopy {
 /// The files stay when the screen goes. The share sheet reads a file only when the app or extension it goes to asks
 /// for it, which can be after the screen has gone: an extension shown full screen covers the screen, and SwiftUI
 /// reports that as a disappear. They go when the screen next loads, which removes every earlier export first, so the
-/// folder holds one export at most, and at sign-out (`UserLocalDataPurge`).
+/// folder holds one export at most, at sign-out (`UserLocalDataPurge`), and at the next launch.
 @MainActor
 final class DownloadVotesModel: ObservableObject {
     enum Phase: Equatable {
