@@ -32,6 +32,8 @@ struct BillBoardApp: App {
         let manifestCache = BillsManifestCache()
         BillsStore.earlierManifestCacheFoundAtLaunch = manifestCache.holdsEarlierCache()
         manifestCache.discardEarlierCachesInBackground()
+        // Download my votes keeps its last export for a share sheet that reads it late; none can be reading one now.
+        VoteExportFolder.standard.removeAll()
 
         startupFailed = !StartupConfiguration.attempt { try AmplifyService.configureIfNeeded() }
         Self.configureUIKitAppearance()

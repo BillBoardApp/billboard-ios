@@ -780,6 +780,41 @@ extension WeeklyBriefWeekTests {
         XCTAssertNotNil(defaults.data(forKey: digestKey), "a new sign-in saves its brief")
     }
 
+    /// A sign-out that cannot find the account (`UserLocalDataPurge.purge(userId: nil)`) clears every account's saved
+    /// brief, and a read still out then saves nothing when it answers, so no brief of the signed-out account stays on
+    /// the device. The next sign-in saves its brief as usual.
+    func testASignOutThatDoesNotKnowTheAccountClearsEveryBriefAndALateReadSavesNothing() async throws {
+        let window = WeeklyDigestStore.latestPublishedWindow(relativeTo: Self.now)
+        let service = FakeWeeklyDigestService(digest: brief(id: serverID(for: window), window: window))
+        let (store, defaults, scope) = try makeStore(service: service)
+        let other = "weekly-brief-week-other-\(UUID().uuidString)"
+        await relaunch(other, defaults, service).refresh(profile: profile)
+        // App 1.2's Weekly Brief switch, for that other account.
+        defaults.set(Data("{}".utf8), forKey: "BillBoard.weeklyDigest.v1.settings.\(other)")
+        let briefKeys = { defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("BillBoard.weeklyDigest.v1.") }.sorted() }
+        XCTAssertEqual(
+            briefKeys(),
+            ["BillBoard.weeklyDigest.v1.digest.\(other)", "BillBoard.weeklyDigest.v1.settings.\(other)"],
+            "precondition: another account's saved brief and switch"
+        )
+        let hold = CancellableGate()
+        service.hold = hold
+
+        let read = Task { await store.refreshOnReturnToApp(profile: profile) }
+        await waitUntil { service.fetchCount == 2 }
+        UserLocalDataPurge.purge(userId: nil, defaults: defaults)
+        hold.open()
+        await read.value
+
+        XCTAssertEqual(briefKeys(), [], "every saved brief goes, and the late read saves none")
+        XCTAssertNil(store.digest)
+
+        service.hold = nil
+        let next = relaunch(scope, defaults, service)
+        await next.refresh(profile: profile)
+        XCTAssertNotNil(defaults.data(forKey: "BillBoard.weeklyDigest.v1.digest.\(scope)"), "a new sign-in saves its brief")
+    }
+
     /// Lets other tasks run until `condition` holds (at most 1,000 turns).
     private func waitUntil(_ condition: () -> Bool) async {
         var turns = 0

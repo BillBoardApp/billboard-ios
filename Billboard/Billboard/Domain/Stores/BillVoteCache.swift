@@ -66,6 +66,25 @@ final class BillVoteCache {
     /// persisted. `BillVoteStore.recheckEarlierAbstains()` reads them from the server.
     private(set) var droppedAbstainIds: [String] = []
 
+    /// How many times each saved cache was cleared in this run of the app (`clearPersistence`, at sign-out and account
+    /// deletion), and how many times every account's was (`clearAllUnsavedVotes`, a sign-out that does not know the
+    /// account); and both counts for this cache when it was made.
+    private static var clearCounts: [String: Int] = [:]
+    private static var clearAllCount = 0
+    private let clearCountAtInit: Int
+    private let clearAllCountAtInit: Int
+
+    /// False once this cache's account has signed out or been deleted since the cache was made: the cache then saves
+    /// nothing more, so a read or a write that ends after sign-out leaves none of that account's rows or votes not saved
+    /// yet on the device (APPF-30 step 2). The next sign-in makes a new cache, which saves as usual.
+    var isAccountStillHere: Bool {
+        Self.clearAllCount == clearAllCountAtInit && Self.clearCount(of: config.persistenceKey) == clearCountAtInit
+    }
+
+    private static func clearCount(of persistenceKey: String?) -> Int {
+        persistenceKey.map { clearCounts[$0, default: 0] } ?? 0
+    }
+
     init(scope: String? = nil, config: Config = .init(), defaults: UserDefaults = .standard) {
         var resolvedConfig = config
         if config.persistenceKey == Config.legacyPersistenceKey {
@@ -74,6 +93,8 @@ final class BillVoteCache {
 
         self.config = resolvedConfig
         self.defaults = defaults
+        self.clearCountAtInit = Self.clearCount(of: resolvedConfig.persistenceKey)
+        self.clearAllCountAtInit = Self.clearAllCount
         if let key = resolvedConfig.persistenceKey {
             #if DEBUG
             // Keep unit tests isolated from the persisted local state of the app they run in. A defaults
@@ -217,12 +238,12 @@ final class BillVoteCache {
     }
 
     private func persistIfNeeded() {
-        guard let key = config.persistenceKey else { return }
+        guard let key = config.persistenceKey, isAccountStillHere else { return }
         Self.save(entries, to: key, defaults: defaults)
     }
 
     private func persistUnsavedVotesIfNeeded() {
-        guard let key = config.persistenceKey else { return }
+        guard let key = config.persistenceKey, isAccountStillHere else { return }
         let marksKey = Self.unsavedVotesKey(for: key)
         guard !unsavedVotes.isEmpty else {
             defaults.removeObject(forKey: marksKey)
@@ -263,9 +284,11 @@ final class BillVoteCache {
         "\(persistenceKey).unconfirmed"
     }
 
-    /// Sign-out and account deletion: the rows and the votes not saved yet go, so no mark reaches another account.
+    /// Sign-out and account deletion: the rows and the votes not saved yet go, so no mark reaches another account. A
+    /// cache made before this saves nothing more (`isAccountStillHere`).
     static func clearPersistence(scope: String?, defaults: UserDefaults = .standard) {
         let key = persistenceKey(scope: scope)
+        clearCounts[key, default: 0] += 1
         defaults.removeObject(forKey: key)
         defaults.removeObject(forKey: earlierAbstainsDroppedKey(for: key))
         defaults.removeObject(forKey: unsavedVotesKey(for: key))
@@ -279,8 +302,10 @@ final class BillVoteCache {
         defaults.removeObject(forKey: unsavedVotesKey(for: Config.legacyPersistenceKey))
     }
 
-    /// A sign-out that does not know the account: every account's votes not saved yet go (APPF-30 step 2).
+    /// A sign-out that does not know the account: every account's votes not saved yet go (APPF-30 step 2), and no cache
+    /// made before this saves anything more (`isAccountStillHere`).
     static func clearAllUnsavedVotes(defaults: UserDefaults = .standard) {
+        clearAllCount += 1
         let prefix = Config.legacyPersistenceKey
         let suffix = unsavedVotesKey(for: "")
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) && key.hasSuffix(suffix) {

@@ -96,8 +96,9 @@ final class BillVoteStore: ObservableObject {
     /// the new row, so the two stores do not split.
     var onUnsavedVoteReplaced: (@MainActor (_ guid: String, _ vote: VoteType) -> Void)?
 
-    /// The read of the votes not saved yet that is running (`startUnsavedVoteRecheck()`), which a second caller joins.
-    private var unsavedRecheck: Task<Set<String>?, Never>?
+    /// The read of the votes not saved yet that is running (`startUnsavedVoteRecheck()`), which a second caller joins
+    /// unless it was cancelled.
+    private var unsavedRecheck: (token: UUID, read: Task<Set<String>?, Never>)?
 
     /// Weak references for post-vote refresh.
     private weak var civicScoreStore: CivicScoreStore?
@@ -296,66 +297,6 @@ final class BillVoteStore: ObservableObject {
         }
     }
 
-    /// APPF-30 step 2, at launch and when the app comes back: reads the rows of the votes not saved yet
-    /// (`unsavedVotes`) again, in one request. A row with the same vote confirms it, a vote cast later on another
-    /// device replaces it, and the vote it replaced, or no row, leaves it not saved (`applyRemote`). Failures stay
-    /// quiet. A read already running is joined, not repeated. Returns false when the read failed (true with nothing to
-    /// read).
-    @discardableResult
-    func recheckUnsavedVotes() async -> Bool {
-        await startUnsavedVoteRecheck().value != nil
-    }
-
-    /// The read of `recheckUnsavedVotes()`: started now, or the one already running, which the caller joins. It ends
-    /// with the bills whose rows it read and judged (`applyRemote`), or nil when it failed. The bills store sends on
-    /// its own only votes in that set: a vote whose write failed after a joined read began was not in that read, and
-    /// waits for the next one.
-    ///
-    /// While the request is out the read holds the service, not this store, so a store that sign-out ended is not
-    /// kept alive by it and nothing is written for that account when the answer comes.
-    func startUnsavedVoteRecheck() -> Task<Set<String>?, Never> {
-        if let running = unsavedRecheck { return running }
-        let ids = unsavedVotes.keys.sorted()
-        guard !ids.isEmpty else { return Task { Set<String>() } }
-        let writes = voteWriteTokens(ids)
-        let service = service
-        let read = Task { [weak self] () -> Set<String>? in
-            var remote: [String: BillVotesService.RemoteVoteState]?
-            do {
-                remote = try await service.fetchFeedback(billIds: ids)
-            } catch {
-                #if DEBUG
-                if !APIErrorResponse.isCancellation(error) {
-                    print(">>> [BillVoteStore] recheckUnsavedVotes failed: \(APIErrorDebug.debugString(for: error))")
-                }
-                #endif
-            }
-            guard let self else { return nil }
-            self.unsavedRecheck = nil
-            guard let remote else { return nil }
-            return self.applyRemote(remote, to: ids, unlessWrittenSince: writes).checked
-        }
-        unsavedRecheck = read
-        return read
-    }
-
-    /// The votes not saved yet that have not had their one automatic resend (project decision 2026-11-23), with the
-    /// reasons they were sent with, by guid.
-    func votesAwaitingAutomaticResend() -> [(guid: String, vote: VoteType, reasons: [VoteReason])] {
-        unsavedVotes.keys.sorted().compactMap { guid in
-            guard let unsaved = cache.unsavedVote(for: guid), !unsaved.autoResent else { return nil }
-            return (guid, unsaved.vote, unsaved.reasons.compactMap(VoteReason.init(rawValue:)))
-        }
-    }
-
-    /// Uses up the one automatic resend of the vote not saved yet on `billId`, before it is sent: it is not sent on
-    /// its own again, also after a relaunch, whatever that send ends with. A new vote on the bill gets its own.
-    func spendAutomaticResend(for billId: String) {
-        guard var unsaved = cache.unsavedVote(for: billId), !unsaved.autoResent else { return }
-        unsaved.autoResent = true
-        cache.setUnsavedVote(unsaved, for: billId)
-    }
-
     /// INT-11, once on the first launch of 1.2: reads the server's rows for the Abstains the cache dropped
     /// (`BillVoteCache.droppedAbstainIds`), in one request. 1.1 stored every Updates Dismiss as an Abstain,
     /// and the server leaves those out of what 1.2 reads, so a dismissal stays not voted with Results locked
@@ -395,12 +336,16 @@ final class BillVoteStore: ObservableObject {
     /// server's row is stored and the mark goes, as the vote did not reach the server. Another vote cast after it was
     /// sent is a later choice (another device) and replaces it (`onUnsavedVoteReplaced`); one cast before it is treated
     /// as the vote replaced.
+    ///
+    /// An answer that comes after this store's account signed out (`BillVoteCache.isAccountStillHere`) is not taken:
+    /// nothing is stored or judged, and neither hook runs, so nothing is written or sent for that account.
     @discardableResult
     private func applyRemote(
         _ remote: [String: BillVotesService.RemoteVoteState],
         to ids: [String],
         unlessWrittenSince writes: [String: UUID]
     ) -> (stored: [String: VoteState], checked: Set<String>) {
+        guard cache.isAccountStillHere else { return ([:], []) }
         let now = Date()
         var stored: [String: VoteState] = [:]
         var checked: Set<String> = []
@@ -817,5 +762,97 @@ final class BillVoteStore: ObservableObject {
     private static func normalizeState(_ state: VoteState) -> VoteState {
         guard case .voted(let voteType) = state else { return state }
         return voteType.countsAsVote ? state : .notVoted
+    }
+}
+
+// MARK: - Votes not saved yet, read again and sent once more (APPF-30 step 2)
+
+extension BillVoteStore {
+    /// APPF-30 step 2, at launch and when the app comes back: reads the rows of the votes not saved yet
+    /// (`unsavedVotes`) again, in one request. A row with the same vote confirms it, a vote cast later on another
+    /// device replaces it, and the vote it replaced, or no row, leaves it not saved (`applyRemote`). Failures stay
+    /// quiet. A read already running is joined, not repeated. Returns false when the read failed, its answer was not
+    /// taken (sign-out came first) or the caller was cancelled (`answer(to:)`), true with nothing to read.
+    @discardableResult
+    func recheckUnsavedVotes() async -> Bool {
+        await Self.answer(to: startUnsavedVoteRecheck()) != nil
+    }
+
+    /// The read of `recheckUnsavedVotes()`: started now, or the one already running, which the caller joins (one that
+    /// was cancelled is not joined). It ends with the bills whose rows it read and judged (`applyRemote`), or nil when it
+    /// failed, was cancelled, or its account signed out first. The bills store sends on its own only votes in that set:
+    /// a vote whose write failed after a joined read began was not in that read, and waits for the next one.
+    ///
+    /// The read holds the service, and this store only weakly, so while the request is out it keeps no store alive; a
+    /// caller that awaits it through `answer(to:)` holds only the read. When the answer comes, a read that was cancelled,
+    /// or whose account signed out meanwhile (`BillVoteCache.isAccountStillHere`), writes nothing.
+    func startUnsavedVoteRecheck() -> Task<Set<String>?, Never> {
+        if let running = unsavedRecheck, !running.read.isCancelled { return running.read }
+        guard cache.isAccountStillHere else { return Task { nil } }
+        let ids = unsavedVotes.keys.sorted()
+        guard !ids.isEmpty else { return Task { Set<String>() } }
+        let writes = voteWriteTokens(ids)
+        let service = service
+        let token = UUID()
+        let read = Task { [weak self] () -> Set<String>? in
+            var remote: [String: BillVotesService.RemoteVoteState]?
+            do {
+                remote = try await service.fetchFeedback(billIds: ids)
+            } catch {
+                #if DEBUG
+                if !APIErrorResponse.isCancellation(error) {
+                    print(">>> [BillVoteStore] recheckUnsavedVotes failed: \(APIErrorDebug.debugString(for: error))")
+                }
+                #endif
+            }
+            guard let self else { return nil }
+            if self.unsavedRecheck?.token == token {
+                self.unsavedRecheck = nil
+            }
+            guard let remote, !Task.isCancelled, self.cache.isAccountStillHere else { return nil }
+            return self.applyRemote(remote, to: ids, unlessWrittenSince: writes).checked
+        }
+        unsavedRecheck = (token, read)
+        return read
+    }
+
+    /// The answer of `read` (`startUnsavedVoteRecheck()`), awaited without holding the store: nil when the read failed,
+    /// or as soon as the caller is cancelled, which cancels the read too, also while its request is still out. Sign-out
+    /// takes the tabs down, which cancels their reads: each ends at once, and its read writes nothing.
+    static func answer(to read: Task<Set<String>?, Never>) async -> Set<String>? {
+        let (answers, answer) = AsyncStream.makeStream(of: Set<String>?.self)
+        answer.onTermination = { ending in
+            if case .cancelled = ending { read.cancel() }
+        }
+        Task {
+            answer.yield(await read.value)
+            answer.finish()
+        }
+        for await checked in answers {
+            return checked
+        }
+        return nil
+    }
+
+    /// True while a write for `billId` (a vote, or a reasons update) is queued or out (`writeChains`).
+    func hasWriteOut(on billId: String) -> Bool {
+        BillsStore.trimmedOrNil(billId).map { writeChains[$0] != nil } ?? false
+    }
+
+    /// The votes not saved yet that have not had their one automatic resend (project decision 2026-11-23), with the
+    /// reasons they were sent with, by guid.
+    func votesAwaitingAutomaticResend() -> [(guid: String, vote: VoteType, reasons: [VoteReason])] {
+        unsavedVotes.keys.sorted().compactMap { guid in
+            guard let unsaved = cache.unsavedVote(for: guid), !unsaved.autoResent else { return nil }
+            return (guid, unsaved.vote, unsaved.reasons.compactMap(VoteReason.init(rawValue:)))
+        }
+    }
+
+    /// Uses up the one automatic resend of the vote not saved yet on `billId`, before it is sent: it is not sent on
+    /// its own again, also after a relaunch, whatever that send ends with. A new vote on the bill gets its own.
+    func spendAutomaticResend(for billId: String) {
+        guard var unsaved = cache.unsavedVote(for: billId), !unsaved.autoResent else { return }
+        unsaved.autoResent = true
+        cache.setUnsavedVote(unsaved, for: billId)
     }
 }
