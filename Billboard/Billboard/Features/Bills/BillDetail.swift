@@ -374,6 +374,11 @@ private struct BillDetailContent: View {
     /// 2), which hides its mark until the result: the strip stays with its Try again disabled, as for Try again here,
     /// and Results offer no Try again, so the vote is not sent twice (`followShownVoteMark()`).
     @State private var isStoreResendingVote = false
+    /// A vote write the page did not cast is out for the shown vote, found when the page opened or when Results came back
+    /// locked (`followVoteWriteOut()`): the vote store's automatic resend (APPF-30 step 2), or a send from an earlier
+    /// visit still going. The store hides the vote's mark meanwhile, so no strip shows; Results offer no Try again, so
+    /// the vote is not sent twice, and they load once it is stored.
+    @State private var isFollowingVoteWrite = false
     /// Counts refusals (and votes not saved): the error haptic.
     @State private var refusals = 0
     /// Counts refusals shown as a row of Your vote (from xxxLarge up), which the page scrolls to.
@@ -684,9 +689,9 @@ private struct BillDetailContent: View {
             awaitingSave: resultsAwaitingSave,
             isChecking: isCheckingVote,
             checkFailed: isVoteCheckFailed,
-            // While the vote store sends the vote on its own, "Results show once your vote is saved." offers no Try
-            // again (APPF-30 step 2).
-            canRetry: retryChoice != nil && !isShownVoteResentByStore
+            // While the vote store sends the vote on its own, or a write the page did not cast is out, "Results show
+            // once your vote is saved." offers no Try again (APPF-30 step 2).
+            canRetry: retryChoice != nil && !isShownVoteResentByStore && !isFollowingVoteWrite
         )
     }
 
@@ -1076,6 +1081,28 @@ private struct BillDetailContent: View {
         }
     }
 
+    /// When the page opens, and when Results come back locked, with no vote cast here: follows a write of the shown vote
+    /// that the page did not cast (`isFollowingVoteWrite`), such as the vote store's automatic resend, whose mark the
+    /// store hides while it is out, so the page shows no strip for it (APPF-30 step 2). Results offer no Try again until
+    /// it ends. Stored, Results load. Any other end leaves the page to the store's mark: a vote still not saved shows its
+    /// strip and both Try agains again, quietly.
+    private func followVoteWriteOut() {
+        guard voteCasts.latest == nil, !isFollowingVoteWrite, !isStoreResendingVote,
+              let write = voteStore.voteWriteOut(onAnyOf: voteErrorGuids) else { return }
+        isFollowingVoteWrite = true
+        Task {
+            let result = await write.value
+            isFollowingVoteWrite = false
+            guard result == .stored, voteCasts.latest == nil else { return }
+            resultsAwaitingSave = false
+            if isOnScreen {
+                refreshStatsAfterVoteSaved()
+            } else {
+                hasPendingStatsRefresh = true
+            }
+        }
+    }
+
     /// The vote shown as not saved yet was saved without a vote cast here (`followShownVoteMark()`): the strip goes, and
     /// Results that were waiting for the save, or failed to load, load now (or when the page is back on screen).
     private func shownVoteSaved() {
@@ -1211,6 +1238,8 @@ private struct BillDetailContent: View {
             billStats = nil
             billStatsError = nil
             resultsAwaitingSave = true
+            // A vote write from elsewhere may be out (the automatic resend): Results wait for it, with no Try again.
+            followVoteWriteOut()
             // The screen then follows the rows the server holds (a vote still being sent is kept).
             await voteStore.refreshVotes(for: voteRowGuids)
         } catch {
@@ -1477,6 +1506,7 @@ private struct BillDetailContent: View {
             }
         }
         .task(id: statsBillGuid) {
+            followVoteWriteOut()
             await loadVoteAndStats()
         }
         .onChange(of: storeMarksShownVote) { wasMarked, isMarked in

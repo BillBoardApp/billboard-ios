@@ -10,13 +10,14 @@ import XCTest
 final class UnsavedVoteResendTests: XCTestCase {
     private nonisolated static let guid = "BILLS-119hr4100"
 
-    private func bill(_ guid: String = UnsavedVoteResendTests.guid) -> Bill {
+    private func bill(_ guid: String = UnsavedVoteResendTests.guid, link: String? = nil) -> Bill {
         Bill(
             id: UUID.deterministic(from: guid),
             title: "Bill \(guid)",
             category: "Other",
             soWhat: "",
             storedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60 * 60)),
+            link: link,
             billStatus: .new,
             guid: guid,
             userVoted: false,
@@ -698,6 +699,130 @@ final class UnsavedVoteResendTests: XCTestCase {
                     staysOffline: staysOffline
                 )
             }
+        }
+    }
+
+    // MARK: - A bill page opened while the resend is out
+
+    /// A bill page opened while the one automatic resend of its vote is out, which hides the vote's mark: the page shows
+    /// no strip, and "Results show once your vote is saved." offers no Try again, which would send the vote a second
+    /// time. Stored, Results load at once. Failed again, the strip and both Try agains come back from the mark. Nothing
+    /// else is sent either way.
+    func testAPageOpenedWhileTheResendIsOutOffersNoTryAgainAndLoadsResultsOnceStored() {
+        for storesIt in [true, false] {
+            let votes = FakeBillVotesService()
+            votes.singleResult = .success(.notVoted)
+            votes.batchResult = .success([Self.guid: .notVoted])
+            votes.setFeedbackError = URLError(.notConnectedToInternet)
+            let (store, voteStore) = pageStores(votes: votes)
+            let first = WriteOutcome()
+            Task { first.result = await store.submitVote(billID: pageBill().id, vote: .yea, watch: nil)?.value }
+            spin(until: { first.result != nil })
+            XCTAssertEqual(first.result, .unconfirmed, "precondition")
+
+            votes.setFeedbackError = nil
+            let resendGate = Gate()
+            votes.holdSetFeedback = resendGate
+            let resend = WriteOutcome()
+            Task { resend.result = (await store.resendUnsavedVotesOnce())[Self.guid] }
+            spin(until: { votes.setFeedbackCalls.count == 2 })
+            XCTAssertEqual(votes.setFeedbackCalls.count, 2, "\(storesIt): the resend is out")
+
+            let lock = StatsLock()
+            APIClient.$current.withValue(lockedStatsTransport(lock).client) {
+                let host = AccessibilityTreeText.Host(page(store: store, voteStore: voteStore), size: CGSize(width: 390, height: 9000), settle: 0.6)
+                defer { host.close() }
+                XCTAssertTrue(host.run(until: { host.text().contains(VoteResultsFormatting.awaitingSaveText) }), "\(storesIt): \(host.text())")
+                host.run(0.3)
+                XCTAssertNil(host.label(ofIdentifier: SealedTally.tryAgainIdentifier), "\(storesIt): no Try again on Results while the resend is out")
+                XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "\(storesIt): no strip")
+                XCTAssertNotNil(host.label(ofIdentifier: BillVoteBarModel.summaryIdentifier), "\(storesIt): the stamp shows the vote")
+
+                if storesIt {
+                    lock.isLocked = false
+                } else {
+                    votes.setFeedbackError = URLError(.timedOut)
+                }
+                resendGate.open()
+                XCTAssertTrue(host.run(until: { resend.result != nil }), "\(storesIt)")
+                XCTAssertEqual(resend.result, storesIt ? .stored : .unconfirmed)
+                if storesIt {
+                    XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.resultsIdentifier) == nil }), "Results load: \(host.text())")
+                    XCTAssertNil(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier))
+                } else {
+                    XCTAssertTrue(host.run(until: { host.label(ofIdentifier: BillVoteBarModel.refusalTryAgainIdentifier) != nil }), host.text())
+                    XCTAssertEqual(host.label(ofIdentifier: BillVoteBarModel.refusalIdentifier), "Error: Not saved yet. Check your connection.")
+                    XCTAssertTrue(host.run(until: { host.label(ofIdentifier: SealedTally.tryAgainIdentifier) != nil }), "Results offer Try again again")
+                }
+                host.run(0.3)
+                XCTAssertEqual(votes.setFeedbackCalls.count, 2, "\(storesIt): the first write and the resend only")
+            }
+            withExtendedLifetime(voteStore) {}
+        }
+    }
+
+    /// `GET /bill-stats` answers `RESULTS_LOCKED` while `isLocked` (the server holds no vote from this user), then stats.
+    @MainActor
+    private final class StatsLock {
+        var isLocked = true
+    }
+
+    /// A write's result, set from the task that waits for it.
+    @MainActor
+    private final class WriteOutcome {
+        var result: VoteWriteResult?
+    }
+
+    /// The page's requests fail as offline, except `GET /bill-stats`, which `lock` answers.
+    private func lockedStatsTransport(_ lock: StatsLock) -> RecordingTransport {
+        let transport = RecordingTransport()
+        transport.responses = Array(repeating: Self.statsBody, count: 4)
+        transport.failure = { request in
+            guard request.path == "bill-stats" else { return URLError(.notConnectedToInternet) }
+            return lock.isLocked ? backendError("RESULTS_LOCKED") : nil
+        }
+        return transport
+    }
+
+    /// Stats for `guid`, over the floor.
+    private static let statsBody = Data(#"""
+    {"billId":"BILLS-119hr4100","totals":{"votes":46,"yea":25,"nay":15,"abstain":6,"decisionVotes":40,"yeaPct":62.5},
+     "segments":{"verified":{"votes":12,"yea":7,"nay":5,"abstain":0,"decisionVotes":12,"yeaPct":58.3},
+                 "selfAttested":{"votes":34,"yea":18,"nay":10,"abstain":6,"decisionVotes":28,"yeaPct":64.3}},
+     "rollups":{"byState":{},"byDistrict":{}}}
+    """#.utf8)
+
+    /// The bill, ready for its page (its details are loaded).
+    private func pageBill() -> Bill {
+        bill(link: "https://www.govinfo.gov/app/details/BILLS-119hr4100ih")
+    }
+
+    /// The page's stores, built here and not on a disk: the hosted page needs the main run loop, which an async test holds.
+    private func pageStores(votes: FakeBillVotesService) -> (store: BillsStore, voteStore: BillVoteStore) {
+        let scope = "unsaved-resend-page-tests-\(UUID().uuidString)"
+        addTeardownBlock { BillsStore.clearCachedBills(scope: scope) }
+        let service = FakeBillsService()
+        service.cachedManifest = []
+        let store = BillsStore(bills: [pageBill()], cacheScope: scope, service: service, preferencesService: FakePreferencesService())
+        let voteStore = BillVoteStore(cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: nil)), service: votes)
+        store.connect(voteStore: voteStore)
+        return (store, voteStore)
+    }
+
+    private func page(store: BillsStore, voteStore: BillVoteStore) -> some View {
+        NavigationStack { BillDetail(billID: pageBill().id) }
+            .environmentObject(store)
+            .environmentObject(voteStore)
+            .environmentObject(AppReadState(scope: .user("unsaved-resend-tests"), store: InMemoryReadStateStore()))
+            .environmentObject(UserStore(preferencesService: StaticPreferencesService(items: []), congressService: FakeCongressService()))
+            .environmentObject(CongressMembersManifestStore(service: FakeCongressService()))
+    }
+
+    /// Runs the main run loop until `condition` holds (5 s at most): the hosted page needs it, which an async test holds.
+    private func spin(until condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition(), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
     }
 
