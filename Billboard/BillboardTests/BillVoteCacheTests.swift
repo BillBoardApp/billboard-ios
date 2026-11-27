@@ -179,6 +179,42 @@ final class BillVoteCacheTests: XCTestCase {
         XCTAssertFalse(defaults.dictionaryRepresentation().keys.contains { $0.hasSuffix(".unconfirmed") })
     }
 
+    /// A cache made before its account signed out saves nothing more (`isAccountStillHere`), so a read or a write that
+    /// ends after the purge leaves none of that account's rows or marks on the device; another account's cache still
+    /// saves. The next sign-in makes a new cache, which saves as usual. A sign-out that does not know the account stops
+    /// every cache made before it.
+    @MainActor
+    func testACacheMadeBeforeItsAccountSignedOutSavesNothingMore() {
+        let mine = BillVoteCache(scope: "account-a", defaults: defaults)
+        let theirs = BillVoteCache(scope: "account-b", defaults: defaults)
+        let mineKey = "BillVoteCache.v1.account-a"
+        let theirsKey = "BillVoteCache.v1.account-b"
+
+        UserLocalDataPurge.purge(userId: "account-a", defaults: defaults)
+        mine.setVoted(billId: "BILL-1", vote: .yea, votedAt: Date())
+        mine.setUnsavedVote(unsaved(.yea), for: "BILL-1")
+        theirs.setVoted(billId: "BILL-1", vote: .nay, votedAt: Date())
+
+        XCTAssertFalse(mine.isAccountStillHere)
+        XCTAssertNil(defaults.data(forKey: mineKey), "no row saved after the purge")
+        XCTAssertNil(defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: mineKey)), "no mark saved after the purge")
+        XCTAssertEqual(mine.getState(for: "BILL-1"), .voted(.yea), "kept in memory only")
+        XCTAssertTrue(theirs.isAccountStillHere)
+        XCTAssertEqual(BillVoteCache(scope: "account-b", defaults: defaults).getState(for: "BILL-1"), .voted(.nay))
+
+        let next = BillVoteCache(scope: "account-a", defaults: defaults)
+        next.setVoted(billId: "BILL-2", vote: .nay, votedAt: Date())
+        XCTAssertEqual(BillVoteCache(scope: "account-a", defaults: defaults).getState(for: "BILL-2"), .voted(.nay), "the next sign-in saves")
+
+        UserLocalDataPurge.purge(userId: nil, defaults: defaults)
+        next.setVoted(billId: "BILL-3", vote: .yea, votedAt: Date())
+        theirs.setUnsavedVote(unsaved(.nay), for: "BILL-1")
+        XCTAssertFalse(next.isAccountStillHere)
+        XCTAssertFalse(theirs.isAccountStillHere)
+        XCTAssertEqual(BillVoteCache(scope: "account-a", defaults: defaults).getState(for: "BILL-3"), .unknown)
+        XCTAssertNil(defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: theirsKey)))
+    }
+
     /// A mark goes when its row is pruned (the TTL, or the size cap), and a mark sent longer ago than the TTL goes too
     /// (its row went with a push and was never read again). Removing the row alone (a push) keeps the mark.
     @MainActor
