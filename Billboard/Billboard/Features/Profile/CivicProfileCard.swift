@@ -60,10 +60,11 @@ enum CivicProfileCopy {
 }
 
 /// "Your Civic Profile" on Profile (Civic Record spec 3.27, 4.64): a section on paper with the ink info
-/// button at the head's trailing edge, then "Based on 47 votes" in the docket face, the radar chart in
-/// ink and the AI note (UX-37). Until there are enough votes, the locked state: "Vote on 13 more bills to unlock your Civic
-/// Profile", a 6 pt square-ended progress bar and "12 of 25 votes" in the docket face. While the server says the
-/// themes hold it (UX-32), a caption line under the prompt says what they need. No hexagon, pie or lock symbols.
+/// button at the head's trailing edge, then "Based on 47 votes" in the docket face, the six theme bars in
+/// ink (`ThemeBarsView`) and the AI note (UX-37). Until there are enough votes, the locked state: "Vote on 13 more
+/// bills to unlock your Civic Profile", a 6 pt square-ended progress bar and "12 of 25 votes" in the docket face.
+/// While the server says the themes hold it (UX-32), a caption line under the prompt says what they need. No
+/// hexagon, pie or lock symbols.
 /// The user's own data only.
 ///
 /// Before the profile has loaded (UX-39 N11), as the member page's card does: a loading line, or COULDN'T
@@ -100,7 +101,7 @@ struct CivicProfileCard: View {
                             .foregroundStyle(BillboardColors.dimText)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        RadarChartView(profile: profile, scoreSubjectLabel: "You")
+                        ThemeBarsView(profile: profile, scoreSubjectLabel: "You")
                             .frame(maxWidth: 430)
                             .frame(maxWidth: .infinity, alignment: .center)
 
@@ -195,7 +196,7 @@ struct CivicProfileCard: View {
                 "freeMarketVsRegulated": 0.7,
                 "traditionalVsProgressive": 0.6,
                 "interventionistVsRestrained": 0.45,
-                "privacyVsSecurity": 0.75,
+                "privacyVsSecurity": 0.75
             ],
             votesUsed: 47,
             totalVotesWithProfile: 47,

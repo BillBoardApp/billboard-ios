@@ -295,7 +295,7 @@ final class AILabelsRenderTests: XCTestCase {
         for variant in Self.variants {
             for (name, view) in cards {
                 let image = try render(view, variant: variant)
-                attach(image, name: "ai-note-radar-\(name)-\(variant.name)")
+                attach(image, name: "ai-note-bars-\(name)-\(variant.name)")
             }
         }
         for (name, view) in cards {
@@ -305,7 +305,12 @@ final class AILabelsRenderTests: XCTestCase {
             XCTAssertEqual(strings.filter { $0 == CivicProfileInfoCopy.aiNote }.count, 1, "\(name): one AI line: \(strings)")
             XCTAssertEqual(host.identifier(of: CivicProfileInfoCopy.aiNote), CivicProfileAINote.identifier, name)
             let note = try XCTUnwrap(strings.firstIndex(of: CivicProfileInfoCopy.aiNote))
-            let lastTheme = try XCTUnwrap(strings.lastIndex { $0.contains("(1) to ") }, "\(name): \(strings)")
+            // Each theme is one element (UX-40 L4), "Individual to Community. You: 7/10, toward Community.", all six
+            // above the note.
+            let themes = CivicProfileAxis.allCases.map { "\($0.lowLabel) to \($0.highLabel)." }
+            let themeIndices = strings.indices.filter { index in themes.contains { strings[index].hasPrefix($0) } }
+            XCTAssertEqual(themeIndices.count, themes.count, "\(name): one element per theme: \(strings)")
+            let lastTheme = try XCTUnwrap(themeIndices.last, "\(name): \(strings)")
             XCTAssertGreaterThan(note, lastTheme, "\(name): under the chart: \(strings)")
         }
         let locked = AccessibilityTreeText.text(of: CivicProfileCard(profile: Self.lockedProfile, isLoading: false))

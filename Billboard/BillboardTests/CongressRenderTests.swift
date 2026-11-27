@@ -572,7 +572,7 @@ final class CongressRenderTests: XCTestCase {
         }
     }
 
-    /// Compare to you: the member solid, you dashed, the legend by line style and the scores by theme.
+    /// Compare to you: the member's bars solid, yours dashed, the legend by line style and the scores by theme.
     func testComparisonRendersInEveryVariant() throws {
         let member = readyProfile([0.7, 0.4, 0.62, 0.56, 0.34, 0.82])
         var userValues = [0.52, 0.61, 0.48, 0.66, 0.44, 0.57]
@@ -587,8 +587,8 @@ final class CongressRenderTests: XCTestCase {
         let datasets = CongressMemberCivicProfileCard.comparisonDatasets(member: member, user: user, memberName: "Jordan Ellis")
         for variant in Self.variants + [Self.ax5] {
             let view = VStack(alignment: .leading, spacing: 12) {
-                RadarChartView(datasets: datasets)
-                RadarLegend(datasets: datasets)
+                ThemeBarsView(datasets: datasets)
+                ThemeBarsLegend(datasets: datasets)
                 CivicProfileComparisonSummary(memberProfile: member, userProfile: user)
             }
             .padding(20)
@@ -635,18 +635,32 @@ final class CongressRenderTests: XCTestCase {
         }
     }
 
-    /// The chart is ink only (spec 3.27): no pixel of the drawing, the grid or the labels has a hue (the six
-    /// theme hues and the teal polygon are gone).
-    func testRadarChartIsInkOnly() throws {
+    /// The theme bars are ink only (spec 3.27, UX-40 L4): no pixel of the bars, the tracks, the ticks, the words or
+    /// the legend has a hue; the two profiles in Compare to you are told apart by solid and dashed, never by colour.
+    /// A theme without a score (the dashed track) is drawn too.
+    func testThemeBarsAreInkOnly() throws {
         let member = readyProfile([0.7, 0.4, 0.62, 0.56, 0.34, 0.82])
-        let user = readyProfile([0.52, 0.61, 0.48, 0.66, 0.44, 0.57])
+        let user = CivicProfileResponse(
+            axes: Dictionary(uniqueKeysWithValues: zip(CivicProfileAxis.allCases.map(\.rawValue).prefix(5), [0.52, 0.61, 0.48, 0.66, 0.44])),
+            votesUsed: 47,
+            totalVotesWithProfile: 47,
+            minVotesRequired: 25,
+            isReady: true,
+            minThemeVotes: 8,
+            themeVotes: Dictionary(uniqueKeysWithValues: zip(CivicProfileAxis.allCases.map(\.rawValue), [31, 18, 26, 22, 11, 5]))
+        )
+        let datasets = CongressMemberCivicProfileCard.comparisonDatasets(member: member, user: user, memberName: "Jordan Ellis")
         for scheme in [ColorScheme.light, .dark] {
             for (name, chart) in [
-                ("single", AnyView(RadarChartView(profile: member, scoreSubjectLabel: "Member"))),
-                ("compare", AnyView(RadarChartView(datasets: CongressMemberCivicProfileCard.comparisonDatasets(member: member, user: user, memberName: "Jordan Ellis"))))
+                ("member", AnyView(ThemeBarsView(profile: member, scoreSubjectLabel: "Member"))),
+                ("you", AnyView(ThemeBarsView(profile: user, scoreSubjectLabel: "You"))),
+                ("compare", AnyView(VStack(spacing: 12) {
+                    ThemeBarsView(datasets: datasets)
+                    ThemeBarsLegend(datasets: datasets)
+                }))
             ] {
                 let image = try render(chart.padding(20).background(BillboardColors.document), variant: Variant(scheme: scheme, size: .large), width: 390, scale: 2)
-                attach(image, name: "radar-\(name)-\(scheme == .dark ? "dark" : "light")")
+                attach(image, name: "theme-bars-\(name)-\(scheme == .dark ? "dark" : "light")")
                 let chroma = try maximumChroma(of: image)
                 // Ink is a blue-black (#0E1A2E, 0.13 apart) and its dark value a blue-white; a hue is far more.
                 XCTAssertLessThan(chroma, 0.2, "\(name) \(scheme): the most colourful pixel is \(chroma) apart in its channels")
@@ -654,18 +668,26 @@ final class CongressRenderTests: XCTestCase {
         }
     }
 
-    /// At accessibility sizes the themes leave the chart and are listed under it with their scores, each
-    /// one element.
-    func testRadarListsItsThemesAtAccessibilitySizes() {
+    /// VoiceOver reads each theme as one element at every size (UX-40 L4), its words, the score and the direction:
+    /// "Individual to Community. Member: 7/10, toward Community." Up to AX5 nothing else is read, so the end words,
+    /// the score line and the count are not stops of their own, and the drawing is hidden.
+    func testThemeBarsReadOneElementPerThemeAtEverySize() {
         let profile = readyProfile([0.7, 0.4, 0.62, 0.56, 0.34, 0.82])
-        let text = AccessibilityTreeText.text(
-            of: RadarChartView(profile: profile, scoreSubjectLabel: "Member").environment(\.dynamicTypeSize, .accessibility3),
-            size: CGSize(width: 390, height: 2400)
-        )
-        for axis in CivicProfileAxis.allCases {
-            XCTAssertTrue(text.contains(axis.explanation), "\(axis) in \(text)")
+        for size in [DynamicTypeSize.large, .accessibility3, .accessibility5] {
+            let host = AccessibilityTreeText.Host(
+                ThemeBarsView(profile: profile, scoreSubjectLabel: "Member").environment(\.dynamicTypeSize, size),
+                size: CGSize(width: 390, height: 3000)
+            )
+            let elements = host.elements().map(\.label)
+            host.close()
+            XCTAssertEqual(elements.count, CivicProfileAxis.allCases.count, "\(size): \(elements)")
+            for axis in CivicProfileAxis.allCases {
+                let theme = elements.filter { $0.hasPrefix("\(axis.lowLabel) to \(axis.highLabel).") }
+                XCTAssertEqual(theme.count, 1, "\(size) \(axis): \(elements)")
+            }
+            XCTAssertEqual(elements.first, "Individual to Community. Member: 7/10, toward Community.", "\(size)")
+            XCTAssertEqual(elements.last, "Privacy to Security. Member: 8/10, toward Security.", "\(size)")
         }
-        XCTAssertTrue(text.contains("Member: "), text)
     }
 
     // MARK: - Parties and chamber pages (spec 4.58)
@@ -1063,8 +1085,8 @@ final class CongressRenderTests: XCTestCase {
         }
     }
 
-    /// The Civic Profile chart's plot is hidden from VoiceOver (spec 3.27), so there is no empty stop
-    /// between the theme labels; the info overlay still hides the chart while it is open.
+    /// The theme bars' drawing is hidden from VoiceOver (spec 3.27), so there is no empty stop between the
+    /// themes, each one element; the info overlay still hides the chart while it is open.
     ///
     /// Your profile is read before the card is hosted, so the card starts no read of its own. A read now
     /// runs in the store's own task (UX-39 N11), so the card shows its comparison loading line for a moment;
@@ -1092,7 +1114,10 @@ final class CongressRenderTests: XCTestCase {
         defer { host.close() }
         let elements = host.elements()
         XCTAssertEqual(elements.filter { $0.label.trimmingCharacters(in: .whitespaces).isEmpty }.count, 0, elements.map(\.label).joined(separator: " | "))
-        XCTAssertEqual(elements.filter { $0.label.contains("(1) to ") }.count, CivicProfileAxis.allCases.count, "one element per theme")
+        for axis in CivicProfileAxis.allCases {
+            let theme = elements.filter { $0.label.hasPrefix("\(axis.lowLabel) to \(axis.highLabel).") }
+            XCTAssertEqual(theme.count, 1, "one element for \(axis): \(elements.map(\.label))")
+        }
 
         XCTAssertTrue(host.text().contains("Member: 7/10"), host.text())
         XCTAssertTrue(host.activate("About the civic profile chart", settle: 0.5))
