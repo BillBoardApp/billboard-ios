@@ -442,8 +442,12 @@ final class CivicStoresTests: XCTestCase {
     @MainActor
     func testThemeBarScoreSaysNotEnoughDataInsteadOfSignal() {
         XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "You", score: 7), "You: 7/10")
-        XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "Member", score: nil), "Not enough data")
         XCTAssertEqual(ThemeBarsCopy.notEnoughData, "Not enough data")
+        XCTAssertEqual(ThemeBarsCopy.notEnoughDataLine(shortfall: nil), "Not enough data")
+        XCTAssertEqual(
+            ThemeBarsCopy.spokenScore(.privacyVsSecurity, subjectLabel: "Member", value: nil, score: nil),
+            "Member: not enough data."
+        )
     }
 
     @MainActor

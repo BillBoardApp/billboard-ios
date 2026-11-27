@@ -208,7 +208,6 @@ final class ThemeBarsTests: XCTestCase {
 
         XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "You", score: 7), "You: 7/10")
         XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "Member", score: 7), "Member: 7/10")
-        XCTAssertEqual(ThemeBarsCopy.scoreText(subjectLabel: "Member", score: nil), "Not enough data")
         XCTAssertEqual(ThemeBarsCopy.notEnoughData, "Not enough data")
 
         let shortfall = ThemeBarsCopy.shortfall(count: 5, floor: 8, isMember: false)

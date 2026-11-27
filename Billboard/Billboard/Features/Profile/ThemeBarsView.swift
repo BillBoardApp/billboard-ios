@@ -20,10 +20,9 @@ enum ThemeBarsCopy {
     /// A theme without a score yet (spec D 2.4.2).
     static let notEnoughData = "Not enough data"
 
-    /// The score beside a theme's bar: "You: 7/10", "Member: 7/10"; "Not enough data" for a theme without one.
-    static func scoreText(subjectLabel: String, score: Int?) -> String {
-        guard let score else { return notEnoughData }
-        return "\(subjectLabel): \(score)/10"
+    /// The score beside a theme's bar: "You: 7/10", "Member: 7/10".
+    static func scoreText(subjectLabel: String, score: Int) -> String {
+        "\(subjectLabel): \(score)/10"
     }
 
     /// Under your bar: "12 votes", "1 vote".
@@ -125,24 +124,17 @@ enum ThemeBarsCopy {
 /// At accessibility sizes the end words stack over the track (left-hand word first, right-hand word under it at
 /// the trailing edge) and nothing shrinks. VoiceOver reads one element per theme with the direction in words.
 struct ThemeBarsView: View {
-    let axes: [CivicProfileAxis]
     private let datasets: [ThemeChartDataset]
     private let showsFigures: Bool
 
     /// One profile, its score and count under each bar ("You: 7/10 · 31 votes", "Member: 7/10 · 24 votes and bills").
-    init(
-        profile: CivicProfileResponse,
-        axes: [CivicProfileAxis] = CivicProfileAxis.allCases,
-        scoreSubjectLabel: String = "You"
-    ) {
-        self.axes = axes
+    init(profile: CivicProfileResponse, scoreSubjectLabel: String = "You") {
         self.datasets = [ThemeChartDataset(profile: profile, label: scoreSubjectLabel, style: .solid)]
         self.showsFigures = true
     }
 
     /// Two profiles told apart by line style, the scores in the table under the chart.
-    init(datasets: [ThemeChartDataset], axes: [CivicProfileAxis] = CivicProfileAxis.allCases) {
-        self.axes = axes
+    init(datasets: [ThemeChartDataset]) {
         self.datasets = datasets
         self.showsFigures = false
     }
@@ -151,7 +143,7 @@ struct ThemeBarsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
-            ForEach(axes, id: \.self) { axis in
+            ForEach(CivicProfileAxis.allCases, id: \.self) { axis in
                 ThemeBarRow(axis: axis, datasets: datasets, showsFigures: showsFigures)
             }
         }
