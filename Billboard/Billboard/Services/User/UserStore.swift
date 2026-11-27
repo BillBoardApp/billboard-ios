@@ -1086,7 +1086,6 @@ enum UserLocalDataPurge {
             clearAllKnownUserData(defaults: defaults)
             return
         }
-
         UserStore.clearCachedProfile(userId: userId, defaults: defaults)
         defaults.removeObject(forKey: "\(AccountComplianceStorage.cachedAdultStatusKeyPrefix)\(userId)")
         UserDefaultsReadStateStore.clear(scope: .user(userId), defaults: defaults)
@@ -1108,6 +1107,7 @@ enum UserLocalDataPurge {
 
     private static func clearAllKnownUserData(defaults: UserDefaults) {
         UserStore.clearAllCachedProfiles(defaults: defaults)
+        WeeklyDigestStore.clearAllCaches(defaults: defaults)
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(AccountComplianceStorage.cachedAdultStatusKeyPrefix) {
             defaults.removeObject(forKey: key)
         }

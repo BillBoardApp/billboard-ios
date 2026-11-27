@@ -24,9 +24,12 @@ final class WeeklyDigestStore: ObservableObject {
     private var savedOnDeviceBrief: WeeklyDigest?
 
     /// How many times each account's saved brief was cleared in this run of the app (`clearCache`: sign-out and
-    /// account deletion, `UserLocalDataPurge`), and the count for this store's account when the store was made.
+    /// account deletion, `UserLocalDataPurge`), how many times every account's was (`clearAllCaches`: a sign-out that
+    /// does not know the account), and both counts when this store was made.
     private static var clearCounts: [String: Int] = [:]
+    private static var clearAllCount = 0
     private let clearCountAtInit: Int
+    private let clearAllCountAtInit: Int
 
     /// - Parameter now: the clock, which tests set.
     init(
@@ -35,6 +38,7 @@ final class WeeklyDigestStore: ObservableObject {
         digestService: any WeeklyDigestServicing = WeeklyDigestService.Live(),
         now: @escaping () -> Date = { Date() }
     ) {
+        self.clearAllCountAtInit = Self.clearAllCount
         self.scope = scope
         self.defaults = defaults
         self.digestService = digestService
@@ -259,12 +263,12 @@ final class WeeklyDigestStore: ObservableObject {
         return merged
     }
 
-    /// False once this store's account was signed out or deleted (`clearCache`) after the store was made. A store
-    /// then writes nothing on the device for it: a brief read that answers after sign-out, from the tabs or from
-    /// Updates and Profile, must not put the signed-out account's brief back (its sections reflect what the person
+    /// False once this store's account was signed out or deleted (`clearCache`, `clearAllCaches`) after the store was
+    /// made. A store then writes nothing on the device for it: a brief read that answers after sign-out, from the tabs or
+    /// from Updates and Profile, must not put the signed-out account's brief back (its sections reflect what the person
     /// follows). A later sign-in to the same account makes a new store, which saves as usual.
     private var isAccountStillHere: Bool {
-        Self.clearCounts[scope, default: 0] == clearCountAtInit
+        Self.clearCounts[scope, default: 0] == clearCountAtInit && Self.clearAllCount == clearAllCountAtInit
     }
 
     private func persistDigest(_ digest: WeeklyDigest) {
@@ -314,6 +318,15 @@ final class WeeklyDigestStore: ObservableObject {
         defaults.removeObject(forKey: digestKey(scope: scope))
         defaults.removeObject(forKey: settingsKey(scope: scope))
         defaults.removeObject(forKey: lastNotifiedDigestKey(scope: scope))
+    }
+
+    /// `clearCache` for every account (each key above starts with "BillBoard.weeklyDigest.v1."), at a sign-out that
+    /// does not know the account (`UserLocalDataPurge`). No store made before this writes anything more.
+    static func clearAllCaches(defaults: UserDefaults = .standard) {
+        clearAllCount += 1
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("BillBoard.weeklyDigest.v1.") {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     /// Whether two brief ids are the same week's. The server's id is its Sunday 10 AM ET release time from
