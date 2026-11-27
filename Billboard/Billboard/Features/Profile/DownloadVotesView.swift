@@ -114,26 +114,31 @@ final class DownloadVotesModel: ObservableObject {
     /// Reads every page, then writes the CSV and the JSON. Every export already on disk goes first, so one export at
     /// most is ever kept: the last screen's, which stayed for the share sheet, or one left by an app that was closed
     /// while the screen showed. A cancelled load (the screen went, or Try again started another) stays quiet: no
-    /// error, no files.
+    /// error, no files. So does a load whose exports were removed while it ran (`VoteExportFolder.removals`): sign-out
+    /// removes them (`UserLocalDataPurge`), and a screen still mounted then can see it. That load writes nothing, or
+    /// removes what it was writing, so no copy of that account's votes stays.
     func load() async {
         folder.removeAll()
         phase = .preparing
+        let removals = VoteExportFolder.removals
+        var wasRemoved: Bool { VoteExportFolder.removals != removals }
         do {
             let votes = try await service.fetchAllVotes()
             try Task.checkCancellation()
+            guard !wasRemoved else { return }
             guard !votes.isEmpty else {
                 phase = .empty
                 return
             }
             let written = try await writer(votes, folder, now(), timeZone)
-            guard !Task.isCancelled else {
-                // The screen went while the files were written; nothing was offered to share.
+            guard !Task.isCancelled, !wasRemoved else {
+                // The screen went, or sign-out removed the exports, while the files were written; nothing was offered.
                 folder.remove(written.folder)
                 return
             }
             phase = .ready(written)
         } catch {
-            if error is CancellationError || Task.isCancelled { return }
+            if error is CancellationError || Task.isCancelled || wasRemoved { return }
             AppLog.store.error("[DownloadVotes] could not prepare the files (\(String(describing: type(of: error)), privacy: .public))")
             phase = .failed
         }

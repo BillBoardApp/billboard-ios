@@ -125,6 +125,16 @@ nonisolated struct VoteExportFolder: Sendable {
         root: FileManager.default.temporaryDirectory.appendingPathComponent("VoteExport", isDirectory: true)
     )
 
+    /// How many times the exports were removed in this run of the app (`removeAll()`). A load notes the count once it
+    /// has emptied the folder, and keeps none of the files it writes once the count has moved
+    /// (`DownloadVotesModel.load()`): sign-out removed every export meanwhile, so no copy of that account's votes stays,
+    /// or a newer load did, so the folder still holds one export at most.
+    static var removals: Int {
+        removalCount.withLock { $0 }
+    }
+
+    private static let removalCount = OSAllocatedUnfairLock(initialState: 0)
+
     /// Writes both files, from the same votes, into a fresh folder.
     func write(_ votes: [ExportedVote], exportedAt: Date, timeZone: TimeZone = .current) throws -> VoteExportFileSet {
         let folder = try makeFreshFolder()
@@ -145,8 +155,9 @@ nonisolated struct VoteExportFolder: Sendable {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    /// Removes every export (before a new one, and at sign-out).
+    /// Removes every export (before a new one, and at sign-out), and counts it (`removals`).
     func removeAll() {
+        Self.removalCount.withLock { $0 += 1 }
         try? FileManager.default.removeItem(at: root)
     }
 

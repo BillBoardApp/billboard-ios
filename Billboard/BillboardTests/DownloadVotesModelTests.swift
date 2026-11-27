@@ -179,6 +179,46 @@ final class DownloadVotesModelTests: XCTestCase {
         }
     }
 
+    /// Sign-out while the screen is still mounted (the age or location gate's Sign out, with the tabs under it): a load
+    /// whose votes come after the purge writes nothing, and one that was writing its files then removes them. Either way
+    /// the load stays quiet and no copy of that account's votes stays. The next load writes its files as usual.
+    func testALoadThatEndsAfterSignOutLeavesNoFiles() async throws {
+        let suiteName = "DownloadVotesModelTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let service = FakeVoteExportService(.success([vote("BILLS-119hr1")]))
+        service.whileLoading = { UserLocalDataPurge.purge(userId: "account-a", defaults: defaults) }
+        let loaded = DownloadVotesModel(service: service, folder: folder)
+        await loaded.load()
+        XCTAssertEqual(loaded.phase, .preparing, "quiet")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.root.path), "nothing written")
+
+        let written = OSAllocatedUnfairLock<VoteExportFileSet?>(initialState: nil)
+        let writing = DownloadVotesModel(
+            service: FakeVoteExportService(.success([vote("BILLS-119hr1")])),
+            folder: folder,
+            writer: { votes, folder, exportedAt, timeZone in
+                let files = try folder.write(votes, exportedAt: exportedAt, timeZone: timeZone)
+                written.withLock { $0 = files }
+                await MainActor.run {
+                    // The suite by name: the writer is @Sendable, and UserDefaults is not.
+                    guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+                    UserLocalDataPurge.purge(userId: nil, defaults: defaults)
+                }
+                return files
+            }
+        )
+        await writing.load()
+        let files = try XCTUnwrap(written.withLock { $0 }, "the writer ran")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: files.folder.path), "what was written is removed")
+        XCTAssertEqual(writing.phase, .preparing, "quiet")
+
+        let next = DownloadVotesModel(service: FakeVoteExportService(.success([vote("BILLS-119hr2")])), folder: folder)
+        await next.load()
+        guard case .ready = next.phase else { return XCTFail("expected ready, got \(next.phase)") }
+    }
+
     // MARK: - Helpers
 
     private func vote(_ billId: String) -> ExportedVote {
@@ -208,6 +248,8 @@ final class FakeVoteExportService: VoteExportServicing {
     private var results: [Result<[ExportedVote], Error>]
     private(set) var calls = 0
     var waitsForCancellation = false
+    /// Runs when a load's votes come, before they are returned (a sign-out at that moment, say).
+    var whileLoading: (() -> Void)?
 
     init(_ results: Result<[ExportedVote], Error>...) {
         self.results = results
@@ -216,6 +258,7 @@ final class FakeVoteExportService: VoteExportServicing {
     func fetchAllVotes() async throws -> [ExportedVote] {
         calls += 1
         try await Task.sleep(for: waitsForCancellation ? .seconds(60) : .milliseconds(30))
+        whileLoading?()
         let result = results.count > 1 ? results.removeFirst() : results[0]
         return try result.get()
     }
