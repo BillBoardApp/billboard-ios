@@ -131,5 +131,5 @@ the rule is. [docs/README.md](docs/README.md) explains the prefixes.
 
 ## Congress member civic profile
 
-Member profiles (House and Senate) show a civic-profile radar chart from `GET /congress-member-civic-profile?bioguideId={id}`.
+Member profiles (House and Senate) show the civic profile as six theme bars from `GET /congress-member-civic-profile?bioguideId={id}`.
 When the profile cannot be loaded, the card says official vote data is not available.
