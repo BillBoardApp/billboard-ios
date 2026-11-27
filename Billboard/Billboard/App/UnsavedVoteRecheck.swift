@@ -34,9 +34,14 @@ enum NetworkPathReports {
 }
 
 /// APPF-30 step 2: the votes not saved yet, outside bill detail. Their rows are read again, quietly, at launch and when
-/// the app comes back from the background (`BillVoteStore.recheckUnsavedVotes()`, one request, only when there are
+/// the app comes back from the background (`BillVoteStore.startUnsavedVoteRecheck()`, one request, only when there are
 /// some), and once the phone is back online each is sent once more on its own (`BillsStore.startUnsavedVoteResend()`,
 /// project decision 2026-11-23). UI-test launches stay off the network, as at launch.
+///
+/// Sign-out clears the account's data (`UserLocalDataPurge`), then takes the tabs down. A read still out holds no
+/// store: the launch read's task holds the store weakly and the read alone across its wait, and the return read's task
+/// holds the read alone. Both end at once when the tabs go, which cancels the read (`BillVoteStore.answer(to:)`), and
+/// a read that answers after the purge writes nothing for that account (`BillVoteCache.isAccountStillHere`).
 struct UnsavedVoteRecheck: ViewModifier {
     let billsStore: BillsStore
     let voteStore: BillVoteStore
@@ -47,16 +52,23 @@ struct UnsavedVoteRecheck: ViewModifier {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var foreground = ForegroundReturnDetector()
+    /// The read on the latest return to the app, cancelled when the tabs go.
+    @State private var returnRead: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
-            .task {
-                guard !staysOffline else { return }
-                await voteStore.recheckUnsavedVotes()
+            .task { [weak voteStore = voteStore, staysOffline = staysOffline] in
+                guard !staysOffline, let read = voteStore?.startUnsavedVoteRecheck() else { return }
+                _ = await BillVoteStore.answer(to: read)
             }
             .onChange(of: scenePhase) { _, phase in
                 guard foreground.didReturn(to: phase), !staysOffline else { return }
-                Task { await voteStore.recheckUnsavedVotes() }
+                let read = voteStore.startUnsavedVoteRecheck()
+                returnRead = Task { _ = await BillVoteStore.answer(to: read) }
+            }
+            .onDisappear {
+                returnRead?.cancel()
+                returnRead = nil
             }
             .task {
                 guard !staysOffline else { return }
@@ -66,7 +78,7 @@ struct UnsavedVoteRecheck: ViewModifier {
 
     /// Starts the one automatic resend (`BillsStore.startUnsavedVoteResend()`) each time `reports` say the phone is back
     /// online (`OnlineReturnDetector`), until they end or this task is cancelled. Sign-out takes the tabs down, which
-    /// cancels it: a resend still out is cancelled then too, and once its read is back it sends nothing. A resend is not
+    /// cancels it: a resend still out is cancelled then too, which ends its read and sends nothing. A resend is not
     /// awaited here, so the next report is read while it runs.
     static func resendOnEachReturnOnline(_ reports: AsyncStream<Bool>, billsStore: BillsStore) async {
         var detector = OnlineReturnDetector()

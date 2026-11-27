@@ -304,15 +304,15 @@ extension BillsStore {
     }
 
     /// `resendUnsavedVotesOnce()` as a task, which `UnsavedVoteRecheck` cancels when sign-out takes the tabs down. While
-    /// the read is out it holds neither store; once the read is back it spends and sends nothing when it was cancelled
-    /// or either store has gone.
+    /// the read is out it holds neither store, and a cancel ends it at once and cancels the read
+    /// (`BillVoteStore.answer(to:)`); it then spends and sends nothing, and so it does when either store has gone.
     func startUnsavedVoteResend() -> Task<[String: VoteWriteResult], Never> {
         guard let voteStore, !voteStore.votesAwaitingAutomaticResend().isEmpty else {
             return Task { [String: VoteWriteResult]() }
         }
         let read = voteStore.startUnsavedVoteRecheck()
         return Task { [weak self] in
-            guard let checked = await read.value, !Task.isCancelled,
+            guard let checked = await BillVoteStore.answer(to: read), !Task.isCancelled,
                   let sends = self?.sendUnsavedVotesOnce(among: checked) else { return [:] }
             var results: [String: VoteWriteResult] = [:]
             for send in sends {

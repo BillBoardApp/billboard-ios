@@ -449,6 +449,77 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertEqual(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), marks, "the mark as it was")
     }
 
+    // MARK: - Sign-out
+
+    /// The tabs' launch read, as their `.task` holds it, when sign-out ends it while the request is out: the purge, then
+    /// the tabs go, which cancels the task. The task ends at once, though the request has not answered, so it keeps the
+    /// store no longer; and once the answer comes (it would confirm the vote) nothing is written back for that account.
+    func testALaunchReadThatSignOutCancelsEndsAtOnceAndWritesNothing() async throws {
+        let disk = try makeDisk()
+        _ = await voteOffline(disk, on: bill())
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .voted(.init(vote: .yea, votedAt: Date()))])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        var voteStore: BillVoteStore? = BillVoteStore(
+            cache: BillVoteCache(config: BillVoteCache.Config(persistenceKey: disk.key), defaults: disk.defaults),
+            service: votes
+        )
+        weak let endedVoteStore = voteStore
+        let launchRead = Task { [voteStore] in await voteStore?.recheckUnsavedVotes() }
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+
+        UserLocalDataPurge.purge(userId: disk.scope, defaults: disk.defaults)
+        voteStore = nil
+        launchRead.cancel()
+        let read = await launchRead.value
+
+        XCTAssertEqual(read, false, "ended without an answer")
+        XCTAssertNil(endedVoteStore, "the launch read does not keep the vote store")
+        readGate.open()
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(votes.batchRequests.count, 1)
+        XCTAssertNil(disk.defaults.data(forKey: disk.key), "no row written back after the purge")
+        XCTAssertNil(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), "no mark written back")
+    }
+
+    /// A store something still holds after sign-out (a page going away, say): a launch read and a return read it joined,
+    /// answered after the purge, write nothing for that account. Their answer confirms one vote and leaves the other not
+    /// saved, which would save every row and the mark left; nothing changes on screen, and no Bill row is sent.
+    func testReadsAnsweredAfterSignOutWriteNothingForThatAccount() async throws {
+        let disk = try makeDisk()
+        let other = "BILLS-119hr4101"
+        let first = await voteOffline(disk, on: bill())
+        let second = await voteOffline(disk, .nay, on: bill(other))
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .voted(.init(vote: .yea, votedAt: Date())), other: .notVoted])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let preferences = FakePreferencesService()
+        let (_, voteStore) = launch(disk, bills: [first, second], votes: votes, preferences: preferences)
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea, other: .nay], "precondition")
+
+        let launchRead = Task { await voteStore.recheckUnsavedVotes() }
+        for _ in 0..<500 where votes.batchRequests.isEmpty { await Task.yield() }
+        let returnRead = Task { await voteStore.recheckUnsavedVotes() }
+        for _ in 0..<50 { await Task.yield() }
+        UserLocalDataPurge.purge(userId: disk.scope, defaults: disk.defaults)
+        readGate.open()
+        let reads = await [launchRead.value, returnRead.value]
+
+        XCTAssertEqual(votes.batchRequests.count, 1, "the return read joined the launch read")
+        XCTAssertEqual(reads, [false, false])
+        XCTAssertNil(disk.defaults.data(forKey: disk.key), "no row written back after the purge")
+        XCTAssertNil(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), "no mark written back")
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea, other: .nay], "the answer was not taken")
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(preferences.putCalls, [], "no Bill row")
+        XCTAssertEqual(votes.setFeedbackCalls, [])
+        let afterSignOut = await voteStore.recheckUnsavedVotes()
+        XCTAssertFalse(afterSignOut, "a read after sign-out asks nothing")
+        XCTAssertEqual(votes.batchRequests.count, 1)
+    }
+
     // MARK: - Back online
 
     func testThePhoneIsBackOnlineOnItsFirstOnlineReportAndAfterAnOfflineOne() {
@@ -541,6 +612,35 @@ final class UnsavedVoteResendTests: XCTestCase {
         XCTAssertEqual(votes.setFeedbackCalls, [])
         XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea])
         XCTAssertEqual(voteStore.votesAwaitingAutomaticResend().map { $0.guid }, [Self.guid], "not used up")
+    }
+
+    /// Sign-out clears the account's data, then takes the tabs down, while their launch read is out: the read is
+    /// cancelled with them, and its answer, which would confirm the vote, writes nothing back for that account.
+    func testTabsTakenDownAtSignOutWriteNothingWhenTheirReadAnswers() throws {
+        let disk = try markedDisk()
+        let votes = FakeBillVotesService()
+        votes.batchResult = .success([Self.guid: .voted(.init(vote: .yea, votedAt: Date()))])
+        let readGate = Gate()
+        votes.holdBatchFetch = readGate
+        let preferences = FakePreferencesService()
+        let (store, voteStore) = launch(disk, bills: [bill()], votes: votes, preferences: preferences)
+        let (reports, _) = AsyncStream.makeStream(of: Bool.self)
+        let session = Session()
+        let host = AccessibilityTreeText.Host(SignedInTabs(session: session, billsStore: store, voteStore: voteStore, onlineReports: { reports }))
+        defer { host.close() }
+
+        XCTAssertTrue(host.run(until: { !votes.batchRequests.isEmpty }), "the launch read is out")
+        UserLocalDataPurge.purge(userId: disk.scope, defaults: disk.defaults)
+        session.isSignedIn = false
+        host.run(0.3)
+        readGate.open()
+        host.run(0.5)
+
+        XCTAssertEqual(votes.batchRequests.count, 1)
+        XCTAssertNil(disk.defaults.data(forKey: disk.key), "no row written back after the purge")
+        XCTAssertNil(disk.defaults.data(forKey: BillVoteCache.unsavedVotesKey(for: disk.key)), "no mark written back")
+        XCTAssertEqual(voteStore.unsavedVotes, [Self.guid: .yea], "the answer was not taken")
+        XCTAssertEqual(preferences.putCalls, [], "no Bill row")
     }
 
     /// Whether the tabs are up: sign-out takes them down.
