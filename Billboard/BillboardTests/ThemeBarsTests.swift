@@ -129,9 +129,14 @@ final class ThemeBarsTests: XCTestCase {
     // MARK: - Geometry
 
     /// A value's place on the track and its bar, from the middle to the value either way, at the ends, either side of
-    /// the middle where a 5 and a 6 start (0.389 and 0.611), and at exactly halfway, where there is no bar. Values
-    /// outside 0 to 1 are clamped to the ends.
+    /// the middle where a 5 starts and a 6 ends (0.389 and 0.611), and at exactly halfway, where there is no bar.
+    /// Values outside 0 to 1 are clamped to the ends.
     func testABarRunsFromTheMiddleToTheValue() {
+        // The bands named above: a 5 from 0.389 up to halfway, a 6 from just above halfway up to 0.611.
+        for (value, score) in [(0.3888, 4), (0.389, 5), (0.5, 5), (0.5001, 6), (0.611, 6), (0.6112, 7)] {
+            XCTAssertEqual(Self.profile(.individualVsCommunity, value).displayScoreIfAvailable(for: .individualVsCommunity), score, "\(value)")
+        }
+
         let cases: [(value: Double, x: CGFloat, left: CGFloat, right: CGFloat)] = [
             (0, 0, 0, 50),
             (0.389, 38.9, 38.9, 50),
