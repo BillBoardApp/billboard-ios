@@ -20,6 +20,9 @@ enum ThemeBarsCopy {
     /// A theme without a score yet (spec D 2.4.2).
     static let notEnoughData = "Not enough data"
 
+    /// Between a score and its count, and between Not enough data and the votes short: "You: 7/10 · 31 votes".
+    static let figureSeparator = " · "
+
     /// The score beside a theme's bar: "You: 7/10", "Member: 7/10".
     static func scoreText(subjectLabel: String, score: Int) -> String {
         "\(subjectLabel): \(score)/10"
@@ -50,7 +53,7 @@ enum ThemeBarsCopy {
     /// The line under a theme without a score: "Not enough data · 5 of 8 votes", or "Not enough data".
     static func notEnoughDataLine(shortfall: String?) -> String {
         guard let shortfall else { return notEnoughData }
-        return "\(notEnoughData) · \(shortfall)"
+        return notEnoughData + figureSeparator + shortfall
     }
 
     /// Which way a score is from the middle, for VoiceOver only (D29): "toward Community", "toward Individual", or
@@ -107,9 +110,72 @@ enum ThemeBarsCopy {
         "\(subjectLabel): \(notEnoughData)"
     }
 
+    /// The lines under a theme in Compare to you: "You: Not enough data" for each profile without a score there
+    /// when another has one, "Not enough data" when none has, and none when every profile has a score.
+    static func missingLines(_ axis: CivicProfileAxis, datasets: [ThemeChartDataset]) -> [String] {
+        let missing = datasets.filter { $0.profile.signalValue(for: axis) == nil }
+        guard missing.count < datasets.count else { return [notEnoughData] }
+        return missing.map { missingInCompare(subjectLabel: $0.label) }
+    }
+
     /// The legend's sample as VoiceOver reads it: "Jordan Ellis, solid bar", "You, dashed bar".
     static func spokenLegendSample(_ dataset: ThemeChartDataset) -> String {
         dataset.style == .solid ? "\(dataset.label), solid bar" : "\(dataset.label), dashed bar"
+    }
+}
+
+/// What one theme's row says, worked out from its profiles: the marks on its track, the words under the track and
+/// what VoiceOver reads. The row draws from it and the tests read it, since the row's one VoiceOver element keeps its
+/// visible words out of the accessibility tree.
+struct ThemeBarRowContent: Equatable {
+    /// The words under the track.
+    enum Figures: Equatable {
+        /// One profile with a score: the score ("You: 7/10", `caption` semibold `ink`) and its count ("31 votes",
+        /// `caption` `ink2`), nil when the server sent no count and the count line is hidden.
+        case score(String, count: String?)
+        /// Lines in `caption` `ink2`: "Not enough data · 5 of 8 votes" for one profile without a score, and in
+        /// Compare to you `ThemeBarsCopy.missingLines` (often none).
+        case notes([String])
+
+        /// The words as they read on one line: "You: 7/10 · 31 votes", "Not enough data · 3 of 8 votes".
+        var lines: [String] {
+            switch self {
+            case let .score(score, count):
+                return [count.map { score + ThemeBarsCopy.figureSeparator + $0 } ?? score]
+            case let .notes(notes):
+                return notes
+            }
+        }
+    }
+
+    let axis: CivicProfileAxis
+    /// One per profile, nil for a profile without a score on this theme.
+    let marks: [ThemeBarTrack.Mark?]
+    let figures: Figures
+    let spokenText: String
+
+    /// One profile with its score and count under the bar (`showsFigures`), or Compare to you, whose scores are in
+    /// the table under the chart.
+    init(axis: CivicProfileAxis, datasets: [ThemeChartDataset], showsFigures: Bool) {
+        self.axis = axis
+        marks = datasets.map { dataset in
+            dataset.profile.signalValue(for: axis).map { ThemeBarTrack.Mark(value: $0, style: dataset.style) }
+        }
+        guard showsFigures, let dataset = datasets.first else {
+            figures = .notes(ThemeBarsCopy.missingLines(axis, datasets: datasets))
+            spokenText = ThemeBarsCopy.spokenCompare(axis, datasets: datasets)
+            return
+        }
+        let profile = dataset.profile
+        let count = profile.themeCount(for: axis)
+        let countText = count.map { ThemeBarsCopy.count($0, isMember: profile.isMemberProfile) }
+        let shortfall = ThemeBarsCopy.shortfall(count: count, floor: profile.minThemeVotes, isMember: profile.isMemberProfile)
+        if let score = profile.displayScoreIfAvailable(for: axis) {
+            figures = .score(ThemeBarsCopy.scoreText(subjectLabel: dataset.label, score: score), count: countText)
+        } else {
+            figures = .notes([ThemeBarsCopy.notEnoughDataLine(shortfall: shortfall)])
+        }
+        spokenText = ThemeBarsCopy.spokenSingle(axis, dataset: dataset, count: countText, shortfall: shortfall)
     }
 }
 
@@ -141,45 +207,40 @@ struct ThemeBarsView: View {
 
     static let rowSpacing: CGFloat = BillboardStyle.Space.xl
 
+    /// Each theme's row, in the rubric's fixed order.
+    var rows: [ThemeBarRowContent] {
+        CivicProfileAxis.allCases.map { ThemeBarRowContent(axis: $0, datasets: datasets, showsFigures: showsFigures) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
-            ForEach(CivicProfileAxis.allCases, id: \.self) { axis in
-                ThemeBarRow(axis: axis, datasets: datasets, showsFigures: showsFigures)
+            ForEach(rows, id: \.axis) { content in
+                ThemeBarRow(content: content)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// One theme: the end words, the track and, for one profile, the score and count.
+/// One theme: the end words, the track and the words under it, all from its `ThemeBarRowContent`.
 private struct ThemeBarRow: View {
-    let axis: CivicProfileAxis
-    let datasets: [ThemeChartDataset]
-    let showsFigures: Bool
+    let content: ThemeBarRowContent
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var axis: CivicProfileAxis {
+        content.axis
+    }
 
     var body: some View {
         VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .center, spacing: 6) {
             endWords
-            ThemeBarTrack(marks: marks)
-            if showsFigures {
-                figures
-            } else {
-                ForEach(missingLines, id: \.self) { line in
-                    captionText(line, color: BillboardColors.secondaryText)
-                }
-            }
+            ThemeBarTrack(marks: content.marks)
+            figures
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenText)
-    }
-
-    private var marks: [ThemeBarTrack.Mark?] {
-        datasets.map { dataset in
-            dataset.profile.signalValue(for: axis).map { ThemeBarTrack.Mark(value: $0, style: dataset.style) }
-        }
+        .accessibilityLabel(content.spokenText)
     }
 
     // MARK: End words
@@ -211,58 +272,48 @@ private struct ThemeBarRow: View {
         }
     }
 
-    // MARK: Score and count (one profile)
-
-    private var dataset: ThemeChartDataset? {
-        datasets.first
-    }
-
-    /// "31 votes" or "24 votes and bills"; nil when the server sent no count, and the count line is hidden.
-    private var countText: String? {
-        guard let profile = dataset?.profile, let count = profile.themeCount(for: axis) else { return nil }
-        return ThemeBarsCopy.count(count, isMember: profile.isMemberProfile)
-    }
-
-    private var shortfall: String? {
-        guard let profile = dataset?.profile else { return nil }
-        return ThemeBarsCopy.shortfall(
-            count: profile.themeCount(for: axis),
-            floor: profile.minThemeVotes,
-            isMember: profile.isMemberProfile
-        )
-    }
+    // MARK: Under the track
 
     @ViewBuilder
     private var figures: some View {
-        if let dataset, let score = dataset.profile.displayScoreIfAvailable(for: axis) {
-            let scoreText = ThemeBarsCopy.scoreText(subjectLabel: dataset.label, score: score)
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 2) {
-                    scoreLine(scoreText)
-                    if let countText {
-                        captionText(countText, color: BillboardColors.secondaryText)
-                    }
-                }
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        scoreLine(scoreText)
-                            .fixedSize()
-                        if let countText {
-                            captionText(" · \(countText)", color: BillboardColors.secondaryText)
-                                .fixedSize()
-                        }
-                    }
-                    VStack(alignment: .center, spacing: 2) {
-                        scoreLine(scoreText)
-                        if let countText {
-                            captionText(countText, color: BillboardColors.secondaryText)
-                        }
-                    }
+        switch content.figures {
+        case let .score(score, count):
+            scoreAndCount(score, count: count)
+        case let .notes(notes):
+            ForEach(notes, id: \.self) { note in
+                captionText(note, color: BillboardColors.secondaryText)
+            }
+        }
+    }
+
+    /// One profile's score and count: on one line ("You: 7/10 · 31 votes"), or the count under the score when they
+    /// do not fit and at accessibility sizes.
+    @ViewBuilder
+    private func scoreAndCount(_ score: String, count: String?) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 2) {
+                scoreLine(score)
+                if let count {
+                    captionText(count, color: BillboardColors.secondaryText)
                 }
             }
         } else {
-            captionText(ThemeBarsCopy.notEnoughDataLine(shortfall: shortfall), color: BillboardColors.secondaryText)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    scoreLine(score)
+                        .fixedSize()
+                    if let count {
+                        captionText(ThemeBarsCopy.figureSeparator + count, color: BillboardColors.secondaryText)
+                            .fixedSize()
+                    }
+                }
+                VStack(alignment: .center, spacing: 2) {
+                    scoreLine(score)
+                    if let count {
+                        captionText(count, color: BillboardColors.secondaryText)
+                    }
+                }
+            }
         }
     }
 
@@ -280,27 +331,6 @@ private struct ThemeBarRow: View {
             .foregroundStyle(color)
             .multilineTextAlignment(alignment ?? (dynamicTypeSize.isAccessibilitySize ? .leading : .center))
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // MARK: Compare to you
-
-    /// "You: Not enough data" for each profile without a score here, when the other has one; "Not enough data"
-    /// when neither has.
-    private var missingLines: [String] {
-        guard datasets.count > 1, marks.contains(where: { $0 != nil }) else {
-            return marks.allSatisfy({ $0 == nil }) ? [ThemeBarsCopy.notEnoughData] : []
-        }
-        return datasets.filter { $0.profile.signalValue(for: axis) == nil }
-            .map { ThemeBarsCopy.missingInCompare(subjectLabel: $0.label) }
-    }
-
-    // MARK: VoiceOver
-
-    private var spokenText: String {
-        guard showsFigures, let dataset else {
-            return ThemeBarsCopy.spokenCompare(axis, datasets: datasets)
-        }
-        return ThemeBarsCopy.spokenSingle(axis, dataset: dataset, count: countText, shortfall: shortfall)
     }
 }
 

@@ -374,9 +374,50 @@ final class ThemeBarsTests: XCTestCase {
         XCTAssertEqual(host.elements().map(\.label).filter { !$0.isEmpty }, Self.spokenCompare)
     }
 
-    /// From a server without the counts the count line is hidden, on screen and for VoiceOver, and a theme without a
-    /// score says only "Not enough data"; the scores are unchanged.
+    /// What each row shows under its bar on Profile and on a member page, as in the approved sample: the score and
+    /// its count, and for a theme short of votes how far short it is. VoiceOver reads each row as one element, so
+    /// these words come from the rows the view draws, not from the accessibility tree.
+    func testTheRowsShowTheScoreAndCount() {
+        XCTAssertEqual(ThemeBarsView(profile: Self.you).rows.map(\.figures.lines), [
+            ["You: 7/10 · 31 votes"],
+            ["You: 4/10 · 18 votes"],
+            ["You: 7/10 · 26 votes"],
+            ["You: 6/10 · 22 votes"],
+            ["You: 5/10 · 11 votes"],
+            ["You: 3/10 · 9 votes"]
+        ])
+        XCTAssertEqual(ThemeBarsView(profile: Self.you).rows.first?.figures, .score("You: 7/10", count: "31 votes"))
+
+        let few = ThemeBarsView(profile: Self.youFewVotes).rows
+        XCTAssertEqual(few.map(\.figures.lines), [
+            ["You: 7/10 · 19 votes"],
+            ["You: 5/10 · 14 votes"],
+            ["You: 6/10 · 17 votes"],
+            ["You: 5/10 · 12 votes"],
+            ["You: 9/10 · 8 votes"],
+            ["Not enough data · 3 of 8 votes"]
+        ])
+        XCTAssertEqual(few.last?.marks, [nil], "no bar without a score")
+
+        let member = ThemeBarsView(profile: Self.member, scoreSubjectLabel: "Member").rows
+        XCTAssertEqual(member.map(\.figures.lines), [
+            ["Member: 7/10 · 24 votes and bills"],
+            ["Member: 5/10 · 15 votes and bills"],
+            ["Member: 7/10 · 21 votes and bills"],
+            ["Member: 6/10 · 17 votes and bills"],
+            ["Member: 4/10 · 9 votes and bills"],
+            ["Member: 8/10 · 12 votes and bills"]
+        ])
+        XCTAssertEqual(member.first?.spokenText, "Individual to Community. Member: 7/10, toward Community. 24 votes and bills.")
+    }
+
+    /// From a server without the counts the rows show no count line and VoiceOver reads no count, and a theme
+    /// without a score says only "Not enough data"; the scores are unchanged.
     func testWithoutCountsTheCountLineIsHidden() {
+        let rows = ThemeBarsView(profile: Self.youWithoutCounts).rows
+        XCTAssertEqual(rows.map(\.figures.lines), [["You: 7/10"], ["You: 4/10"], ["You: 7/10"], ["You: 6/10"], ["You: 5/10"], ["Not enough data"]])
+        XCTAssertEqual(rows.first?.figures, .score("You: 7/10", count: nil), "no count line")
+
         let host = AccessibilityTreeText.Host(ThemeBarsView(profile: Self.youWithoutCounts).padding(16), size: CGSize(width: 390, height: 1400))
         let spoken = host.elements().map(\.label).filter { !$0.isEmpty }
         let strings = host.strings()
@@ -392,16 +433,32 @@ final class ThemeBarsTests: XCTestCase {
         XCTAssertFalse(strings.contains { $0.contains("vote") }, "\(strings)")
     }
 
-    /// In Compare to you, a theme where only one profile has a score says which one has none, under the bars and
-    /// to VoiceOver, so its missing bar is not read as the middle.
-    func testCompareSaysWhichProfileHasNoScore() {
+    /// In Compare to you, a theme where only one profile has a score says which one has none, in the row's words
+    /// and to VoiceOver, so its missing bar is not read as the middle; a theme where neither has one says Not enough
+    /// data; and a theme where both have one shows no words, the scores being in the table.
+    func testCompareSaysWhichProfileHasNoScore() throws {
         let datasets = CongressMemberCivicProfileCard.comparisonDatasets(member: Self.member, user: Self.youWithoutCounts, memberName: Self.memberName)
         XCTAssertEqual(
             ThemeBarsCopy.spokenCompare(.privacyVsSecurity, datasets: datasets),
             "Privacy to Security. Jordan Ellis: 8/10, toward Security. You: not enough data."
         )
+        let rows = ThemeBarsView(datasets: datasets).rows
+        XCTAssertEqual(rows.map(\.figures.lines), [[], [], [], [], [], ["You: Not enough data"]])
+        XCTAssertEqual(rows.last?.marks, [ThemeBarTrack.Mark(value: 0.82, style: .solid), nil], "only the member's bar")
         let text = AccessibilityTreeText.text(of: ThemeBarsView(datasets: datasets).padding(16), size: CGSize(width: 390, height: 1400))
         XCTAssertTrue(text.contains("Privacy to Security. Jordan Ellis: 8/10, toward Security. You: not enough data."), text)
+
+        let neither = CongressMemberCivicProfileCard.comparisonDatasets(
+            member: Self.profile(.individualVsCommunity, 0.7),
+            user: Self.youWithoutCounts,
+            memberName: Self.memberName
+        )
+        let privacy = try XCTUnwrap(ThemeBarsView(datasets: neither).rows.last)
+        XCTAssertEqual(privacy.figures.lines, ["Not enough data"])
+        XCTAssertEqual(privacy.marks, [nil, nil], "no bar, and a dashed track")
+        XCTAssertEqual(privacy.spokenText, "Privacy to Security. Jordan Ellis: not enough data. You: not enough data.")
+        XCTAssertEqual(ThemeBarsCopy.missingLines(.individualVsCommunity, datasets: neither), [], "both have a score")
+        XCTAssertEqual(ThemeBarsCopy.missingLines(.localVsFederal, datasets: neither), ["Jordan Ellis: Not enough data"])
     }
 
     // MARK: - Renders
